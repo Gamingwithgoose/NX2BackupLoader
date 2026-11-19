@@ -5,6 +5,7 @@ cd "$(cygpath -u "$NX2_PROJECT_ROOT")"
 # devkitPro on Windows is ordinarily mounted at /c/devkitPro.
 if [[ "${DEVKITPRO:-}" == *:* ]]; then DEVKITPRO="$(cygpath -u "$DEVKITPRO")"; fi
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
+if [[ "${DEVKITARM:-}" == *:* ]]; then DEVKITARM="$(cygpath -u "$DEVKITARM")"; fi
 export DEVKITARM="${DEVKITARM:-$DEVKITPRO/devkitARM}"
 export PATH="$DEVKITPRO/tools/bin:$DEVKITARM/bin:$PATH"
 if [[ ! -f "$DEVKITPRO/libnx/switch_rules" ]]; then
