@@ -3,7 +3,6 @@
 ifeq ($(strip $(DEVKITPRO)),)
 $(error DEVKITPRO is not set)
 endif
-include $(DEVKITPRO)/libnx/switch_rules
 TARGET := nx2backuploader
 BUILD := build
 SOURCES := source
@@ -33,6 +32,7 @@ clean:
 	@echo clean ...
 	@rm -rf $(BUILD) $(TARGET).elf $(TARGET).nro $(TARGET).map
 else
+include $(DEVKITPRO)/libnx/switch_rules
 DEPENDS := $(OFILES:.o=.d)
 -include $(DEPENDS)
 $(OUTPUT).nro: $(OUTPUT).elf
