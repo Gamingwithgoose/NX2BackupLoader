@@ -1,38 +1,36 @@
 # NX2BackupLoader
 
-An experimental, **read-only first-stage** Switch 2 homebrew diagnostic for decrypted game-folder layouts. It is **not yet a retail game loader**, game installer, or license backup solution.
+**Switch 2 / kaiHEN experimental game-folder diagnostic. Native game execution is NOT implemented.**
 
-## Quick start (Windows local build)
+## IMPORTANT: Toolchain correction (v0.2)
 
-1. Install devkitPro Switch development packages (devkitA64, libnx, switch-dev) in the default `C:\devkitPro` directory. This project does not use GitHub Actions.
-2. Pull the repository with GitHub Desktop.
-3. Double-click `build.bat` at the repository root. It calls the local devkitPro MSYS2 toolchain and fails explicitly if dependencies are missing.
-4. Copy `release/nx2backuploader.nro` to `sdmc:/switch/nx2backuploader.nro`.
-5. Put **one test folder** at `sdmc:/games/MyGame/exefs/` and `sdmc:/games/MyGame/romfs/`; ExeFS should contain `main`, `main.npdm` and, if available, `rtld` / `sdk`.
-6. Run from your existing kaiHEN homebrew launcher. Use Up/Down to select, A to inspect, X to rescan, + to exit.
-7. Retrieve `sdmc:/nx2backuploader-report.txt` and use it to evaluate the next implementation stage.
+The earlier v0.1 build script incorrectly compiled with Switch 1 `libnx/switch_rules` and `libnx/switch.specs`. Its NRO is **not considered safe or compatible** with Switch 2 and should not be launched. That build caused a reported console crash and loss of the temporary kaiHEN session. Do not use it.
 
-## Current behavior
+The builder now **requires ouncebrew's official Switch 2 [ounce-devkit](https://github.com/ouncebrew/ounce-devkit)** and `libounce/switch2_rules`. It checks the NRO header and Switch 2 `OUN0` marker, and rejects an older Switch 1 output. Header verification is **not** hardware compatibility testing.
 
-- Enumerates subdirectories of `sdmc:/games` with bounded names and entries.
-- Checks ExeFS and RomFS folder presence, verifies four-byte `META` and `NSO0` headers, and records file size.
-- Writes a report to the SD card only when you press A.
-- Does **not** load NSOs, mount game RomFS, hook system services, alter licensing, or modify installed content.
+### Local Windows build
 
-## Roadmap
+1. Install devkitPro and the [ounce-devkit](https://github.com/ouncebrew/ounce-devkit) Switch 2 packages (libounce, OunceVK, libkaihen) following upstream instructions. Do not replace your working console kaiHEN files; this is the PC compilation toolchain.
+2. Pull latest changes in GitHub Desktop.
+3. Run `build.bat` from the repo root. It stays open and writes `build.log`.
+4. Only on success, a candidate NRO is created at `release/nx2backuploader.nro`.
 
-- Parse full NPDM/NSO layout, dependency records and segment bounds.
-- Probe permissions and service availability without changing content or HEN.
-- Test an independently built sample module in a controlled loader.
-- Investigate native execution and filesystem redirection separately; no promise of compatibility for retail Switch 2 software.
+**IMPORTANT: This v0.2 candidate has not been compiled or tested on Switch 2 hardware by this repository. Do not risk a working HEN session solely on its source-code validation.**
 
-## Compatibility and caution
+### Diagnostic scope (no installation or game execution)
 
-Built with standard devkitPro/libnx NRO tooling. Compatibility with a particular Switch 2 kaiHEN revision, service access, and hardware has **not** been established. This is intended to be the first hardware diagnostic. Do not delete installed games, factory reset the console, or overwrite working HEN files on the basis of a successful diagnostic.
+Read-only scanner expects folders such as `sdmc:/games/MyGame/exefs/main`, `main.npdm`, optional `rtld`/`sdk`, and `sdmc:/games/MyGame/romfs/`.
+
+- Up/Down: select; A: write report; X: scan; +: exit
+- Report: `sdmc:/nx2backuploader-report.txt`
+- No game loading, NAND writes, ticket work, or license changes.
 
 ## Changelog
 
-### v0.1 — first local diagnostic build
-- Windows `build.bat` and reproducible devkitPro build.
-- SD folder scanner, basic ExeFS header validation, console UI and report output.
-- Local `release/` output; no Actions, no pull request workflow.
+### v0.2
+- **Critical:** native Switch 2 libounce toolchain enforcement and fail-closed output handling.
+- Native Switch 2 rules/specs and architecture; checks for OUN0 marker.
+- Build script stays open, logs output, and cannot silently reuse an older Switch 1 NRO.
+
+### v0.1 (unsafe/retired)
+- Original SD game-folder scanner built using Switch 1 libnx; do not launch that output.
