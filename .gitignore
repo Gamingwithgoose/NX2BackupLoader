@@ -1,0 +1,6 @@
+app/build/
+app/*.elf
+app/*.nro
+app/*.map
+release/
+*.log
