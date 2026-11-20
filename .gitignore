@@ -21,3 +21,12 @@ tools/
 *.tmp
 *.trace
 *.dmp
+
+# Release-only project: keep generated outputs and local SDK tools untracked.
+*.o
+*.d
+*.a
+*.exe
+*.elf
+*.nro
+*.map

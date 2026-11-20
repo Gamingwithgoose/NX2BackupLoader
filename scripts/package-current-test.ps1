@@ -18,22 +18,11 @@ $stage=$target+'.tmp';Copy-Item -LiteralPath $binary -Destination $stage
 if((File-Sha256 $stage) -ne (File-Sha256 $binary)){throw 'Staged executable mismatch'}
 Move-Item -LiteralPath $stage -Destination $target -Force
 Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination (Join-Path $release 'README.md')
-# Folder indices are now generated from the selected SD backup. Retire metadata only.
-$oldMap=[IO.Path]::GetFullPath((Join-Path $release 'games\nx2-yoshi\romfs.map'))
-if(-not $oldMap.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
-if(Test-Path -LiteralPath $oldMap){Remove-Item -LiteralPath $oldMap}
-foreach($relative in @('games\nx2-yoshi','games')){
- $oldDir=[IO.Path]::GetFullPath((Join-Path $release $relative))
- if(-not $oldDir.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
- if((Test-Path -LiteralPath $oldDir) -and @(Get-ChildItem -LiteralPath $oldDir -Force).Count -eq 0){Remove-Item -LiteralPath $oldDir}
+# Only the launcher NRO and its README are included in the release folder.
+# Remove stale package names from older local builds (not user SD data).
+foreach($relative in @('switch\nx2-folder-exec','nx2backuploader.nro','nx2-sdprobe.nro')){
+ $old=[IO.Path]::GetFullPath((Join-Path $release $relative))
+ if(-not $old.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
+ if(Test-Path -LiteralPath $old){Remove-Item -LiteralPath $old -Recurse -Force}
 }
-# Retire only named obsolete build artifacts, keeping all hardware reports.
-foreach($relative in @('nx2backuploader.nro','nx2-sdprobe.nro','BackupLoaderMKW.nro','games\nx2-exec-fixture\module.nxm','games\nx2-exec-fixture\provider.nxm','games\nx2-exec-fixture\client.nxm')){
- $target=[IO.Path]::GetFullPath((Join-Path $release $relative))
- if(-not $target.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
- if(Test-Path -LiteralPath $target){Remove-Item -LiteralPath $target -Force}
-}
-$obsolete=[IO.Path]::GetFullPath((Join-Path $release 'games\nx2-exec-fixture'))
-if(-not $obsolete.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
-if((Test-Path -LiteralPath $obsolete) -and @(Get-ChildItem -LiteralPath $obsolete -Force).Count -eq 0){Remove-Item -LiteralPath $obsolete}
-Write-Output '[OK] Folder Launcher 0.13 staged in release/switch; game indices are automatic.'
+Write-Output '[OK] BackupLoaderMKW staged in release/switch; game indices are generated on the console.'
