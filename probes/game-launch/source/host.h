@@ -11,7 +11,7 @@ typedef struct {
 typedef struct {
   FsFileSystem *sd;
   FILE *report;
-  char rom_root[1200], save_root[256];
+  char rom_root[1200], save_root[512];
   Nx2HostFile handles[128];
   struct {
     FsFile file;

@@ -8,16 +8,16 @@ function File-Sha256([string]$Path){
 $repo=[IO.Path]::GetFullPath($Root)
 $source=Join-Path $repo 'probes\game-launch'
 $release=Join-Path $repo 'release'
-$binary=Join-Path $source 'nx2-folder-exec.nro'
+$binary=Join-Path $source 'BackupLoaderMKW.nro'
 & (Join-Path $repo 'scripts\verify-nro.ps1') -Path $binary
 if(-not $?){throw 'Executable verification failed'}
-$app=Join-Path $release 'switch\nx2-folder-exec'
+$app=Join-Path $release 'switch\BackupLoaderMKW'
 New-Item -ItemType Directory -Force -Path $app | Out-Null
-$target=Join-Path $app 'nx2-folder-exec.nro'
+$target=Join-Path $app 'BackupLoaderMKW.nro'
 $stage=$target+'.tmp';Copy-Item -LiteralPath $binary -Destination $stage
 if((File-Sha256 $stage) -ne (File-Sha256 $binary)){throw 'Staged executable mismatch'}
 Move-Item -LiteralPath $stage -Destination $target -Force
-Copy-Item -LiteralPath (Join-Path $source 'README.txt') -Destination (Join-Path $release 'README.txt')
+Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination (Join-Path $release 'README.md')
 # Folder indices are now generated from the selected SD backup. Retire metadata only.
 $oldMap=[IO.Path]::GetFullPath((Join-Path $release 'games\nx2-yoshi\romfs.map'))
 if(-not $oldMap.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
@@ -28,7 +28,7 @@ foreach($relative in @('games\nx2-yoshi','games')){
  if((Test-Path -LiteralPath $oldDir) -and @(Get-ChildItem -LiteralPath $oldDir -Force).Count -eq 0){Remove-Item -LiteralPath $oldDir}
 }
 # Retire only named obsolete build artifacts, keeping all hardware reports.
-foreach($relative in @('nx2backuploader.nro','nx2-sdprobe.nro','nx2-folder-exec.nro','games\nx2-exec-fixture\module.nxm','games\nx2-exec-fixture\provider.nxm','games\nx2-exec-fixture\client.nxm')){
+foreach($relative in @('nx2backuploader.nro','nx2-sdprobe.nro','BackupLoaderMKW.nro','games\nx2-exec-fixture\module.nxm','games\nx2-exec-fixture\provider.nxm','games\nx2-exec-fixture\client.nxm')){
  $target=[IO.Path]::GetFullPath((Join-Path $release $relative))
  if(-not $target.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
  if(Test-Path -LiteralPath $target){Remove-Item -LiteralPath $target -Force}

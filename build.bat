@@ -4,53 +4,38 @@ cd /d "%~dp0"
 set "NX2_PROJECT_ROOT=%CD%"
 if not defined DEVKITPRO set "DEVKITPRO=C:\devkitPro"
 set "BASH=%DEVKITPRO%\msys2\usr\bin\bash.exe"
-set "OUT=%~dp0release\switch\nx2-folder-exec\nx2-folder-exec.nro"
-set "LOG=%~dp0build.log"
-for /f "delims=" %%P in ('where python.exe 2^>nul') do if not defined NX2_PYTHON set "NX2_PYTHON=%%P"
+set "OUT=%CD%\release\switch\BackupLoaderMKW\BackupLoaderMKW.nro"
+set "TOOLS=%CD%\tools"
 set "RESULT=1"
-> "%LOG%" echo NX2BackupLoader Folder Launcher 0.13 build started
-echo ===========================================================
-echo NX2BackupLoader Folder Launcher 0.13 - SWITCH 2 / libounce
-echo ===========================================================
-echo Source : %NX2_PROJECT_ROOT%
-echo Log    : %LOG%
-echo Output : %OUT%
-echo.
-if exist "%OUT%" del /f /q "%OUT%"
-if exist "%OUT%" (
-  echo [ERROR] Cannot delete old NRO. Close applications using it.
-  goto finish
-)
+echo BackupLoaderMKW - Nintendo Switch 2 build
+if not exist "%TOOLS%" mkdir "%TOOLS%"
 if not exist "%BASH%" (
-  echo [ERROR] devkitPro MSYS2 bash missing: %BASH%
-  goto finish
+ echo [ERROR] devkitPro MSYS2 missing. Install from https://devkitpro.org/wiki/Getting_Started
+ goto finish
 )
-echo [BUILD] Running local devkitPro ounce-devkit build...
-"%BASH%" -l < "%~dp0scripts\build-msys.sh" > "%LOG%" 2>&1
-set "RESULT=%ERRORLEVEL%"
-echo.
-echo ---------------- BUILD OUTPUT ----------------
-if exist "%LOG%" (type "%LOG%") else (echo [ERROR] No log file & set "RESULT=1")
-echo ---------------- END BUILD OUTPUT ------------
-if not "%RESULT%"=="0" (
-  echo [FAILED] Compilation exited with code %RESULT%.
-  goto finish
+if not exist "%DEVKITPRO%\libounce\switch2_rules" (
+ echo [SETUP] Downloading official ounce-devkit installer into tools...
+ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/ouncebrew/ounce-devkit/main/install.sh' -OutFile '%TOOLS%\ounce-install.sh'"
+ if errorlevel 1 goto sdk_error
+ "%BASH%" -l -c "export DEVKITPRO=$(cygpath -u '%DEVKITPRO%'); sh $(cygpath -u '%TOOLS%\ounce-install.sh')"
+ if errorlevel 1 goto sdk_error
 )
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\verify-nro.ps1" -Path "%OUT%"
-if errorlevel 1 (
-  echo [FAILED] Switch 2 NRO verification failed.
-  if exist "%OUT%" del /f /q "%OUT%"
-  set "RESULT=1"
-  goto finish
-)
-echo.
-echo [SUCCESS] Switch 2-format NRO built: %OUT%
-echo WARNING: Not yet tested against your exact kaiHEN runtime.
+if not exist "%DEVKITPRO%\libounce\switch2_rules" goto sdk_error
+echo [BUILD] Compiling BackupLoaderMKW...
+"%BASH%" -l < "%CD%\scripts\build-msys.sh"
+if errorlevel 1 goto build_error
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CD%\scripts\verify-nro.ps1" -Path "%OUT%"
+if errorlevel 1 goto build_error
+echo [SUCCESS] %OUT%
+echo Copy the contents of release\switch to your SD card root.
 set "RESULT=0"
+goto finish
+:sdk_error
+echo [ERROR] Switch 2 SDK missing or installation failed. No Switch 1 fallback.
+goto finish
+:build_error
+echo [ERROR] Compilation or verification failed.
 :finish
-if not "%RESULT%"=="0" if exist "%OUT%" del /f /q "%OUT%"
 echo.
-echo Build log: %LOG%
-echo The window stays open until you press a key.
 pause
 exit /b %RESULT%

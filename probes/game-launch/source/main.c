@@ -15,7 +15,7 @@
 #include <switch2/memory/heap.h>
 static PadState pad;
 static uint32_t selected_resource;
-static char selected_save[32];
+static char selected_save[256];
 static char outcome[192] = "Mario Kart World override required.";
 static void row(FILE *f, const char *fmt, ...) {
   va_list a;
@@ -26,7 +26,7 @@ static void row(FILE *f, const char *fmt, ...) {
 }
 static void screen(const char *message) {
   consoleClear();
-  printf("NX2BackupLoader 0.13\n\n%s\n", message);
+  printf("BackupLoaderMKW 0.13\n\n%s\n", message);
   consoleUpdate(NULL);
 }
 static void __attribute__((noreturn)) stop(FILE *f, const char *why) {
@@ -161,7 +161,7 @@ static void scan_progress(uint32_t files, void *unused) {
   screen(message);
 }
 static void run(const Nx2Game *game) {
-  FILE *f = fopen("sdmc:/nx2-launch-report.txt", "w");
+  FILE *f = fopen("sdmc:/BackupLoaderMKW-gameplay.log", "w");
   if (!f) {
     snprintf(outcome, sizeof(outcome), "Could not create launch report.");
     return;
@@ -180,18 +180,11 @@ static void run(const Nx2Game *game) {
              "Start NX2 through Mario Kart World's override.");
     return;
   }
-  uint64_t save_id = game->id;
-  if (!save_id) {
-    save_id = UINT64_C(14695981039346656037);
-    for (const unsigned char *p = (const unsigned char *)game->root; *p; p++)
-      save_id = (save_id ^ *p) * UINT64_C(1099511628211);
+  if (snprintf(selected_save, sizeof(selected_save), "%s", game->name) >= (int)sizeof(selected_save)) {
+    row(f, "REFUSED save name too long\n");
+    fclose(f);
+    return;
   }
-  /* Preserve the save directory used by the successful original demo build. */
-  if (game->id == UINT64_C(0x04007c6028aa8000))
-    strcpy(selected_save, "yoshi-demo");
-  else
-    snprintf(selected_save, sizeof(selected_save), "%016llx",
-             (unsigned long long)save_id);
   selected_resource = game->resource;
   u64 resource = 0;
   rc = svcGetInfo(&resource, 16, CUR_PROCESS_HANDLE, 0);
@@ -220,7 +213,7 @@ static void run(const Nx2Game *game) {
     row(f, "ROMFS_SCAN_FAILED reason=%s\n", error);
     fclose(f);
     snprintf(outcome, sizeof(outcome),
-             "Could not index this folder. See launch report.");
+             "Could not index this folder. See BackupLoaderMKW-gameplay.log.");
     return;
   }
   Nx2RomView view;
@@ -245,7 +238,7 @@ static void run(const Nx2Game *game) {
   if (!prepare_phase(f, game->root, images, l, host, map, map_bytes, 1)) {
     row(f, "LAUNCH_PREPARATION_REFUSED\n");
     snprintf(outcome, sizeof(outcome),
-             "This backup could not be prepared. See launch report.");
+             "This backup could not be prepared. See BackupLoaderMKW-gameplay.log.");
     goto done;
   }
   row(f, "ACTUAL_ENTRY_ABOUT_TO_EXECUTE rtld=%016llx physical_budget=%llu\n",
@@ -312,7 +305,7 @@ done:
 }
 static void draw(const Nx2Catalog *catalog, size_t selected) {
   consoleClear();
-  printf("NX2BackupLoader 0.13\n\n");
+  printf("BackupLoaderMKW 0.13\n\n");
   if (!catalog->count)
     printf("No extracted game folders found in /games.\n\n");
   else {

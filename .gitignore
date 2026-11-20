@@ -16,3 +16,8 @@ probes/**/*.map
 !probes/game-launch/generated/romfs.map
 probes/**/tests/*.exe
 probes/**/tests/*.obj
+
+tools/
+*.tmp
+*.trace
+*.dmp

@@ -33,15 +33,16 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   if (snprintf(h->rom_root, sizeof(h->rom_root), "%s/romfs", rom + 5) >=
       (int)sizeof(h->rom_root))
     return 0;
-  if (!save_key || !save_key[0] ||
-      strspn(save_key, "0123456789abcdefyoshi-m") != strlen(save_key) ||
-      strchr(save_key, '/') || strchr(save_key, '\\') || strstr(save_key, ".."))
+  if (!save_key || !save_key[0] || !strcmp(save_key, ".") ||
+      !strcmp(save_key, "..") || strchr(save_key, '/') ||
+      strchr(save_key, '\\') || strchr(save_key, ':'))
     return 0;
-  snprintf(h->save_root, sizeof(h->save_root),
-           "/switch/nx2-backup-loader/saves/%s", save_key);
-  const char *paths[] = {"/switch/nx2-backup-loader",
-                         "/switch/nx2-backup-loader/saves", h->save_root};
-  for (unsigned i = 0; i < 3; i++) {
+  int n = snprintf(h->save_root, sizeof(h->save_root),
+                   "/switch/BackupLoaderMKW/%s", save_key);
+  if (n < 0 || n >= (int)sizeof(h->save_root))
+    return 0;
+  const char *paths[] = {"/switch/BackupLoaderMKW", h->save_root};
+  for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
     Result rc = mkdir_one(h->sd, paths[i]);
     logline(h, "PRIVATE_SAVE_DIRECTORY path=%s result=%08x\n", paths[i], rc);
     if (R_FAILED(rc))

@@ -11,7 +11,7 @@ endif
 TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/libounce/switch2_rules
 
-TARGET := nx2-folder-exec
+TARGET := BackupLoaderMKW
 BUILD := build
 SOURCES := source
 INCLUDES :=

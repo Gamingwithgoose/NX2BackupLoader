@@ -1,63 +1,91 @@
-# NX2BackupLoader
+# BackupLoaderMKW
 
-A folder browser and experimental native launcher for decrypted ExeFS/RomFS
-backups under `/games`, using **Mario Kart World's homebrew title override**.
-The console continues to identify the host as MKW.
+> **USE AT OWN RISK.** I am not responsible for bricks that may or may not occur as this is still in early development and experimental. Back up your SD card and saves first.
 
-## Current release: 0.13
+BackupLoaderMKW is an experimental **Switch 2** homebrew launcher for extracted backups. It uses **Mario Kart World's title override** because Mario Kart World provides more memory for homebrew. The console still sees MKW as the host.
 
-Merge `release/switch` into the SD root, fully close MKW, then open a fresh MKW
-homebrew override and NX2BackupLoader. Select a game with Up/Down or the left
-stick and press **A**. **X** refreshes the list; **PLUS** exits while browsing.
-The old diagnostic menus and unconditional three-minute gameplay timer are gone.
+**Only Yoshi and the Mysterious Book Demo has been confirmed to reach gameplay.** Other games still need testing. Some will crash or simply not work. No games are included.
 
-Both `/games/Name/{exefs,romfs}` and `/games/Name/base/{exefs,romfs}` are discovered.
-The selected folder supplies its own modules and directory index. No per-title
-whitelist, executable hash profile, fixed game-code offsets or separately prepared
-RomFS map selects what can be attempted. Updates/containers are not merged or
-installed; selections use the extracted root/base directories.
+## What you need
 
-## How it launches
+- A Switch 2 running compatible kaiHEN/Homebrew Menu software.
+- Mario Kart World and its **title override** for launching Homebrew Menu (not Album mode).
+- Your own extracted game files and an SD card.
 
-The loader discovers rtld/main/subsdk*/sdk, resolves SDK exports and validates
-syscall wrapper instructions before placing detours. Original rtld handles game
-relocation and startup. It releases the unused homebrew heap tail so the original
-SDK can use real kernel virtual/physical memory allocation. A bounded file cache
-backs a metadata-only RomFS view with loose SD assets. Saves stay on SD in separate
-program-ID directories; the original demo's existing save directory is preserved.
-No tickets, signatures, installed titles, ownership databases or HEN files change.
+**NUP files are NOT supported.** Do not put NUPs or encrypted containers in the games folder.
 
-## Evidence and compatibility
+## Put games on the SD card
 
-The user confirmed Yoshi reached menus and gameplay in 0.12. Its report records
-ongoing rendering through 175 seconds; the armed 180-second diagnostic timer
-accounts for the closure. That timer is removed from 0.13.
+Create a folder called **games** at the very root of the SD card. Each game gets its own folder containing **exefs** and **romfs**.
 
-The linked generic resolver prepares Yoshi, Zelda OOT, Mario Kart World and Kirby
-Air Riders fixtures, resolves their 20 bridge interfaces and 68 hooks, and rejects
-a damaged wrapper. The Yoshi hook sites match the hardware-working legacy set.
-The runtime index matches Yoshi's prior index byte-for-byte and validates Zelda's
-186587 files. Twelve linked-code emulator checks and 28695 host C assertions pass.
-See `probes/game-launch/tests/pc-validation.txt` for exact binary hashes and scope.
+    SD:/
+      games/
+        Yoshi and the Mysterious Book Demo/
+          exefs/
+            main
+            rtld
+            sdk
+            main.npdm
+            (any subsdk files supplied with the game)
+          romfs/
+            (game files)
+      switch/
+        BackupLoaderMKW/
+          BackupLoaderMKW.nro
 
-These are PC preparation/regression checks. The 0.13 browser and general launches
-still need hardware testing, and other titles have not been confirmed playable.
-SDK ABI changes, unavailable services/resources, legacy heap allocation and other
-runtime differences may require broader compatibility work. The loader refuses
-unrecognized wrappers/interfaces rather than applying another game's offsets.
-This is a general launch path, not a guarantee that every title works.
+Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs. Updates are not merged into the base game automatically.
 
-The current limits include 13 modules, 262144 files/directories, a 128 MiB index,
-64 folder levels, 512 MiB mapped per module and MKW's inherited capabilities.
-Large SD folders show indexing progress and may take several minutes. There is
-no timed gameplay exit; the remaining five-minute startup limit stops only a game
-that has not entered its instrumented main function. Use normal HOME/Close Software
-when finished. Copy `/nx2-launch-report.txt` before the next launch when reporting
-an issue. See `release/README.txt` for layouts, save locations and details.
+## Running the loader
 
-## Build
+1. Copy the **contents** of release/switch to the SD card root.
+2. Fully close Mario Kart World.
+3. Start Homebrew Menu using **Mario Kart World's title override**.
+4. Start BackupLoaderMKW.
+5. Select a game using Up/Down or the left stick. Press **A** to launch, **X** to rescan, or **+** to exit the browser.
+6. Use HOME / Close Software to stop playing.
 
-Use `build.bat` with ounce-devkit/libounce. The root build targets
-`probes/game-launch`; it verifies the Switch 2 NRO record and publishes the merge
-folder under `release/switch`. Metadata-only legacy fixtures and earlier test
-suites remain as development evidence; Nintendo binaries are not distributed.
+If the list is empty, confirm the game folders contain real exefs and romfs directories. Large backups may take several minutes to index.
+
+## Where saves go
+
+Each game now gets its own folder:
+
+    SD:/switch/BackupLoaderMKW/(game folder name)/
+
+The folder name is the same one shown under SD:/games. Renaming the game folder changes its save location.
+
+**Coming from NX2BackupLoader?** Old saves are still under SD:/switch/nx2-backup-loader/saves/. This update does **not** move or delete them automatically. Back them up, then copy the old save folder's contents into the new game-named folder. The previously working Yoshi demo used the old **yoshi-demo** save folder. Keep your old saves until you've checked the new copy.
+
+## Gameplay / crash log
+
+Every launch writes one log to:
+
+    SD:/BackupLoaderMKW-gameplay.log
+
+If a backup crashes, copy this file **before launching something else**, because the next launch replaces it. It records startup, game progress, and errors. An abrupt system crash may prevent the final lines from being saved. No other SD launch reports are produced.
+
+## How it works
+
+The loader discovers the selected backup's executable modules and files. It connects supported game SDK calls, lets the game's original startup code run, and handles supported game file and save requests through the SD card. Mario Kart World remains the system's host title, so the loader has MKW's memory allocation and permissions — not necessarily every resource other games require.
+
+It does not install game tickets, rewrite game ownership, or install backups to NAND. The app reads loose files from SD. Different titles have different services, graphics, and memory needs, so there is no promise that they will all launch or save correctly.
+
+## Building yourself on Windows
+
+Download the repository as a ZIP or clone it with GitHub Desktop. Keep the directories together and double-click **build.bat**.
+
+**Tools used:**
+- **devkitPro + MSYS2:** Install it first from https://devkitpro.org/wiki/Getting_Started. This provides the Windows build shell.
+- **ounce-devkit/libounce:** The Switch 2 SDK at https://github.com/ouncebrew/ounce-devkit. If missing, build.bat downloads its official installer into the **tools** folder next to build.bat and runs it.
+- **PowerShell:** Included with Windows. Used to fetch the SDK helper and verify the output.
+- **Git or GitHub Desktop (optional):** Helpful for updates.
+
+Temporary setup tools stay in the repository's local **tools** directory for portability. The full devkitPro/MSYS2 compiler lives in its normal installation location, not alongside the BAT file. A missing Switch 2 SDK stops the build; it will not make a Switch 1 binary by mistake.
+
+Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro**. Copy the contents of release/switch to the SD card root. The build verifies the Switch 2 executable format but cannot test actual gameplay.
+
+## Current limitations
+
+Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUPs and other packaged/encrypted backups are unsupported. Updates are not merged. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
+
+**Early experimental release. Use at your own risk.**
