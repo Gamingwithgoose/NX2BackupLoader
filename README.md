@@ -72,7 +72,7 @@ It does not install game tickets, rewrite game ownership, or install backups to 
 
 ## Building yourself on Windows
 
-Download the repository as a ZIP or clone it with GitHub Desktop. Keep the directories together and double-click **build.bat**.
+Download the repository as a ZIP or clone it with GitHub Desktop. Keep the directories together. Save the [prepared icon JPEG](https://github.com/Gamingwithgoose/NX2BackupLoader) as **assets/BackupLoaderMKW.jpg** next to the build.bat folder, then double-click **build.bat**. The build embeds that JPEG into the NRO's Homebrew Menu assets. If the file is missing, the build reports an error instead of silently producing an iconless release.
 
 **Tools used:**
 - **devkitPro + MSYS2:** Install it first from https://devkitpro.org/wiki/Getting_Started. This provides the Windows build shell.
