@@ -1,5 +1,6 @@
 # Native Nintendo Switch 2 / kaiHEN build using ouncebrew libounce.
 .SUFFIXES:
+.DEFAULT_GOAL := all
 ifeq ($(strip $(DEVKITPRO)),)
 $(error DEVKITPRO is not set)
 endif
@@ -33,7 +34,7 @@ export OFILES := $(addsuffix .o,$(basename $(notdir $(wildcard $(SOURCES)/*.c)))
 export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) $(foreach dir,$(LIBDIRS),-I$(dir)/include)
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-.PHONY: all clean
+.PHONY: all clean $(BUILD)
 all: $(BUILD)
 $(BUILD):
 	@mkdir -p $@
@@ -47,6 +48,7 @@ DEPENDS := $(OFILES:.o=.d)
 .PHONY: all
 all: $(OUTPUT).nro
 $(OUTPUT).nro: $(OUTPUT).elf
-$(OUTPUT).elf: $(OFILES)
+$(OFILES): $(TOPDIR)/Makefile
+$(OUTPUT).elf: $(OFILES) $(TOPDIR)/Makefile
 	$(LINK.o) $(OFILES) $(LIBPATHS) $(LIBS) -o $@
 endif

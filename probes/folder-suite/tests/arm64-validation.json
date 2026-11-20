@@ -1,0 +1,77 @@
+{
+  "scope": "Compiled owned AArch64 modules and actual TLS resolver assembly; host TLS lookup callback simulated",
+  "checks": [
+    {
+      "test": "constructor before init",
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "test": "constructor after init",
+      "actual": 51966,
+      "expected": 51966
+    },
+    {
+      "test": "undefined weak",
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "test": "BSS and data",
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "test": "TLS initial",
+      "actual": 7,
+      "expected": 7
+    },
+    {
+      "test": "main first",
+      "actual": 4680,
+      "expected": 4680
+    },
+    {
+      "test": "main second",
+      "actual": 4686,
+      "expected": 4686
+    },
+    {
+      "test": "SIMD preserved",
+      "actual": 15.5,
+      "expected": 15.5
+    },
+    {
+      "test": "thread 1 first",
+      "actual": 4680,
+      "expected": 4680
+    },
+    {
+      "test": "thread 1 second",
+      "actual": 4686,
+      "expected": 4686
+    },
+    {
+      "test": "thread 2 first",
+      "actual": 4684,
+      "expected": 4684
+    },
+    {
+      "test": "thread 2 second",
+      "actual": 4694,
+      "expected": 4694
+    },
+    {
+      "test": "main TLS isolated",
+      "actual": 13,
+      "expected": 13
+    },
+    {
+      "test": "destructor",
+      "actual": 0,
+      "expected": 0
+    }
+  ],
+  "resolver_calls": 15,
+  "passed": 14
+}

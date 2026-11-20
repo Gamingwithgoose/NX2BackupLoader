@@ -1,0 +1,811 @@
+{
+  "scope": "Original rtld with modeled QueryMemory/stack/TLS, deterministic entropy and accelerated memset. Process GetInfo replies use the stated source. No SDK service, storage, save or network calls forwarded. PAC return target modeled without signature validation.",
+  "stop": "stopped before unsupported SVC 0xc",
+  "pc": "sdk+0x180bdc",
+  "process_info_source": "Suite 0.3 hardware observations",
+  "modeled_helper_and_return_visits": 159437,
+  "events": [
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x0",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x0",
+        "size": 134942720,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x80b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80b1000",
+        "size": 12288,
+        "state": 3,
+        "permission": 5,
+        "module": "rtld"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x80b4000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80b4000",
+        "size": 4096,
+        "state": 3,
+        "permission": 1,
+        "module": "rtld"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x80b5000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80b5000",
+        "size": 114688,
+        "state": 4,
+        "permission": 3,
+        "module": "rtld"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x80d1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80d1000",
+        "size": 1966080,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x82b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x82b1000",
+        "size": 113827840,
+        "state": 3,
+        "permission": 5,
+        "module": "main"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afeed8",
+        "0x1780afeed4",
+        "0x82b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x82b1000",
+        "size": 113827840,
+        "state": 3,
+        "permission": 5,
+        "module": "main"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0xef3f000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0xef3f000",
+        "size": 10391552,
+        "state": 3,
+        "permission": 1,
+        "module": "main"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0xf928000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0xf928000",
+        "size": 42962944,
+        "state": 4,
+        "permission": 3,
+        "module": "main"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x12221000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x12221000",
+        "size": 589824,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x122b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x122b1000",
+        "size": 937984,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afeed8",
+        "0x1780afeed4",
+        "0x122b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x122b1000",
+        "size": 937984,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x12396000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x12396000",
+        "size": 176128,
+        "state": 3,
+        "permission": 1,
+        "module": "subsdk0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x123c1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x123c1000",
+        "size": 55181312,
+        "state": 4,
+        "permission": 3,
+        "module": "subsdk0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x15861000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x15861000",
+        "size": 655360,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x15901000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x15901000",
+        "size": 2334720,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk1"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afeed8",
+        "0x1780afeed4",
+        "0x15901000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x15901000",
+        "size": 2334720,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk1"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x15b3b000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x15b3b000",
+        "size": 17985536,
+        "state": 3,
+        "permission": 1,
+        "module": "subsdk1"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x16c62000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16c62000",
+        "size": 847872,
+        "state": 4,
+        "permission": 3,
+        "module": "subsdk1"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x16d31000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16d31000",
+        "size": 327680,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x16d81000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16d81000",
+        "size": 724992,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk2"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afeed8",
+        "0x1780afeed4",
+        "0x16d81000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16d81000",
+        "size": 724992,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk2"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x16e32000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16e32000",
+        "size": 434176,
+        "state": 3,
+        "permission": 1,
+        "module": "subsdk2"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x16e9c000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16e9c000",
+        "size": 151552,
+        "state": 4,
+        "permission": 3,
+        "module": "subsdk2"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x16ec1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16ec1000",
+        "size": 1048576,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x16fc1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16fc1000",
+        "size": 8089600,
+        "state": 3,
+        "permission": 5,
+        "module": "sdk"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afeed8",
+        "0x1780afeed4",
+        "0x16fc1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16fc1000",
+        "size": 8089600,
+        "state": 3,
+        "permission": 5,
+        "module": "sdk"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x17778000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x17778000",
+        "size": 6221824,
+        "state": 3,
+        "permission": 1,
+        "module": "sdk"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x17d67000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x17d67000",
+        "size": 2400256,
+        "state": 4,
+        "permission": 3,
+        "module": "sdk"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x17fb1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x17fb1000",
+        "size": 1493495808,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x71000000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x71000000",
+        "size": 65536,
+        "state": 12,
+        "permission": 3,
+        "module": "modeled TLS"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x71010000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x71010000",
+        "size": 99046326272,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x1780a00000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x1780a00000",
+        "size": 1048576,
+        "state": 11,
+        "permission": 3,
+        "module": "modeled stack"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x1780b00000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x1780b00000",
+        "size": 448812548096,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x1780afef78",
+        "0x1780afef74",
+        "0x8000000000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x1780b00000",
+        "size": 448812548096,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "milestone": "original rtld relocation pass completed; snapshots captured before SDK entry"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb0",
+        "0xb",
+        "0x0",
+        "0x2"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c17"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb8",
+        "0xb",
+        "0x0",
+        "0x3"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c16"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb8",
+        "0x4",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0xe51800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb8",
+        "0x5",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x300000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb8",
+        "0x2",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x3408200000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb8",
+        "0x3",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x2000000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb8",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb8",
+        "0x1e",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb8",
+        "0xc",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x8000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeeb8",
+        "0xd",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x7ff8000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeec8",
+        "0xe",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x1780800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeec8",
+        "0xe",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x1780800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afeec8",
+        "0xf",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x80000000"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "sdk+0x180b88",
+      "args": [
+        "0x1780afee58",
+        "0x1780afee9c",
+        "0x1780afee80",
+        "0x10000"
+      ],
+      "model": {
+        "base": "0x1780a00000",
+        "size": 1048576,
+        "state": 11,
+        "permission": 3,
+        "module": "modeled stack"
+      }
+    },
+    {
+      "svc": "0xc",
+      "pc": "sdk+0x180bd8",
+      "args": [
+        "0x1780afee98",
+        "0x1234",
+        "0x1780afee9c",
+        "0x10000"
+      ]
+    }
+  ],
+  "main_lazy_imports_resolved": 641
+}

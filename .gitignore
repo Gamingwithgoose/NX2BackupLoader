@@ -4,3 +4,11 @@ app/*.nro
 app/*.map
 release/
 *.log
+__pycache__/
+*.pyc
+scanner-tests*
+
+probes/**/build/
+probes/**/*.elf
+probes/**/*.nro
+probes/**/*.map

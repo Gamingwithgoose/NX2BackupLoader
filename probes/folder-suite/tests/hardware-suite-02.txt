@@ -1,0 +1,288 @@
+NX2 Folder Execution Suite 0.2
+Scope: owned multi-module execution; Yoshi decode/map/link validation only.
+HOST result=00000000 title=0400a3a01ee4c000
+PASS Pokopia host
+RO result=00000000
+PASS borrowed RO available
+PASS TLS slot allocated
+
+FIXTURE_CYCLE 1 BEGIN
+PASS provider file/hash
+PASS fixture metadata
+MAP provider result=00000000 address=00000000080b0000
+PASS mapped fixture metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS fixture RX/R/RW permissions
+PASS client file/hash
+PASS fixture metadata
+MAP client result=00000000 address=0000000008130000
+PASS mapped fixture metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS fixture RX/R/RW permissions
+LINK status=OK global=2 jump=1 relr=2 tls=2 unknown=0 missing=
+PASS cross-module linking
+PASS RELR exercised
+PASS TLS descriptors exercised
+FUNCTION nx2_suite_entry result=OK address=0000000008131000
+FUNCTION nx2_ctor_check result=OK address=0000000008131060
+FUNCTION nx2_weak_check result=OK address=0000000008131040
+FUNCTION nx2_bss_check result=OK address=000000000813106c
+FUNCTION nx2_provider_tls result=OK address=00000000080b1044
+FUNCTION nx2_simd_tls result=OK address=00000000080b106c
+PASS all fixture functions resolved
+PASS constructor initially zero
+CALLBACKS module=0 final=0 count=0 status=OK
+CALLBACKS module=1 final=0 count=1 status=OK
+PASS constructors called
+PASS constructor state
+PASS undefined weak symbol is null
+PASS BSS and relocated writable data
+PASS TLS template initialized
+MAIN_CALL first=4680 second=4686
+PASS cross-module calls and TLS updates
+SIMD_TLS result=15.500 expected=15.5
+PASS TLS preserves floating argument
+WORKER_CREATE 0 result=00000000
+PASS worker thread create
+WORKER_START 0 result=00000000
+PASS worker thread start
+WORKER_CREATE 1 result=00000000
+PASS worker thread create
+WORKER_START 1 result=00000000
+PASS worker thread start
+WORKER_WAIT result=00000000
+WORKER_CLOSE result=00000000
+PASS worker joined and closed
+WORKER_VALUES 0 first=4680 second=4686
+PASS worker TLS values
+WORKER_WAIT result=00000000
+WORKER_CLOSE result=00000000
+PASS worker joined and closed
+WORKER_VALUES 1 first=4684 second=4694
+PASS worker TLS values
+PASS main TLS isolated from workers
+PASS TLS resolver had no fallback
+CALLBACKS module=1 final=1 count=1 status=OK
+CALLBACKS module=0 final=1 count=0 status=OK
+PASS destructors called
+PASS destructor state reset
+UNMAP index=1 result=00000000
+UNMAP index=0 result=00000000
+PASS fixture cleanup completed
+FIXTURE_CYCLE 1 END status=PASS
+
+FIXTURE_CYCLE 2 BEGIN
+PASS provider file/hash
+PASS fixture metadata
+MAP provider result=00000000 address=00000000080b0000
+PASS mapped fixture metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS fixture RX/R/RW permissions
+PASS client file/hash
+PASS fixture metadata
+MAP client result=00000000 address=0000000008130000
+PASS mapped fixture metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS fixture RX/R/RW permissions
+LINK status=OK global=2 jump=1 relr=2 tls=2 unknown=0 missing=
+PASS cross-module linking
+PASS RELR exercised
+PASS TLS descriptors exercised
+FUNCTION nx2_suite_entry result=OK address=0000000008131000
+FUNCTION nx2_ctor_check result=OK address=0000000008131060
+FUNCTION nx2_weak_check result=OK address=0000000008131040
+FUNCTION nx2_bss_check result=OK address=000000000813106c
+FUNCTION nx2_provider_tls result=OK address=00000000080b1044
+FUNCTION nx2_simd_tls result=OK address=00000000080b106c
+PASS all fixture functions resolved
+PASS constructor initially zero
+CALLBACKS module=0 final=0 count=0 status=OK
+CALLBACKS module=1 final=0 count=1 status=OK
+PASS constructors called
+PASS constructor state
+PASS undefined weak symbol is null
+PASS BSS and relocated writable data
+PASS TLS template initialized
+MAIN_CALL first=4680 second=4686
+PASS cross-module calls and TLS updates
+SIMD_TLS result=15.500 expected=15.5
+PASS TLS preserves floating argument
+WORKER_CREATE 0 result=00000000
+PASS worker thread create
+WORKER_START 0 result=00000000
+PASS worker thread start
+WORKER_CREATE 1 result=00000000
+PASS worker thread create
+WORKER_START 1 result=00000000
+PASS worker thread start
+WORKER_WAIT result=00000000
+WORKER_CLOSE result=00000000
+PASS worker joined and closed
+WORKER_VALUES 0 first=4680 second=4686
+PASS worker TLS values
+WORKER_WAIT result=00000000
+WORKER_CLOSE result=00000000
+PASS worker joined and closed
+WORKER_VALUES 1 first=4684 second=4694
+PASS worker TLS values
+PASS main TLS isolated from workers
+PASS TLS resolver had no fallback
+CALLBACKS module=1 final=1 count=1 status=OK
+CALLBACKS module=0 final=1 count=0 status=OK
+PASS destructors called
+PASS destructor state reset
+UNMAP index=1 result=00000000
+UNMAP index=0 result=00000000
+PASS fixture cleanup completed
+FIXTURE_CYCLE 2 END status=PASS
+
+FIXTURE_CYCLE 3 BEGIN
+PASS provider file/hash
+PASS fixture metadata
+MAP provider result=00000000 address=00000000080b0000
+PASS mapped fixture metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS fixture RX/R/RW permissions
+PASS client file/hash
+PASS fixture metadata
+MAP client result=00000000 address=0000000008130000
+PASS mapped fixture metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS fixture RX/R/RW permissions
+LINK status=OK global=2 jump=1 relr=2 tls=2 unknown=0 missing=
+PASS cross-module linking
+PASS RELR exercised
+PASS TLS descriptors exercised
+FUNCTION nx2_suite_entry result=OK address=0000000008131000
+FUNCTION nx2_ctor_check result=OK address=0000000008131060
+FUNCTION nx2_weak_check result=OK address=0000000008131040
+FUNCTION nx2_bss_check result=OK address=000000000813106c
+FUNCTION nx2_provider_tls result=OK address=00000000080b1044
+FUNCTION nx2_simd_tls result=OK address=00000000080b106c
+PASS all fixture functions resolved
+PASS constructor initially zero
+CALLBACKS module=0 final=0 count=0 status=OK
+CALLBACKS module=1 final=0 count=1 status=OK
+PASS constructors called
+PASS constructor state
+PASS undefined weak symbol is null
+PASS BSS and relocated writable data
+PASS TLS template initialized
+MAIN_CALL first=4680 second=4686
+PASS cross-module calls and TLS updates
+SIMD_TLS result=15.500 expected=15.5
+PASS TLS preserves floating argument
+WORKER_CREATE 0 result=00000000
+PASS worker thread create
+WORKER_START 0 result=00000000
+PASS worker thread start
+WORKER_CREATE 1 result=00000000
+PASS worker thread create
+WORKER_START 1 result=00000000
+PASS worker thread start
+WORKER_WAIT result=00000000
+WORKER_CLOSE result=00000000
+PASS worker joined and closed
+WORKER_VALUES 0 first=4680 second=4686
+PASS worker TLS values
+WORKER_WAIT result=00000000
+WORKER_CLOSE result=00000000
+PASS worker joined and closed
+WORKER_VALUES 1 first=4684 second=4694
+PASS worker TLS values
+PASS main TLS isolated from workers
+PASS TLS resolver had no fallback
+CALLBACKS module=1 final=1 count=1 status=OK
+CALLBACKS module=0 final=1 count=0 status=OK
+PASS destructors called
+PASS destructor state reset
+UNMAP index=1 result=00000000
+UNMAP index=0 result=00000000
+PASS fixture cleanup completed
+FIXTURE_CYCLE 3 END status=PASS
+PASS Yoshi folder found
+YOSHI_ROOT sdmc:/games/YoshiAndTheMysteriousBook_Demo/base
+YOSHI_PREPARE rtld
+NSO rtld status=OK image=73728 bss=61440
+PASS Yoshi NSO full hash/decompression/segment hashes
+PASS Yoshi dynamic metadata
+YOSHI_MAP rtld result=00000000 address=00000000080b0000
+PASS Yoshi mapped metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS Yoshi RX/R/RW permissions
+YOSHI_PREPARE main
+NSO main status=OK image=152985600 bss=14200832
+PASS Yoshi NSO full hash/decompression/segment hashes
+PASS Yoshi dynamic metadata
+YOSHI_MAP main result=00000000 address=00000000082b0000
+PASS Yoshi mapped metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS Yoshi RX/R/RW permissions
+YOSHI_PREPARE subsdk0
+NSO subsdk0 status=OK image=56168448 bss=131072
+PASS Yoshi NSO full hash/decompression/segment hashes
+PASS Yoshi dynamic metadata
+YOSHI_MAP subsdk0 result=00000000 address=00000000122b0000
+PASS Yoshi mapped metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS Yoshi RX/R/RW permissions
+YOSHI_PREPARE subsdk1
+NSO subsdk1 status=OK image=21065728 bss=106496
+PASS Yoshi NSO full hash/decompression/segment hashes
+PASS Yoshi dynamic metadata
+YOSHI_MAP subsdk1 result=00000000 address=0000000015900000
+PASS Yoshi mapped metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS Yoshi RX/R/RW permissions
+YOSHI_PREPARE subsdk2
+NSO subsdk2 status=OK image=1253376 bss=61440
+PASS Yoshi NSO full hash/decompression/segment hashes
+PASS Yoshi dynamic metadata
+YOSHI_MAP subsdk2 result=00000000 address=0000000016d80000
+PASS Yoshi mapped metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS Yoshi RX/R/RW permissions
+YOSHI_PREPARE sdk
+NSO sdk status=OK image=14721024 bss=1994752
+PASS Yoshi NSO full hash/decompression/segment hashes
+PASS Yoshi dynamic metadata
+YOSHI_MAP sdk result=00000000 address=0000000016fc0000
+PASS Yoshi mapped metadata
+PERMISSION segment=0 result=00000000 permission=5 expected=5
+PERMISSION segment=1 result=00000000 permission=1 expected=1
+PERMISSION segment=2 result=00000000 permission=3 expected=3
+PASS Yoshi RX/R/RW permissions
+YOSHI_LINK_VALIDATION status=TLS template/layout unavailable abs64=13779 global=1601 jump=11498 relative=689 relr=2663552 tls=1 unknown_tls=1 missing=
+PASS Yoshi non-TLS linking validation
+YOSHI_NATIVE_STARTUP BLOCKED: stripped NSO has one anonymous TLS descriptor and no supported TLS template metadata. No Yoshi constructors/entrypoints were called. RomFS routing and save isolation are also unimplemented.
+UNMAP index=5 result=00000000
+UNMAP index=4 result=00000000
+UNMAP index=3 result=00000000
+UNMAP index=2 result=00000000
+UNMAP index=1 result=00000000
+UNMAP index=0 result=00000000
+PASS Yoshi mapping cleanup completed
+SUMMARY checks=129 passed=129 failures=0 full=1
+Yoshi was not executed. Report records the remaining startup blockers explicitly.

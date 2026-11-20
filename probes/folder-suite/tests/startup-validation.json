@@ -1,0 +1,615 @@
+{
+  "scope": "Original rtld with synthetic QueryMemory/TLS, deterministic entropy, synthetic process information and accelerated memset. No SDK service, storage, save or network calls forwarded. PAC return target modeled without signature validation.",
+  "stop": "stopped before unsupported SVC 0x29",
+  "pc": "sdk+0x180d1c",
+  "modeled_helper_and_return_visits": 159437,
+  "events": [
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x0",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x0",
+        "size": 134942720,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x80b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80b1000",
+        "size": 12288,
+        "state": 3,
+        "permission": 5,
+        "module": "rtld"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x80b4000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80b4000",
+        "size": 4096,
+        "state": 3,
+        "permission": 1,
+        "module": "rtld"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x80b5000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80b5000",
+        "size": 114688,
+        "state": 4,
+        "permission": 3,
+        "module": "rtld"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x80d1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80d1000",
+        "size": 1966080,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x82b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x82b1000",
+        "size": 113827840,
+        "state": 3,
+        "permission": 5,
+        "module": "main"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700feed8",
+        "0x700feed4",
+        "0x82b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x82b1000",
+        "size": 113827840,
+        "state": 3,
+        "permission": 5,
+        "module": "main"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0xef3f000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0xef3f000",
+        "size": 10391552,
+        "state": 3,
+        "permission": 1,
+        "module": "main"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0xf928000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0xf928000",
+        "size": 42962944,
+        "state": 4,
+        "permission": 3,
+        "module": "main"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x12221000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x12221000",
+        "size": 589824,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x122b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x122b1000",
+        "size": 937984,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700feed8",
+        "0x700feed4",
+        "0x122b1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x122b1000",
+        "size": 937984,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x12396000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x12396000",
+        "size": 176128,
+        "state": 3,
+        "permission": 1,
+        "module": "subsdk0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x123c1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x123c1000",
+        "size": 55181312,
+        "state": 4,
+        "permission": 3,
+        "module": "subsdk0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x15861000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x15861000",
+        "size": 655360,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x15901000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x15901000",
+        "size": 2334720,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk1"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700feed8",
+        "0x700feed4",
+        "0x15901000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x15901000",
+        "size": 2334720,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk1"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x15b3b000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x15b3b000",
+        "size": 17985536,
+        "state": 3,
+        "permission": 1,
+        "module": "subsdk1"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x16c62000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16c62000",
+        "size": 847872,
+        "state": 4,
+        "permission": 3,
+        "module": "subsdk1"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x16d31000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16d31000",
+        "size": 327680,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x16d81000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16d81000",
+        "size": 724992,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk2"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700feed8",
+        "0x700feed4",
+        "0x16d81000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16d81000",
+        "size": 724992,
+        "state": 3,
+        "permission": 5,
+        "module": "subsdk2"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x16e32000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16e32000",
+        "size": 434176,
+        "state": 3,
+        "permission": 1,
+        "module": "subsdk2"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x16e9c000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16e9c000",
+        "size": 151552,
+        "state": 4,
+        "permission": 3,
+        "module": "subsdk2"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x16ec1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16ec1000",
+        "size": 1048576,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x16fc1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16fc1000",
+        "size": 8089600,
+        "state": 3,
+        "permission": 5,
+        "module": "sdk"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700feed8",
+        "0x700feed4",
+        "0x16fc1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x16fc1000",
+        "size": 8089600,
+        "state": 3,
+        "permission": 5,
+        "module": "sdk"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x17778000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x17778000",
+        "size": 6221824,
+        "state": 3,
+        "permission": 1,
+        "module": "sdk"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x17d67000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x17d67000",
+        "size": 2400256,
+        "state": 4,
+        "permission": 3,
+        "module": "sdk"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x17fb1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x17fb1000",
+        "size": 549353484288,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "rtld+0x20d0",
+      "args": [
+        "0x700fef78",
+        "0x700fef74",
+        "0x8000000000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x17fb1000",
+        "size": 549353484288,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "milestone": "original rtld relocation pass completed; snapshots captured before SDK entry"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x700feeb0",
+        "0xb",
+        "0x0",
+        "0x2"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c17"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x700feeb8",
+        "0xb",
+        "0x0",
+        "0x3"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c16"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x700feeb8",
+        "0x4",
+        "0xffff8001",
+        "0x0"
+      ],
+      "synthetic_process_info": "0x20000000"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x700feeb8",
+        "0x5",
+        "0xffff8001",
+        "0x0"
+      ],
+      "synthetic_process_info": "0x20000000"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x700feeb8",
+        "0x2",
+        "0xffff8001",
+        "0x0"
+      ],
+      "synthetic_process_info": "0x40000000"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x700feeb8",
+        "0x3",
+        "0xffff8001",
+        "0x0"
+      ],
+      "synthetic_process_info": "0x10000000"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x700feeb8",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ]
+    }
+  ],
+  "main_lazy_imports_resolved": 641
+}

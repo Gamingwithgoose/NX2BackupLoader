@@ -1,0 +1,200 @@
+{
+  "source": "Transcribed from initial read of uploaded Suite 0.3 report; no entropy values retained",
+  "queries": [
+    {
+      "type": 0,
+      "result": "0x0",
+      "value": "0x3f"
+    },
+    {
+      "type": 1,
+      "result": "0x0",
+      "value": "0xffffffff0000000"
+    },
+    {
+      "type": 2,
+      "result": "0x0",
+      "value": "0x3408200000"
+    },
+    {
+      "type": 3,
+      "result": "0x0",
+      "value": "0x2000000000"
+    },
+    {
+      "type": 4,
+      "result": "0x0",
+      "value": "0xe51800000"
+    },
+    {
+      "type": 5,
+      "result": "0x0",
+      "value": "0x300000000"
+    },
+    {
+      "type": 6,
+      "result": "0x0",
+      "value": "0x23ac00000"
+    },
+    {
+      "type": 7,
+      "result": "0x0",
+      "value": "0x23a828000"
+    },
+    {
+      "type": 8,
+      "result": "0xe401",
+      "value": null
+    },
+    {
+      "type": 9,
+      "result": "0xe401",
+      "value": null
+    },
+    {
+      "type": 10,
+      "result": "0xe401",
+      "value": null
+    },
+    {
+      "type": 11,
+      "result": "0xe401",
+      "value": null
+    },
+    {
+      "type": 12,
+      "result": "0x0",
+      "value": "0x8000000"
+    },
+    {
+      "type": 13,
+      "result": "0x0",
+      "value": "0x7ff8000000"
+    },
+    {
+      "type": 14,
+      "result": "0x0",
+      "value": "0x1780800000"
+    },
+    {
+      "type": 15,
+      "result": "0x0",
+      "value": "0x80000000"
+    },
+    {
+      "type": 16,
+      "result": "0x0",
+      "value": "0x0"
+    },
+    {
+      "type": 17,
+      "result": "0x0",
+      "value": "0x0"
+    },
+    {
+      "type": 18,
+      "result": "0x0",
+      "value": "0x400a3a01ee4c000"
+    },
+    {
+      "type": 19,
+      "result": "0xf001",
+      "value": null
+    },
+    {
+      "type": 20,
+      "result": "0x0",
+      "value": "0x288cdaa000"
+    },
+    {
+      "type": 21,
+      "result": "0x0",
+      "value": "0x23ac00000"
+    },
+    {
+      "type": 22,
+      "result": "0x0",
+      "value": "0x23a828000"
+    },
+    {
+      "type": 23,
+      "result": "0x0",
+      "value": "0x1"
+    },
+    {
+      "type": 24,
+      "result": "0x0",
+      "value": "0x12b"
+    },
+    {
+      "type": 25,
+      "result": "0xe401",
+      "value": null
+    },
+    {
+      "type": 26,
+      "result": "0xe401",
+      "value": null
+    },
+    {
+      "type": 27,
+      "result": "0xe401",
+      "value": null
+    },
+    {
+      "type": 28,
+      "result": "0x0",
+      "value": "0x0"
+    },
+    {
+      "type": 29,
+      "result": "0x0",
+      "value": "0x0"
+    },
+    {
+      "type": 30,
+      "result": "0x0",
+      "value": "0x0"
+    },
+    {
+      "type": 31,
+      "result": "0x0",
+      "value": "0x4000000"
+    },
+    {
+      "type": 32,
+      "result": "0x0",
+      "value": "0x1300000"
+    },
+    {
+      "type": 33,
+      "result": "0x0",
+      "value": "0x1000"
+    },
+    {
+      "type": 34,
+      "result": "0xe401",
+      "value": null
+    },
+    {
+      "type": 35,
+      "result": "0xe401",
+      "value": null
+    },
+    {
+      "type": 36,
+      "result": "0x0",
+      "value": "0x8000000000"
+    },
+    {
+      "type": 37,
+      "result": "0x0",
+      "value": "0x0"
+    },
+    {
+      "type": 38,
+      "result": "0x0",
+      "value": "0x0"
+    }
+  ]
+}

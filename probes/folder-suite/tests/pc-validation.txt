@@ -1,0 +1,65 @@
+PASS valid mapping inspected
+PASS function found
+PASS entry lies in code
+PASS relocations applied
+PASS GOT points at mapped writable data
+PASS missing entry rejected
+PASS unknown envelope rejected
+PASS truncated mapping rejected
+PASS TLS relocation with non-TLS symbol rejected
+PASS relocation cannot write code
+PASS out of range symbol rejected
+11 checks, 0 failures
+PASS provider parse
+PASS client parse with BSS
+PASS missing provider rejected
+PASS group validates
+PASS TLS descriptors found
+PASS RELR bitmap found
+PASS missing TLS resolver rejected
+PASS group relocates
+PASS provider function lookup
+PASS cross-module PLT points to provider
+PASS undefined weak remains null
+PASS TLS resolver installed
+PASS TLS points at provider block
+PASS constructor list relocated
+PASS destructor list relocated
+PASS double relocation rejected
+PASS invalid constructor target rejected
+PASS provider GNU-only hash parse
+PASS client GNU-only hash parse
+PASS GNU-only cross-module linking
+PASS RELR bitmap without address rejected
+PASS RELR cannot target text
+PASS unknown TLS template blocks linking
+PASS explicit anonymous preservation validates
+PASS policy cannot cover another offset
+PASS initialized descriptor cannot be preserved
+PASS named descriptor cannot be preserved
+PASS nonzero TLS addend cannot be preserved
+PASS template-backed TLS cannot be preserved
+PASS out-of-range preservation module rejected
+PASS missing preservation list rejected
+PASS preserved descriptor links
+PASS preserved descriptor stays zero
+33 checks, 0 failures
+PASS raw NSO with MOD0 in rodata
+PASS short NSO rejected
+PASS bad NSO magic rejected
+PASS outside-file segment rejected
+PASS overlapping segments rejected
+PASS oversized BSS rejected
+PASS invalid MOD0 pointer rejected
+PASS invalid LZ4 backreference rejected
+PASS invalid ZBIC rejected
+PASS segment hash mismatch rejected
+PASS wrong full-file hash rejected
+11 checks, 0 failures
+PREP rtld bytes=73728 bss=61440 parse=OK
+PREP main bytes=152985600 bss=14200832 parse=OK
+PREP subsdk0 bytes=56168448 bss=131072 parse=OK
+PREP subsdk1 bytes=21065728 bss=106496 parse=OK
+PREP subsdk2 bytes=1253376 bss=61440 parse=OK
+PREP sdk bytes=14721024 bss=1994752 parse=OK
+VALIDATE TLS template/layout unavailable abs=13779 global=1601 jump=11498 relative=689 relr=2663552 tls=1 unknown_tls=1 missing=

@@ -1,0 +1,7 @@
+PARITY rtld targets=41 differences=0
+PARITY main targets=2619649 differences=0
+PARITY subsdk0 targets=4837 differences=0
+PARITY subsdk1 targets=27821 differences=0
+PARITY subsdk2 targets=2214 differences=0
+PARITY sdk targets=36558 differences=0
+TOTAL targets=2691120 differences=0
