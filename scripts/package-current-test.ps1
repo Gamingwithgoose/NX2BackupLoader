@@ -6,35 +6,34 @@ function File-Sha256([string]$Path){
  finally{$stream.Dispose();$sha.Dispose()}
 }
 $repo=[IO.Path]::GetFullPath($Root)
-$source=Join-Path $repo 'probes\folder-suite'
+$source=Join-Path $repo 'probes\game-launch'
 $release=Join-Path $repo 'release'
 $binary=Join-Path $source 'nx2-folder-exec.nro'
 & (Join-Path $repo 'scripts\verify-nro.ps1') -Path $binary
 if(-not $?){throw 'Executable verification failed'}
-$references=Get-Content -Raw -LiteralPath (Join-Path $source 'fixture\reference.json') | ConvertFrom-Json
-foreach($row in $references){
- if($row.name -notin @('provider','client')){throw 'Unexpected fixture name'}
- $path=Join-Path $source ('fixture\'+$row.name+'.nxm')
- $hash=(File-Sha256 $path)
- if($hash -ne $row.sha256){throw 'Fixture hash mismatch'}
-}
 $app=Join-Path $release 'switch\nx2-folder-exec'
-$games=Join-Path $release 'games\nx2-exec-fixture'
-New-Item -ItemType Directory -Force -Path $app,$games | Out-Null
-$files=@(@{source=$binary;target=(Join-Path $app 'nx2-folder-exec.nro')})
-foreach($row in $references){$files+=@{source=(Join-Path $source ('fixture\'+$row.name+'.nxm'));target=(Join-Path $games ($row.name+'.nxm'))}}
-foreach($file in $files){
- $stage=$file.target+'.tmp';Copy-Item -LiteralPath $file.source -Destination $stage
- if((File-Sha256 $stage) -ne (File-Sha256 $file.source)){throw 'Staged copy mismatch'}
-}
-# Publish the executable last, after both matching fixtures are in place.
-foreach($file in ($files | Select-Object -Skip 1)){Move-Item -LiteralPath ($file.target+'.tmp') -Destination $file.target -Force}
-Move-Item -LiteralPath ($files[0].target+'.tmp') -Destination $files[0].target -Force
+New-Item -ItemType Directory -Force -Path $app | Out-Null
+$target=Join-Path $app 'nx2-folder-exec.nro'
+$stage=$target+'.tmp';Copy-Item -LiteralPath $binary -Destination $stage
+if((File-Sha256 $stage) -ne (File-Sha256 $binary)){throw 'Staged executable mismatch'}
+Move-Item -LiteralPath $stage -Destination $target -Force
 Copy-Item -LiteralPath (Join-Path $source 'README.txt') -Destination (Join-Path $release 'README.txt')
-# Only named outputs from earlier tests are retired; game directories are never removed.
-foreach($relative in @('nx2backuploader.nro','nx2-sdprobe.nro','nx2-folder-exec.nro','games\nx2-exec-fixture\module.nxm')){
+# Folder indices are now generated from the selected SD backup. Retire metadata only.
+$oldMap=[IO.Path]::GetFullPath((Join-Path $release 'games\nx2-yoshi\romfs.map'))
+if(-not $oldMap.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
+if(Test-Path -LiteralPath $oldMap){Remove-Item -LiteralPath $oldMap}
+foreach($relative in @('games\nx2-yoshi','games')){
+ $oldDir=[IO.Path]::GetFullPath((Join-Path $release $relative))
+ if(-not $oldDir.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
+ if((Test-Path -LiteralPath $oldDir) -and @(Get-ChildItem -LiteralPath $oldDir -Force).Count -eq 0){Remove-Item -LiteralPath $oldDir}
+}
+# Retire only named obsolete build artifacts, keeping all hardware reports.
+foreach($relative in @('nx2backuploader.nro','nx2-sdprobe.nro','nx2-folder-exec.nro','games\nx2-exec-fixture\module.nxm','games\nx2-exec-fixture\provider.nxm','games\nx2-exec-fixture\client.nxm')){
  $target=[IO.Path]::GetFullPath((Join-Path $release $relative))
  if(-not $target.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
  if(Test-Path -LiteralPath $target){Remove-Item -LiteralPath $target -Force}
 }
-Write-Output '[OK] Current test staged in release/switch and release/games.'
+$obsolete=[IO.Path]::GetFullPath((Join-Path $release 'games\nx2-exec-fixture'))
+if(-not $obsolete.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
+if((Test-Path -LiteralPath $obsolete) -and @(Get-ChildItem -LiteralPath $obsolete -Force).Count -eq 0){Remove-Item -LiteralPath $obsolete}
+Write-Output '[OK] Folder Launcher 0.13 staged in release/switch; game indices are automatic.'

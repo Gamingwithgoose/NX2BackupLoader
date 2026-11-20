@@ -1,0 +1,13 @@
+{
+  "worker_elf_sha256": "7e636bec2e790beee684cf72614f6d572d8fa2725ea3c36cf986460c8f04501e",
+  "scope": "Actual original Yoshi startup to the SDK address-region allocation entry after modeled OS initialization. Allocation body is not executed; full SDK service/CRT initialization is not modeled. Captured MKW alias/resource values, modeled post-release/non-system memory accounting and stack/thread replies. Full SDK service init is not emulated. No physical pages mapped.",
+  "native_startup_reaches_address_allocation_after_previous_exit_guard": true,
+  "reservation": [
+    {
+      "pc": "sdk+0x14c940",
+      "output_pointer": "0x11498278",
+      "requested_bytes": 66571993088
+    }
+  ],
+  "game_address_and_physical_allocation_not_yet_tested": true
+}

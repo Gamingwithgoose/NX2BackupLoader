@@ -1,0 +1,17 @@
+{
+  "worker_elf_sha256": "45489659e7743fe89beb85f181f6c6652963caedae23fecc748a7d856ff62e4c",
+  "observed_hbl_override_base": "0x46c8493000",
+  "observed_hbl_override_bytes": 9501593600,
+  "planned_host_bytes": 1075236864,
+  "planned_game_base": "0x4708600000",
+  "planned_game_bytes": 8426356736,
+  "strong_startup_override_executed": true,
+  "actual_libounce_allocator_uses_only_host_range": true,
+  "host_allocations_checked": 64,
+  "host_allocations_released": true,
+  "oversized_host_allocations_rejected": true,
+  "small_override_retains_full_host_range": true,
+  "no_override_fallback_checked": true,
+  "game_region_memory_touched": false,
+  "scope": "Offline actual linked startup and libounce page allocator, single-thread atomics modeled; no game assets or real kernel/service forwarding."
+}

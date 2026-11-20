@@ -8,9 +8,9 @@ set "OUT=%~dp0release\switch\nx2-folder-exec\nx2-folder-exec.nro"
 set "LOG=%~dp0build.log"
 for /f "delims=" %%P in ('where python.exe 2^>nul') do if not defined NX2_PYTHON set "NX2_PYTHON=%%P"
 set "RESULT=1"
-> "%LOG%" echo NX2 Folder Execution Suite 0.3 build started
+> "%LOG%" echo NX2BackupLoader Folder Launcher 0.13 build started
 echo ===========================================================
-echo NX2 Folder Execution Suite 0.3 - SWITCH 2 / libounce
+echo NX2BackupLoader Folder Launcher 0.13 - SWITCH 2 / libounce
 echo ===========================================================
 echo Source : %NX2_PROJECT_ROOT%
 echo Log    : %LOG%
@@ -30,8 +30,7 @@ echo [BUILD] Running local devkitPro ounce-devkit build...
 set "RESULT=%ERRORLEVEL%"
 echo.
 echo ---------------- BUILD OUTPUT ----------------
-if exist "%LOG%" (type "%LOG%") else (echo [ERROR] No log file & for /f "delims=" %%P in ('where python.exe 2^>nul') do if not defined NX2_PYTHON set "NX2_PYTHON=%%P"
-set "RESULT=1")
+if exist "%LOG%" (type "%LOG%") else (echo [ERROR] No log file & set "RESULT=1")
 echo ---------------- END BUILD OUTPUT ------------
 if not "%RESULT%"=="0" (
   echo [FAILED] Compilation exited with code %RESULT%.
@@ -41,8 +40,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\verify-nro
 if errorlevel 1 (
   echo [FAILED] Switch 2 NRO verification failed.
   if exist "%OUT%" del /f /q "%OUT%"
-  for /f "delims=" %%P in ('where python.exe 2^>nul') do if not defined NX2_PYTHON set "NX2_PYTHON=%%P"
-set "RESULT=1"
+  set "RESULT=1"
   goto finish
 )
 echo.

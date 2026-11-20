@@ -1,0 +1,42 @@
+NX2BackupLoader Launch Test 0.6 — PC validation, 2026-11-20
+
+Release NRO: 483328 bytes
+SHA256 da53607c8dbd080ba7fdfc526075241440f91294a79284a65051883f6cce07a3
+Actual tested release ELF:
+SHA256 3e1e9a14d16d10686b6f5dfecd6453eb66ef801edee45f962dd6370aa9143c0a
+
+Change: replace late multi-gigabyte memalign calls with an application startup
+heap partition. libounce initializes its allocator with only the host range;
+the reserved game tail is never malloc-owned and is never freed. No kernel heap
+resize is performed when hbloader supplies an override. Kernel mappings are
+checked before the reserved game range is zeroed for an actual launch attempt.
+
+PASS 28659 native host assertions, including 10000 deterministic varied range
+cases and the exact 0.5 hardware override values. Covers alignment, minimum host
+and game capacities, overflow, small heaps, and the earlier index/path/IPC/gate
+checks. Source under test is identical to the published source.
+PASS actual linked strong __libnx_initheap hook with observed base 0x46c8493000
+and size 9501593600. Planned host 1075236864, game base 0x4708600000, game bytes
+8426356736. Addresses are calculated each run rather than hardcoded at runtime.
+PASS actual libounce page allocator receives only host bounds; 64 aligned
+allocations stay within them, do not overlap, and return all free pages on release.
+PASS requests larger than host bounds rejected. Small heap keeps the full host
+range; no-override startup calls a modeled 512 MiB fallback. Reserved game pages
+remain unmapped in the test, so accidental writes into them fail.
+PASS Switch 2 NRO segment/MOD0/OUN0 checks and matching published copy.
+PASS actual linked ELF real-SDK RomFS mount/cache query and original file hashes,
+including .ucas offset 2147549184. PASS private-save create/write/close/read/delete.
+PASS actual ELF's 66 shared launch gates and original rtld/OS initialization to
+SDK module initialization; stop at the first unmodeled service connection.
+PASS service handle tracking, clone/close handling, stale TLS-name rejection,
+FSP denial-before-kernel-transport, and busy-worker context rejection.
+
+Evidence: heap-startup-06.json, bridge-preflight-result.json,
+native-boot-result.json, guard-result.json. Historical 0.5 PC results are under
+history-05/, and hardware-launch-05.txt is the exact supplied console report.
+
+LIMITS: no full main/UI execution, actual private-heap clearing, GPU services or
+hardware multicore behavior is emulated. Kernel responses, PAC returns and
+single-thread atomics are models. No real console services forwarded.
+Version 0.5's real console file/save tests passed; it never attempted game entry.
+The 0.6 memory fix and a successful game/title-screen boot need hardware testing.

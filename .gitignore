@@ -12,3 +12,7 @@ probes/**/build/
 probes/**/*.elf
 probes/**/*.nro
 probes/**/*.map
+
+!probes/game-launch/generated/romfs.map
+probes/**/tests/*.exe
+probes/**/tests/*.obj

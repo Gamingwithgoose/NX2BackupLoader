@@ -11,6 +11,7 @@
 #include "nso.h"
 #include "fixture_hash.h"
 #include "yoshi_hashes.h"
+#include "sdk_os.h"
 extern void nx2_tlsdesc_resolver(void);
 typedef struct {void *backing;size_t image,bss;u64 mapped;} Loaded;
 typedef struct {void *blocks[16];Nx2Group *group;} TlsContext;
@@ -24,7 +25,7 @@ static char outcome[160]="A: full suite | Y: fixture suite only | PLUS: exit";
 static void hash_bytes(unsigned char out[32],const void *data,size_t bytes){sha256CalculateHash(out,data,bytes);}
 static void record(FILE *f,const char *format,...){va_list args;va_start(args,format);if(vfprintf(f,format,args)<0)log_error=1;va_end(args);if(fflush(f))log_error=1;}
 static void test(FILE *f,const char *name,int passed){checks++;if(!passed)failures++;record(f,"%s %s\n",passed?"PASS":"FAIL",name);}
-static void screen(const char *stage){consoleClear();printf("NX2 Folder Execution Suite 0.3\n\n%s\n\nReport updates after every stage.\n",stage);consoleUpdate(NULL);}
+static void screen(const char *stage){consoleClear();printf("NX2 Folder Execution Suite 0.4\n\n%s\n\nReport updates after every stage.\n",stage);consoleUpdate(NULL);}
 uint64_t nx2_tls_offset(const Nx2TlsArg *arg){
     TlsContext *context=tls_slot>=0?threadTlsGet(tls_slot):NULL;uintptr_t address=(uintptr_t)&tls_guard,tp;
     if(context&&arg&&arg->module<context->group->count&&context->blocks[arg->module]&&arg->offset<context->group->modules[arg->module].tls_memory_size)address=(uintptr_t)context->blocks[arg->module]+arg->offset;
@@ -133,6 +134,83 @@ static int find_yoshi(char root[1024]){
         }
     }closedir(directory);return found;
 }
+static void sdk_worker(void *argument){
+    Nx2SdkOsJob *job=argument;
+    nx2_sdk_os_run(job);
+    /* A worker with damaged host context must never enter libounce teardown.
+     * The normal host thread observes stage 99 and exits the whole process. */
+    if(job->context_fault)for(;;)__asm__ volatile("wfe");
+}
+static void sdk_os_test(FILE *f,Nx2Module *sdk){
+    screen("Executing Yoshi SDK OS initialization and runtime tests...");
+    record(f,"\nYOSHI_SDK_OS_BEGIN: actual verified SDK code; dedicated worker; no game entrypoint, constructors, filesystem mounts or save access.\n");
+    static const char *names[]={
+        "nnosInitialize","_ZN2nn2os16GetCurrentThreadEv","_ZN2nn2os11GetThreadIdEPKNS0_10ThreadTypeE",
+        "_ZN2nn2os15AllocateTlsSlotEPNS0_7TlsSlotEPFvmE","_ZN2nn2os11GetTlsValueENS0_7TlsSlotE",
+        "_ZN2nn2os11SetTlsValueENS0_7TlsSlotEm","_ZN2nn2os11FreeTlsSlotENS0_7TlsSlotE",
+        "_ZN2nn2os15InitializeMutexEPNS0_9MutexTypeEbi","_ZN2nn2os12TryLockMutexEPNS0_9MutexTypeE",
+        "_ZN2nn2os11UnlockMutexEPNS0_9MutexTypeE","_ZN2nn2os13FinalizeMutexEPNS0_9MutexTypeE"
+    };
+    uintptr_t addresses[11];int resolved=1;
+    for(unsigned i=0;i<11;i++){addresses[i]=function(f,sdk,names[i]);if(!addresses[i])resolved=0;}
+    test(f,"Yoshi SDK runtime functions resolved",resolved);if(!resolved)return;
+    Nx2SdkOsJob job={0};
+    _Static_assert(sizeof(job.api)==sizeof(addresses),"AArch64 function pointer layout");
+    memcpy(&job.api,addresses,sizeof(addresses));
+    job.data_begin=(uintptr_t)sdk->guest+sdk->address[2];
+    job.data_end=job.data_begin+sdk->memory_size[2];
+    job.tls_result=UINT64_MAX;
+    u64 allowed=0;u32 host_core=svcGetCurrentProcessorNumber();int worker_core=-1;
+    Result rc=svcGetInfo(&allowed,InfoType_CoreMask,CUR_PROCESS_HANDLE,0);
+    if(R_SUCCEEDED(rc))for(int core=0;core<6;core++)if((allowed&(1ULL<<core))&&(u32)core!=host_core){worker_core=core;break;}
+    record(f,"SDK_WORKER_CORE host=%u selected=%d allowed=%016llx\n",host_core,worker_core,(unsigned long long)allowed);
+    test(f,"Separate allowed CPU available for SDK worker",worker_core>=0);if(worker_core<0)return;
+    Thread thread;rc=threadCreate(&thread,sdk_worker,&job,NULL,0x100000,0x2c,worker_core);
+    record(f,"SDK_WORKER_CREATE result=%08x\n",rc);test(f,"Yoshi SDK worker created",R_SUCCEEDED(rc));if(R_FAILED(rc))return;
+    job.handle=thread.handle;
+    u64 expected_id=0;s32 priority=0;rc=svcGetThreadId(&expected_id,thread.handle);
+    test(f,"SDK worker kernel thread ID available",R_SUCCEEDED(rc));
+    if(R_FAILED(rc)){if(R_FAILED(threadClose(&thread)))fatal(f,"SDK unstarted worker cleanup failed");return;}
+    Result prc=svcGetThreadPriority(&priority,thread.handle);
+    record(f,"SDK_WORKER_KERNEL handle=%08x id=%016llx priority_result=%08x priority=%d\n",thread.handle,(unsigned long long)expected_id,prc,priority);
+    test(f,"SDK worker kernel priority available",R_SUCCEEDED(prc));
+    if(R_FAILED(prc)){if(R_FAILED(threadClose(&thread)))fatal(f,"SDK unstarted worker cleanup failed");return;}
+    record(f,"SDK_OS_INIT_ABOUT_TO_EXECUTE: report flushed before native call.\n");
+    rc=threadStart(&thread);test(f,"Yoshi SDK worker started",R_SUCCEEDED(rc));
+    if(R_FAILED(rc)){if(R_FAILED(threadClose(&thread)))fatal(f,"SDK unstarted worker cleanup failed");return;}
+    int finished=0;u64 last=UINT64_MAX;
+    for(unsigned tick=0;tick<150;tick++){
+        s32 index=-1;rc=svcWaitSynchronization(&index,&thread.handle,1,100000000ULL);
+        u64 stage=__atomic_load_n(&job.stage,__ATOMIC_ACQUIRE);
+        if(stage!=last){record(f,"SDK_WORKER_STAGE %llu\n",(unsigned long long)stage);last=stage;}
+        if(stage==99)fatal(f,"SDK worker could not restore host context; ending process before unmapping");
+        if(R_SUCCEEDED(rc)){finished=1;break;}
+        if(rc!=KERNELRESULT(TimedOut))fatal(f,"SDK worker wait failed; mappings retained");
+    }
+    if(!finished)fatal(f,"SDK worker timed out; ending process before live-code unmap");
+    test(f,"Yoshi SDK worker finished",1);
+    rc=threadClose(&thread);record(f,"SDK_WORKER_CLOSE result=%08x\n",rc);
+    if(R_FAILED(rc))fatal(f,"SDK worker close failed");
+    test(f,"Yoshi SDK worker closed",1);
+    for(u64 i=0;i<job.trace_count&&i<32;i++)record(f,"SDK_CHECKPOINT %llu\n",(unsigned long long)job.trace[i]);
+    record(f,"SDK_THREAD initialized=%llu pointer=%016llx id=%016llx expected=%016llx\n",(unsigned long long)job.initialized,(unsigned long long)job.thread,(unsigned long long)job.thread_id,(unsigned long long)expected_id);
+    test(f,"Yoshi SDK OS initializer returned",job.initialized==1);
+    test(f,"Yoshi SDK thread object lies in SDK data",job.thread_valid==1);
+    test(f,"Yoshi SDK thread ID matches kernel",job.thread_id==expected_id);
+    record(f,"SDK_TLS result=%016llx slot=%llu initial=%016llx value=%016llx cleared=%llu freed=%llu\n",(unsigned long long)job.tls_result,(unsigned long long)job.tls_slot,(unsigned long long)job.tls_initial,(unsigned long long)job.tls_value,(unsigned long long)job.tls_cleared,(unsigned long long)job.tls_freed);
+    test(f,"Yoshi SDK TLS allocation",job.tls_result==0);
+    test(f,"Yoshi SDK TLS initially zero",job.tls_result==0&&job.tls_initial==0);
+    test(f,"Yoshi SDK TLS read/write",job.tls_value==NX2_SDK_TLS_COOKIE);
+    test(f,"Yoshi SDK TLS cleared and released",job.tls_cleared&&job.tls_freed);
+    record(f,"SDK_MUTEX first=%llu recursive_attempt=%llu after_unlock=%llu finalized=%llu\n",(unsigned long long)job.mutex_first,(unsigned long long)job.mutex_second,(unsigned long long)job.mutex_third,(unsigned long long)job.mutex_finalized);
+    test(f,"Yoshi SDK mutex first lock",job.mutex_first==1);
+    test(f,"Yoshi SDK mutex rejects recursive lock",job.mutex_first==1&&job.mutex_second==0);
+    test(f,"Yoshi SDK mutex unlock/relock/finalize",job.mutex_third==1&&job.mutex_finalized==1);
+    test(f,"Host thread-local region restored",job.tail_restored==1);
+    test(f,"Host thread-pointer register restored",job.tp_restored==1);
+    test(f,"SDK left preemption counter balanced",job.preemption_same==1);
+    record(f,"YOSHI_SDK_OS_END: SDK OS routines executed. Full SDK initialization, game entrypoint, RomFS routing and saves were not attempted.\n");
+}
 static void yoshi_test(FILE *f,Service *ro){
     char root[1024];int found=find_yoshi(root);test(f,"Yoshi folder found",found);if(!found){record(f,"YOSHI_BLOCKED folder not found\n");return;}
     record(f,"YOSHI_ROOT %s\n",root);Loaded loaded[6]={{0}};Nx2Module modules[6];Nx2Group g={0};g.modules=modules;g.count=6;g.tls_resolver=(uintptr_t)nx2_tlsdesc_resolver;size_t count=0;
@@ -158,12 +236,12 @@ static void yoshi_test(FILE *f,Service *ro){
     record(f,"YOSHI_RELOCATE status=%s abs64=%llu global=%llu jump=%llu relative=%llu relr=%llu tls=%llu preserved=%u unknown=%u missing=%s\n",nx2_module_error(rc),(unsigned long long)stats.abs64,(unsigned long long)stats.global,(unsigned long long)stats.jump,(unsigned long long)stats.relative,(unsigned long long)stats.relr,(unsigned long long)stats.tls,stats.tls_preserved,stats.tls_unknown,stats.missing);
     test(f,"Yoshi complete relocation applied",rc==0&&stats.tls_preserved==1&&!stats.tls_unknown);if(rc)goto done;
     u64 pair[2];memcpy(pair,modules[2].guest+1152944,sizeof(pair));test(f,"Yoshi anonymous TLS matches original rtld",!pair[0]&&!pair[1]);
-    record(f,"YOSHI_NATIVE_STARTUP NOT_CALLED: relocation applied. Anonymous TLS pair preserved exactly as observed in original rtld. Native SDK environment, RomFS routing and save isolation remain unimplemented.\n");
+    sdk_os_test(f,&modules[5]);
 done:screen("Releasing Yoshi test mappings...");unload_all(f,ro,loaded,count);test(f,"Yoshi mapping cleanup completed",1);
 }
 static void run(int full){
     checks=failures=log_error=0;tls_errors=0;FILE *f=fopen("sdmc:/nx2-folder-exec-report.txt","w");if(!f){snprintf(outcome,sizeof(outcome),"Cannot write report; test did not run.");return;}
-    record(f,"NX2 Folder Execution Suite 0.3\nScope: owned multi-module execution; Yoshi full relocation and startup capability survey. No Yoshi entrypoint.\n");
+    record(f,"NX2 Folder Execution Suite 0.4\nScope: actual Yoshi SDK OS initialization, TLS and mutex tests on a dedicated worker. No game entrypoint.\n");
     u64 title=0;Result rc=svcGetInfo(&title,InfoType_ProgramId,CUR_PROCESS_HANDLE,0);record(f,"HOST result=%08x title=%016llx\n",rc,(unsigned long long)title);test(f,"Pokopia host",R_SUCCEEDED(rc)&&title==0x0400a3a01ee4c000ULL);if(failures)goto finish;
     /* Read-only process capabilities needed by the original SDK startup.
      * Unsupported info types are observations, not failed tests. */
@@ -174,7 +252,7 @@ static void run(int full){
     }
     for(u64 sub=2;sub<=3;sub++){
         u64 value=0;Result info=svcGetInfo(&value,InfoType_RandomEntropy,0,sub);
-        record(f,"SDK_GET_INFO type=11 handle=0 sub=%llu result=%08x value=%016llx\n",(unsigned long long)sub,info,(unsigned long long)value);
+        record(f,"SDK_GET_INFO type=11 handle=0 sub=%llu result=%08x\n",(unsigned long long)sub,info);
     }
     record(f,"STARTUP_CAPABILITIES_END\n");
     Service ro;rc=kaihenGetRoSession(&ro);record(f,"RO result=%08x\n",rc);test(f,"borrowed RO available",R_SUCCEEDED(rc));if(R_FAILED(rc))goto finish;
@@ -184,7 +262,7 @@ static void run(int full){
     threadTlsFree(tls_slot);tls_slot=-1;
 finish:
     record(f,"SUMMARY checks=%u passed=%u failures=%u full=%d\n",checks,checks-failures,failures,full);
-    record(f,"Yoshi was not executed. Report records the remaining startup blockers explicitly.\n");
+    record(f,"The game entrypoint, full SDK initialization and game filesystem mounts were not called by this test.\n");
     if(ferror(f))log_error=1;
     if(fclose(f))log_error=1;
     snprintf(outcome,sizeof(outcome),"%u/%u checks passed. %s",checks-failures,checks,log_error?"Report write error.":"Report: /nx2-folder-exec-report.txt");
@@ -193,7 +271,7 @@ int main(int argc,char **argv){
     (void)argc;(void)argv;consoleInit(NULL);padConfigureInput(1,HidNpadStyleSet_NpadStandard);padInitializeDefault(&pad);
     while(appletMainLoop()){
         padUpdate(&pad);u64 down=padGetButtonsDown(&pad);if(down&HidNpadButton_Plus)break;if(down&HidNpadButton_A)run(1);if(down&HidNpadButton_Y)run(0);
-        consoleClear();printf("NX2 Folder Execution Suite 0.3\n\n");printf("Three cycles: cross-module calls, RELR, constructors,\nBSS, weak imports, TLS, worker threads, SIMD and cleanup.\n");
-        printf("Full test applies relocations to all six Yoshi modules.\nYoshi native startup remains blocked; no game entrypoint called.\n\n");printf("A: full suite | Y: fixture only | PLUS: exit\n\n%s\n",outcome);consoleUpdate(NULL);
+        consoleClear();printf("NX2 Folder Execution Suite 0.4\n\n");printf("Three cycles: cross-module calls, RELR, constructors,\nBSS, weak imports, TLS, worker threads, SIMD and cleanup.\n");
+        printf("Full test executes Yoshi SDK OS, TLS and mutex routines.\nDedicated test thread; no game entrypoint or file mounts.\n\n");printf("A: full suite | Y: fixture only | PLUS: exit\n\n%s\n",outcome);consoleUpdate(NULL);
     }consoleExit(NULL);return 0;
 }

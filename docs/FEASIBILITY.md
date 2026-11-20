@@ -1,6 +1,46 @@
+# Current evidence: general folder launcher 0.13
+
+On November 20, 2026, the owner confirmed that 0.12 reached Yoshi's menus and
+actual gameplay from a decrypted SD folder through the MKW override. Its report
+shows continued presents/asset reads until the deliberately armed 180-second
+cutoff. This establishes that this owned backup can execute in that environment;
+it does not establish universal title compatibility or stock-firmware support.
+
+0.13 removes the gameplay cutoff and replaces the title-specific entry path with
+a /games browser, dynamic module/hook resolution, automatic directory indexing,
+a bounded file cache and separate private save directories. Preparation passes
+for Yoshi, Zelda, MKW and Kirby fixtures; only the previous Yoshi build has the
+reported hardware gameplay proof. No ticket/ownership database changes occur.
+See the current root README and probes/game-launch/tests/pc-validation.txt.
+
+The remaining text is historical research and earlier experiment notes. Statements
+below that no native boot had been shown refer to their earlier date/build and
+are superseded by the evidence above. NUP work remains outside the current scope.
+
+---
 # Native SD backup loading and NUP
 
-Research snapshot: November 19, 2026. No native game-launch claim is made.
+Research snapshot: November 20, 2026. No successful native game boot is claimed.
+
+## Current experiment: Launch Attempt 0.5
+
+The root build now targets an actual Yoshi demo launch attempt under the verified
+Pokopia override. It uses a metadata-only RomFS image backed by loose SD files,
+a private SD save filesystem, a private heap, and the original rtld/CRT/SDK
+startup. It releases the homebrew display before native graphics initialization.
+There is no ticket, signature or ownership database modification.
+
+The actual linked ELF passes offline native-SDK file reads and private-save I/O.
+Its original loader completes relocation and OS initialization and reaches SDK
+module initialization before the first unmodeled console service connection.
+A host-loop FSP policy stops requests outside initialization and a read-only log
+query; it is not a general sandbox for all OS services. Startup/GPU compatibility
+and a rendered title screen remain unverified on hardware. See
+`probes/game-launch/README.txt` and its retained PC evidence for scope and limits.
+Earlier Suite 0.4 passed 152/152 checks on the user's console. That validates its
+SDK OS subset, not the new complete SDK/game path. The sections below preserve
+the wider feasibility analysis; statements about an existing launcher refer to a
+validated capability, which this experimental entry attempt does not establish.
 
 ## Intended behavior
 
@@ -103,3 +143,25 @@ process information and applies the verified modules' relocations on hardware.
 It does not call native SDK initialization, constructors or the game entrypoint.
 RomFS routing, save isolation and compatibility with the existing host's process
 state remain unresolved. There is still no demonstrated Yoshi gameplay.
+
+## Suite 0.4 native SDK OS test
+
+The next console test calls the exact supplied Yoshi SDK's nnosInitialize on a
+dedicated worker, then checks its current-thread identity, TLS allocation and
+values, and nonrecursive mutex semantics. It saves/clears/restores the SDK-owned
+TLR tail and restores TPIDR_EL0 before returning to the host runtime. The worker
+is joined and closed before code mappings are released; the normal host thread
+has a 15-second wait deadline. A timeout/context fault ends the process instead
+of unmapping live code. This does not guarantee recovery from native CPU faults.
+
+The final release worker object passed four ARM64 integration cases against the
+C-linked SDK in Unicorn: normal, preemption-busy refusal, invalid thread object,
+and failed TLS allocation. Host TLS sentinels and TPIDR_EL0 were preserved. The
+successful modeled SDK path made only GetInfo, QueryMemory, GetThreadPriority
+and GetThreadId calls. Kernel replies, PAC returns and atomic ordering retain
+emulator limitations. No host service calls were forwarded. All 55 host checks
+and all 2,691,120 relocation comparisons also passed.
+
+The Suite 0.4 hardware report received 2026-11-20 passed all 152 checks. The actual supplied SDK OS initializer returned; its thread ID matched the kernel, TLS allocation/read/write/release and mutex tests passed, host TLS/TP state was restored, and the worker closed before all six modules were unmapped. The tested SDK OS path is now demonstrated on the console. The game entrypoint, complete SDK/service
+initialization, RomFS routing, graphics and save isolation are not implemented
+by this test. See probes/folder-suite/tests/SDK-OS-TEST.txt for reproduction.

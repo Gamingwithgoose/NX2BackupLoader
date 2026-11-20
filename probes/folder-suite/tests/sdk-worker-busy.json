@@ -1,0 +1,16 @@
+{
+  "case": "busy",
+  "scope": "Actual compiled SDK worker and C-linked supplied SDK. Synthetic kernel replies, single-thread CAS model and unsigned PAC returns. No host service forwarding.",
+  "returned": true,
+  "host_TLR_preserved": true,
+  "host_TP_preserved": true,
+  "trace": [
+    99
+  ],
+  "SDK_initialized": false,
+  "thread_valid": false,
+  "tls_result": "0x0",
+  "mutex_finalized": false,
+  "context_fault": true,
+  "kernel_calls": []
+}

@@ -1,0 +1,6 @@
+Expected failure against archived 0.7 ELF. New 0.8 passes the same fixture.
+Traceback (most recent call last):
+  File "C:\Users\maver\Documents\Codex\2026-11-19\fu\work\nx2-launch\tests\emulate_guards_scrubbed.py", line 256, in <module>
+    packet(4,1,b'fsp-srv\x00');assert call('nx2_sync',[0x40])==0;assert tags()=={0x40:1,0x50:2}
+                                                                        ^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

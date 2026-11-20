@@ -1,0 +1,309 @@
+{
+  "worker_elf_sha256": "45489659e7743fe89beb85f181f6c6652963caedae23fecc748a7d856ff62e4c",
+  "modules": [
+    {
+      "module": "rtld",
+      "hooks": [
+        {
+          "offset": 8556,
+          "label": "Bounded rtld QueryMemory"
+        },
+        {
+          "offset": 8580,
+          "label": "rtld Break"
+        },
+        {
+          "offset": 8588,
+          "label": "rtld debug"
+        }
+      ],
+      "thunk_bytes": 48,
+      "available": 2240
+    },
+    {
+      "module": "main",
+      "hooks": [
+        {
+          "offset": 18885840,
+          "label": "nnMain"
+        },
+        {
+          "offset": 39893776,
+          "label": "nninitStartup"
+        }
+      ],
+      "thunk_bytes": 64,
+      "available": 3632
+    },
+    {
+      "module": "subsdk0",
+      "hooks": [],
+      "thunk_bytes": 0,
+      "available": 2192
+    },
+    {
+      "module": "sdk",
+      "hooks": [
+        {
+          "offset": 1725352,
+          "label": "SetHeapSize"
+        },
+        {
+          "offset": 1725432,
+          "label": "ExitProcess"
+        },
+        {
+          "offset": 1725624,
+          "label": "CloseHandle"
+        },
+        {
+          "offset": 1725704,
+          "label": "ConnectToNamedPort"
+        },
+        {
+          "offset": 1725728,
+          "label": "SendSyncRequest"
+        },
+        {
+          "offset": 1725736,
+          "label": "SendSyncRequestWithUserBuffer"
+        },
+        {
+          "offset": 1725744,
+          "label": "SendAsyncRequestWithUserBuffer"
+        },
+        {
+          "offset": 1725792,
+          "label": "Break"
+        },
+        {
+          "offset": 1725800,
+          "label": "OutputDebugString"
+        },
+        {
+          "offset": 1725808,
+          "label": "GetInfo"
+        },
+        {
+          "offset": 1725832,
+          "label": "nx2_map_physical"
+        },
+        {
+          "offset": 1725840,
+          "label": "nx2_unmap_physical"
+        },
+        {
+          "offset": 1061840,
+          "label": "_ZN2nn2fs8MountRomEPKc"
+        },
+        {
+          "offset": 1060928,
+          "label": "_ZN2nn2fs8MountRomEPKcPvm"
+        },
+        {
+          "offset": 1061376,
+          "label": "_ZN2nn2fs8MountRomEPKcNS_13ApplicationIdEPvm"
+        },
+        {
+          "offset": 1062224,
+          "label": "_ZN2nn2fs8MountRomEPKciPvm"
+        },
+        {
+          "offset": 1060144,
+          "label": "_ZN2nn2fs22QueryMountRomCacheSizeEPm"
+        },
+        {
+          "offset": 1060400,
+          "label": "_ZN2nn2fs22QueryMountRomCacheSizeEPmNS_13ApplicationIdE"
+        },
+        {
+          "offset": 1060656,
+          "label": "_ZN2nn2fs22QueryMountRomCacheSizeEPmi"
+        },
+        {
+          "offset": 4610112,
+          "label": "_ZN2nn2fs14ExtendSaveDataERKNS_7account3UidEll"
+        },
+        {
+          "offset": 1087168,
+          "label": "_ZN2nn2fs14ExtendSaveDataEmll"
+        },
+        {
+          "offset": 1096336,
+          "label": "_ZN2nn2fs22GetSaveDataJournalSizeEPlNS0_15SaveDataSpaceIdEm"
+        },
+        {
+          "offset": 4611008,
+          "label": "_ZN2nn2fs21GetDeviceSaveDataSizeEPlS1_"
+        },
+        {
+          "offset": 4608224,
+          "label": "_ZN2nn2fs13MountSaveDataEPKcNS_13ApplicationIdERKNS_7account3UidE"
+        },
+        {
+          "offset": 1149584,
+          "label": "_ZN2nn2fs6detail24IsEnabledHandleAccessLogENS1_23IdentifyAccessLogHandleE"
+        },
+        {
+          "offset": 1145040,
+          "label": "_ZN2nn2fs6detail18IsEnabledAccessLogEj"
+        },
+        {
+          "offset": 1145872,
+          "label": "_ZN2nn2fs6detail18IsEnabledAccessLogEv"
+        },
+        {
+          "offset": 1149600,
+          "label": "_ZN2nn2fs6detail24IsEnabledHandleAccessLogEPKv"
+        },
+        {
+          "offset": 1094944,
+          "label": "_ZN2nn2fs24GetSaveDataAvailableSizeEPlNS0_15SaveDataSpaceIdEm"
+        },
+        {
+          "offset": 1067760,
+          "label": "_ZN2nn2fs13MountSaveDataEPKcNS0_6UserIdE"
+        },
+        {
+          "offset": 1071664,
+          "label": "_ZN2nn2fs22EnsureSaveDataForDebugEll"
+        },
+        {
+          "offset": 4602032,
+          "label": "_ZN2nn2fs25EnsureApplicationSaveDataEPlNS_3ncm13ApplicationIdERKNS_2ns26ApplicationControlPropertyERKNS_7account3UidE"
+        },
+        {
+          "offset": 4609280,
+          "label": "_ZN2nn2fs26EnsureDeviceSaveDataUnsafeENS_13ApplicationIdEll"
+        },
+        {
+          "offset": 1068384,
+          "label": "_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_3ncm13ApplicationIdENS0_6UserIdE"
+        },
+        {
+          "offset": 1094464,
+          "label": "_ZN2nn2fs24GetSaveDataAvailableSizeEPlm"
+        },
+        {
+          "offset": 1143536,
+          "label": "_ZN2nn2fs22SetGlobalAccessLogModeEj"
+        },
+        {
+          "offset": 1081488,
+          "label": "_ZN2nn2fs20CreateDeviceSaveDataENS_3ncm13ApplicationIdEmllj"
+        },
+        {
+          "offset": 1087552,
+          "label": "_ZN2nn2fs14ExtendSaveDataENS0_15SaveDataSpaceIdEmll"
+        },
+        {
+          "offset": 915424,
+          "label": "_ZN2nn2fs19MountDeviceSaveDataEPKcNS_3ncm13ApplicationIdE"
+        },
+        {
+          "offset": 915776,
+          "label": "_ZN2nn2fs19MountDeviceSaveDataEPKcNS_13ApplicationIdE"
+        },
+        {
+          "offset": 4609056,
+          "label": "_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE"
+        },
+        {
+          "offset": 4608160,
+          "label": "_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE"
+        },
+        {
+          "offset": 1095856,
+          "label": "_ZN2nn2fs22GetSaveDataJournalSizeEPlm"
+        },
+        {
+          "offset": 1149616,
+          "label": "_ZN2nn2fs6detail36IsEnabledFileSystemAccessorAccessLogEPKc"
+        },
+        {
+          "offset": 4608352,
+          "label": "_ZN2nn2fs18IsSaveDataExistingERKNS_7account3UidE"
+        },
+        {
+          "offset": 4608288,
+          "label": "_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_13ApplicationIdERKNS_7account3UidE"
+        },
+        {
+          "offset": 1066592,
+          "label": "_ZN2nn2fs6detail17MountSaveDataImplEPKcNS0_15SaveDataSpaceIdENS_3ncm13ApplicationIdENS0_6UserIdENS0_12SaveDataTypeEbt"
+        },
+        {
+          "offset": 1089568,
+          "label": "_ZN2nn2fs16GetSaveDataFlagsEPjm"
+        },
+        {
+          "offset": 4610368,
+          "label": "_ZN2nn2fs20ExtendDeviceSaveDataEll"
+        },
+        {
+          "offset": 1102560,
+          "label": "_ZN2nn2fs21GetDeviceSaveDataSizeEPlS1_NS_13ApplicationIdE"
+        },
+        {
+          "offset": 1067728,
+          "label": "_ZN2nn2fs6detail17MountSaveDataImplEPKcNS0_6UserIdE"
+        },
+        {
+          "offset": 1090048,
+          "label": "_ZN2nn2fs16GetSaveDataFlagsEPjNS0_15SaveDataSpaceIdEm"
+        },
+        {
+          "offset": 4610608,
+          "label": "_ZN2nn2fs15GetSaveDataSizeEPlS1_RKNS_7account3UidE"
+        },
+        {
+          "offset": 1149504,
+          "label": "_ZN2nn2fs6detail24IsEnabledHandleAccessLogENS0_10FileHandleE"
+        },
+        {
+          "offset": 1080576,
+          "label": "_ZN2nn2fs14CreateSaveDataENS_3ncm13ApplicationIdENS0_6UserIdEmllRKNS0_8HashSaltEj"
+        },
+        {
+          "offset": 915088,
+          "label": "_ZN2nn2fs19MountDeviceSaveDataEPKc"
+        },
+        {
+          "offset": 1149552,
+          "label": "_ZN2nn2fs6detail24IsEnabledHandleAccessLogENS0_15DirectoryHandleE"
+        },
+        {
+          "offset": 1079600,
+          "label": "_ZN2nn2fs14CreateSaveDataENS_3ncm13ApplicationIdENS0_6UserIdEmllj"
+        },
+        {
+          "offset": 1071888,
+          "label": "_ZN2nn2fs21MountSaveDataForDebugEPKc"
+        },
+        {
+          "offset": 1068064,
+          "label": "_ZN2nn2fs13MountSaveDataEPKcNS_3ncm13ApplicationIdENS0_6UserIdE"
+        },
+        {
+          "offset": 1265968,
+          "label": "nninitInitializeSdkModule"
+        },
+        {
+          "offset": 7014368,
+          "label": "nvnBootstrapLoader"
+        },
+        {
+          "offset": 1505056,
+          "label": "nnosInitialize"
+        }
+      ],
+      "thunk_bytes": 1056,
+      "available": 1968
+    }
+  ],
+  "total_hooks": 68,
+  "all_20_sdk_bindings_found": true,
+  "damaged_SVC_wrapper_rejected": true,
+  "error_formatting_modeled": true,
+  "scope": "Actual linked module parser, general resolver and detour writer on original decoded modules. No title-specific selection; no original game code, console services or GPU executed."
+}

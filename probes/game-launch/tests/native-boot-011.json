@@ -1,0 +1,683 @@
+{
+  "worker_elf_sha256": "7e636bec2e790beee684cf72614f6d572d8fa2725ea3c36cf986460c8f04501e",
+  "scope": "Actual shared C launch manifest, patch gates, worker and original game rtld/CRT. Kernel replies modeled. No console services forwarded. PAC target modeled without signature verification.",
+  "stop": "stopped before unsupported SVC 0x1f",
+  "pc": "0x7401780c",
+  "lr": "0x7400a394",
+  "stage": 10,
+  "events": [
+    {
+      "milestone": "original rtld relocation pass completed before SDK entry"
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee70",
+        "0xb",
+        "0x0",
+        "0x2"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c17"
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee78",
+        "0xb",
+        "0x0",
+        "0x3"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c16"
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee78",
+        "0x2",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x3408200000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee78",
+        "0x3",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x2000000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee78",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee78",
+        "0x1e",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee78",
+        "0xc",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x8000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee78",
+        "0xd",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x7ff8000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee88",
+        "0xe",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x1780800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee88",
+        "0xe",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x1780800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee88",
+        "0xf",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x80000000"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "sdk+0x180b88",
+      "args": [
+        "0x1780afee18",
+        "0x1780afee5c",
+        "0x1780afee40",
+        "0x10000"
+      ],
+      "model": {
+        "base": "0x1780a00000",
+        "size": 1048576,
+        "state": 11,
+        "permission": 3,
+        "module": "modeled stack"
+      }
+    },
+    {
+      "svc": "0xc",
+      "pc": "sdk+0x180bd8",
+      "args": [
+        "0x1780afee58",
+        "0x1234",
+        "0x1780afee5c",
+        "0x10000"
+      ],
+      "synthetic_thread_priority": 44
+    },
+    {
+      "svc": "0x25",
+      "pc": "sdk+0x180cf0",
+      "args": [
+        "0x1780afee10",
+        "0x1234",
+        "0x1c0",
+        "0x1780a00000"
+      ],
+      "synthetic_thread_id": 17185
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee78",
+        "0x2",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x3408200000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee70",
+        "0x3",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x2000000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee68",
+        "0x1c",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee88",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee88",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x740177f0",
+      "args": [
+        "0x1780afee88",
+        "0x1e",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "sdk+0x180b88",
+      "args": [
+        "0x1780afef08",
+        "0x1780afef04",
+        "0x80d1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80d1000",
+        "size": 1966080,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x1f",
+      "pc": "0x74017808",
+      "args": [
+        "0x1780afee2c",
+        "0x17ac11c0",
+        "0x73000568",
+        "0x0"
+      ]
+    }
+  ],
+  "rpc": [
+    {
+      "op": 25,
+      "path": "SDK_OS_INIT_ENTERED",
+      "a": 0,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 25,
+      "path": "SDK_OS_INIT_RETURNED",
+      "a": 0,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 25,
+      "path": "SDK_MODULE_INIT_ENTERED",
+      "a": 0,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 25,
+      "path": "CONNECT_TO_NAMED_PORT_BEGIN",
+      "a": 31,
+      "b": 0,
+      "c": 0
+    }
+  ],
+  "patches": [
+    {
+      "module": "sdk",
+      "offset": "0x180d34",
+      "label": "nx2_unmap_physical"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180d2c",
+      "label": "nx2_map_physical"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180b4c",
+      "label": "SetHeapSize"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180b9c",
+      "label": "ExitProcess"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180cac",
+      "label": "ConnectToNamedPort"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180cc4",
+      "label": "SendSyncRequest"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180ccc",
+      "label": "SendSyncRequestWithUserBuffer"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180cd4",
+      "label": "SendAsyncRequestWithUserBuffer"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180c5c",
+      "label": "CloseHandle"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180d04",
+      "label": "Break"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180d0c",
+      "label": "OutputDebugString"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x180d14",
+      "label": "GetInfo"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe8390",
+      "label": "_ZN2nn2fs8MountRomEPKc"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe7ff0",
+      "label": "_ZN2nn2fs8MountRomEPKcPvm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe81c0",
+      "label": "_ZN2nn2fs8MountRomEPKcNS_13ApplicationIdEPvm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe8520",
+      "label": "_ZN2nn2fs8MountRomEPKciPvm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe7cb0",
+      "label": "_ZN2nn2fs22QueryMountRomCacheSizeEPm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe7dc0",
+      "label": "_ZN2nn2fs22QueryMountRomCacheSizeEPmNS_13ApplicationIdE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe7ed0",
+      "label": "_ZN2nn2fs22QueryMountRomCacheSizeEPmi"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e62e0",
+      "label": "_ZN2nn2fs14ExtendSaveDataERKNS_7account3UidEll"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xee4c0",
+      "label": "_ZN2nn2fs14ExtendSaveDataEmll"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xf0a50",
+      "label": "_ZN2nn2fs22GetSaveDataJournalSizeEPlNS0_15SaveDataSpaceIdEm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e6670",
+      "label": "_ZN2nn2fs21GetDeviceSaveDataSizeEPlS1_"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e5b40",
+      "label": "_ZN2nn2fs13MountSaveDataEPKcNS_13ApplicationIdERKNS_7account3UidE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xfd1d0",
+      "label": "_ZN2nn2fs6detail24IsEnabledHandleAccessLogENS1_23IdentifyAccessLogHandleE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xfc060",
+      "label": "_ZN2nn2fs6detail18IsEnabledAccessLogEj"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xfc380",
+      "label": "_ZN2nn2fs6detail18IsEnabledAccessLogEv"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xfd1e0",
+      "label": "_ZN2nn2fs6detail24IsEnabledHandleAccessLogEPKv"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xf04a0",
+      "label": "_ZN2nn2fs24GetSaveDataAvailableSizeEPlNS0_15SaveDataSpaceIdEm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe9b30",
+      "label": "_ZN2nn2fs13MountSaveDataEPKcNS0_6UserIdE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xeaac0",
+      "label": "_ZN2nn2fs22EnsureSaveDataForDebugEll"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e43f0",
+      "label": "_ZN2nn2fs25EnsureApplicationSaveDataEPlNS_3ncm13ApplicationIdERKNS_2ns26ApplicationControlPropertyERKNS_7account3UidE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e5f90",
+      "label": "_ZN2nn2fs26EnsureDeviceSaveDataUnsafeENS_13ApplicationIdEll"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe9dc0",
+      "label": "_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_3ncm13ApplicationIdENS0_6UserIdE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xf02a0",
+      "label": "_ZN2nn2fs24GetSaveDataAvailableSizeEPlm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xfb9e0",
+      "label": "_ZN2nn2fs22SetGlobalAccessLogModeEj"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xecf80",
+      "label": "_ZN2nn2fs20CreateDeviceSaveDataENS_3ncm13ApplicationIdEmllj"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xee650",
+      "label": "_ZN2nn2fs14ExtendSaveDataENS0_15SaveDataSpaceIdEmll"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xc2c30",
+      "label": "_ZN2nn2fs19MountDeviceSaveDataEPKcNS_3ncm13ApplicationIdE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xc2d90",
+      "label": "_ZN2nn2fs19MountDeviceSaveDataEPKcNS_13ApplicationIdE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e5ea0",
+      "label": "_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e5b00",
+      "label": "_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xf0850",
+      "label": "_ZN2nn2fs22GetSaveDataJournalSizeEPlm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xfd1f0",
+      "label": "_ZN2nn2fs6detail36IsEnabledFileSystemAccessorAccessLogEPKc"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e5bc0",
+      "label": "_ZN2nn2fs18IsSaveDataExistingERKNS_7account3UidE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e5b80",
+      "label": "_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_13ApplicationIdERKNS_7account3UidE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe9680",
+      "label": "_ZN2nn2fs6detail17MountSaveDataImplEPKcNS0_15SaveDataSpaceIdENS_3ncm13ApplicationIdENS0_6UserIdENS0_12SaveDataTypeEbt"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xeee80",
+      "label": "_ZN2nn2fs16GetSaveDataFlagsEPjm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e63e0",
+      "label": "_ZN2nn2fs20ExtendDeviceSaveDataEll"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xf23c0",
+      "label": "_ZN2nn2fs21GetDeviceSaveDataSizeEPlS1_NS_13ApplicationIdE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe9b10",
+      "label": "_ZN2nn2fs6detail17MountSaveDataImplEPKcNS0_6UserIdE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xef080",
+      "label": "_ZN2nn2fs16GetSaveDataFlagsEPjNS0_15SaveDataSpaceIdEm"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x3e64e0",
+      "label": "_ZN2nn2fs15GetSaveDataSizeEPlS1_RKNS_7account3UidE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xfd180",
+      "label": "_ZN2nn2fs6detail24IsEnabledHandleAccessLogENS0_10FileHandleE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xecd30",
+      "label": "_ZN2nn2fs14CreateSaveDataENS_3ncm13ApplicationIdENS0_6UserIdEmllRKNS0_8HashSaltEj"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xc2ad0",
+      "label": "_ZN2nn2fs19MountDeviceSaveDataEPKc"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xfd1b0",
+      "label": "_ZN2nn2fs6detail24IsEnabledHandleAccessLogENS0_15DirectoryHandleE"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xec960",
+      "label": "_ZN2nn2fs14CreateSaveDataENS_3ncm13ApplicationIdENS0_6UserIdEmllj"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xeaba0",
+      "label": "_ZN2nn2fs21MountSaveDataForDebugEPKc"
+    },
+    {
+      "module": "sdk",
+      "offset": "0xe9c70",
+      "label": "_ZN2nn2fs13MountSaveDataEPKcNS_3ncm13ApplicationIdENS0_6UserIdE"
+    },
+    {
+      "module": "main",
+      "offset": "0x2f422c0",
+      "label": "nnMain"
+    },
+    {
+      "module": "main",
+      "offset": "0x2f422b0",
+      "label": "nninitStartup"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x118dc0",
+      "label": "nninitInitializeSdkModule"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x633060",
+      "label": "nvnBootstrapLoader"
+    },
+    {
+      "module": "sdk",
+      "offset": "0x151800",
+      "label": "nnosInitialize"
+    },
+    {
+      "module": "rtld",
+      "offset": "0x20cc",
+      "label": "Bounded rtld QueryMemory"
+    },
+    {
+      "module": "rtld",
+      "offset": "0x20e4",
+      "label": "rtld Break"
+    },
+    {
+      "module": "rtld",
+      "offset": "0x20ec",
+      "label": "rtld debug"
+    }
+  ]
+}

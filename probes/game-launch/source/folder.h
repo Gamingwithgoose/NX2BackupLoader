@@ -1,0 +1,20 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+#pragma once
+#include <stddef.h>
+#include <stdint.h>
+typedef struct {
+  char name[256], root[1200];
+  uint64_t id;
+  uint32_t resource;
+  int updates;
+} Nx2Game;
+typedef struct {
+  Nx2Game *items;
+  size_t count;
+} Nx2Catalog;
+int nx2_catalog(const char *, Nx2Catalog *);
+void nx2_catalog_free(Nx2Catalog *);
+int nx2_folder_modules(const char *, char names[13][16], unsigned *);
+void *nx2_folder_rom(const char *, size_t *, char error[160]);
+
+void nx2_folder_progress(void (*)(uint32_t, void *), void *);

@@ -1,0 +1,84 @@
+{
+  "worker_elf_sha256": "45489659e7743fe89beb85f181f6c6652963caedae23fecc748a7d856ff62e4c",
+  "cases": [
+    {
+      "case": "success",
+      "success": true,
+      "resize_calls": 1,
+      "native_mode_enabled": 1
+    },
+    {
+      "case": "allocator_initialized",
+      "success": true,
+      "resize_calls": 1,
+      "native_mode_enabled": 1
+    },
+    {
+      "case": "bad_compatibility_cursor",
+      "success": false,
+      "resize_calls": 0,
+      "native_mode_enabled": 0
+    },
+    {
+      "case": "no_resources",
+      "success": false,
+      "resize_calls": 0,
+      "native_mode_enabled": 0
+    },
+    {
+      "case": "small_alias",
+      "success": false,
+      "resize_calls": 0,
+      "native_mode_enabled": 0
+    },
+    {
+      "case": "bad_tail_type",
+      "success": false,
+      "resize_calls": 0,
+      "native_mode_enabled": 0
+    },
+    {
+      "case": "locked_tail",
+      "success": false,
+      "resize_calls": 0,
+      "native_mode_enabled": 0
+    },
+    {
+      "case": "allocator_crosses_cut",
+      "success": false,
+      "resize_calls": 0,
+      "native_mode_enabled": 0
+    },
+    {
+      "case": "resize_failure",
+      "success": false,
+      "resize_calls": 1,
+      "native_mode_enabled": 0
+    },
+    {
+      "case": "wrong_returned_base",
+      "success": false,
+      "resize_calls": 1,
+      "native_mode_enabled": 0
+    },
+    {
+      "case": "tail_still_mapped",
+      "success": false,
+      "resize_calls": 1,
+      "native_mode_enabled": 0
+    },
+    {
+      "case": "low_after",
+      "success": false,
+      "resize_calls": 1,
+      "native_mode_enabled": 0
+    }
+  ],
+  "observed_MKW_layout_used": true,
+  "actual_malloc_initializer_cursor_mutation_executed": true,
+  "mimalloc_option_and_arena_registration_modeled": true,
+  "retained_kernel_heap_bytes": 1142947840,
+  "released_tail_bytes": 8246001664,
+  "modeled_available_physical_bytes": 8250032128,
+  "scope": "Actual linked transition and host allocator with modeled QueryMemory/GetInfo/SetHeapSize, no real console calls or game-tail memory accesses. Failed post-transition validation must terminate the process in the caller."
+}

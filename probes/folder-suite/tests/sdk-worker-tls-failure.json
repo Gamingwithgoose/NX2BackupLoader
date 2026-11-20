@@ -1,0 +1,366 @@
+{
+  "case": "tls-failure",
+  "scope": "Actual compiled SDK worker and C-linked supplied SDK. Synthetic kernel replies, single-thread CAS model and unsigned PAC returns. No host service forwarding.",
+  "returned": true,
+  "host_TLR_preserved": true,
+  "host_TP_preserved": true,
+  "trace": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "SDK_initialized": true,
+  "thread_valid": true,
+  "tls_result": "0x1234",
+  "mutex_finalized": true,
+  "context_fault": false,
+  "kernel_calls": [
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee20",
+        "0xb",
+        "0x0",
+        "0x2"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c17"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0xb",
+        "0x0",
+        "0x3"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c16"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0x4",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0xe51800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0x5",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x300000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0x2",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x3408200000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0x3",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x2000000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0x1e",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0xc",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x8000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0xd",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x7ff8000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee38",
+        "0xe",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x1780800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee38",
+        "0xe",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x1780800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee38",
+        "0xf",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x80000000"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "sdk+0x180b88",
+      "args": [
+        "0x1780afedc8",
+        "0x1780afee0c",
+        "0x1780afedf0",
+        "0x10000"
+      ],
+      "model": {
+        "base": "0x1780a00000",
+        "size": 1048576,
+        "state": 11,
+        "permission": 3,
+        "module": "modeled stack"
+      }
+    },
+    {
+      "svc": "0xc",
+      "pc": "sdk+0x180bd8",
+      "args": [
+        "0x1780afee08",
+        "0x1234",
+        "0x1780afee0c",
+        "0x10000"
+      ],
+      "synthetic_thread_priority": 44
+    },
+    {
+      "svc": "0x25",
+      "pc": "sdk+0x180cf0",
+      "args": [
+        "0x1780afedc0",
+        "0x1234",
+        "0x1c0",
+        "0x1780a00000"
+      ],
+      "synthetic_thread_id": 17185
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee28",
+        "0x2",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x3408200000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee20",
+        "0x3",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x2000000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee18",
+        "0x1c",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee38",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee38",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee38",
+        "0x1e",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee48",
+        "0x16",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x23a828000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afee48",
+        "0x15",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x23ac00000"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "sdk+0x180b88",
+      "args": [
+        "0x1780afeeb8",
+        "0x1780afeeb4",
+        "0x0",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x0",
+        "size": 134942720,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    }
+  ]
+}

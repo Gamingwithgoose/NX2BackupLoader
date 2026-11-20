@@ -14,7 +14,7 @@ static void compare(Nx2Module *m,const unsigned char *expected,unsigned long lon
  if(a!=b){if(bad<20)printf("DIFF type=%u offset=%llx ours=%llx native=%llx\n",type,off,a,b);bad++;}
 }
 int main(int argc,char **argv){
- if(argc!=3)return 2;const char *names[]={"rtld","main","subsdk0","subsdk1","subsdk2","sdk"};
+ if(argc!=3&&argc!=4)return 2;const char *names[]={"rtld","main","subsdk0","subsdk1","subsdk2","sdk"};
  uintptr_t bases[]={0x80b1000,0x82b1000,0x122b1000,0x15901000,0x16d81000,0x16fc1000};
  Nx2Module modules[6];Nx2Group g={0};g.modules=modules;g.count=6;
  for(unsigned i=0;i<6;i++){
@@ -35,5 +35,6 @@ int main(int argc,char **argv){
   uint64_t cursor=0;for(uint64_t p=0;p<m->relr_size;p+=8){uint64_t v=get(m->guest+m->relr+p);if(!(v&1)){cursor=v;compare(m,expected,cursor,0x24);cursor+=8;}else{for(unsigned bit=1;bit<64;bit++)if(v&(1ULL<<bit))compare(m,expected,cursor+(bit-1)*8,0x24);cursor+=63*8;}}
   printf("PARITY %s targets=%llu differences=%llu\n",names[i],count-before,bad-previous);free(expected);
  }
+ if(argc==4){char path[2048];snprintf(path,sizeof(path),"%s/sdk.ours-linked.bin",argv[3]);FILE *f=fopen(path,"wb");if(!f)return 1;size_t n=modules[5].total-4096;if(fwrite(modules[5].guest,1,n,f)!=n||fclose(f))return 1;}
  printf("TOTAL targets=%llu differences=%llu\n",count,bad);return bad?1:0;
 }

@@ -1,0 +1,468 @@
+{
+  "worker_elf_sha256": "b9f5e3c0afd3e64304600ae9b235f278e51fda5f32ddaf826e2cfce8a84d3e43",
+  "preflight_result": "0x0",
+  "cache_size": 14568,
+  "sample_results": [
+    0,
+    0,
+    0
+  ],
+  "sample_reads": [
+    40,
+    4096,
+    4096
+  ],
+  "sample_hashes": [
+    "ac84d47ec621ae941b6ddfe968ee11b6f9db30f9264686b9b277912dc6959660",
+    "8b60a47c2a6e65f6e2e7783c308cd3849f509d0066046df0c25516357a090a86",
+    "508bd72673f94592f27129f1d2d86e0d1eca0b968995abb9aa096cc6c55665b8"
+  ],
+  "save_result": "0x0",
+  "save_cookie": "0x1122334455667788",
+  "rpc": [
+    {
+      "op": 28,
+      "path": "rom",
+      "a": 0,
+      "b": 14568,
+      "c": 0
+    },
+    {
+      "op": 1,
+      "path": "",
+      "a": 145,
+      "b": 0,
+      "c": 40
+    },
+    {
+      "op": 1,
+      "path": "",
+      "a": 142,
+      "b": 0,
+      "c": 4096
+    },
+    {
+      "op": 1,
+      "path": "",
+      "a": 141,
+      "b": 2147549184,
+      "c": 4096
+    },
+    {
+      "op": 29,
+      "path": "save",
+      "a": 0,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 3,
+      "path": "/.__nx2_probe.bin",
+      "a": 0,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 2,
+      "path": "/.__nx2_probe.bin",
+      "a": 8,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 13,
+      "path": "/.__nx2_probe.bin",
+      "a": 3,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 15,
+      "path": "",
+      "a": 1,
+      "b": 0,
+      "c": 8
+    },
+    {
+      "op": 19,
+      "path": "",
+      "a": 1,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 13,
+      "path": "/.__nx2_probe.bin",
+      "a": 1,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 14,
+      "path": "",
+      "a": 2,
+      "b": 0,
+      "c": 8
+    },
+    {
+      "op": 19,
+      "path": "",
+      "a": 2,
+      "b": 0,
+      "c": 0
+    },
+    {
+      "op": 3,
+      "path": "/.__nx2_probe.bin",
+      "a": 0,
+      "b": 0,
+      "c": 0
+    }
+  ],
+  "kernel_calls": [
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc0",
+        "0xb",
+        "0x0",
+        "0x2"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c17"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0xb",
+        "0x0",
+        "0x3"
+      ],
+      "synthetic_entropy": "0x9e3779b97f4a7c16"
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0x4",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0xe51800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0x5",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x300000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0x2",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x3408200000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0x3",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x2000000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0x1e",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0xc",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x8000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0xd",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x7ff8000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedd8",
+        "0xe",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x1780800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedd8",
+        "0xe",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x1780800000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedd8",
+        "0xf",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x80000000"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "sdk+0x180b88",
+      "args": [
+        "0x1780afed68",
+        "0x1780afedac",
+        "0x1780afed90",
+        "0x10000"
+      ],
+      "model": {
+        "base": "0x1780a00000",
+        "size": 1048576,
+        "state": 11,
+        "permission": 3,
+        "module": "modeled stack"
+      }
+    },
+    {
+      "svc": "0xc",
+      "pc": "sdk+0x180bd8",
+      "args": [
+        "0x1780afeda8",
+        "0x1234",
+        "0x1780afedac",
+        "0x10000"
+      ],
+      "synthetic_thread_priority": 44
+    },
+    {
+      "svc": "0x25",
+      "pc": "sdk+0x180cf0",
+      "args": [
+        "0x1780afed60",
+        "0x1234",
+        "0x1c0",
+        "0x1780a00000"
+      ],
+      "synthetic_thread_id": 17185
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc8",
+        "0x2",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x3408200000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedc0",
+        "0x3",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x2000000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedb8",
+        "0x1c",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedd8",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedd8",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afedd8",
+        "0x1e",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afede8",
+        "0x16",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x23a828000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "sdk+0x180d18",
+      "args": [
+        "0x1780afede8",
+        "0x15",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x23ac00000"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "sdk+0x180b88",
+      "args": [
+        "0x1780afee58",
+        "0x1780afee54",
+        "0x0",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x0",
+        "size": 134942720,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    }
+  ]
+}

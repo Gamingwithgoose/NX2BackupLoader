@@ -1,0 +1,126 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+#include "launch.h"
+#include "raw_svc.h"
+Nx2Launch *nx2_launch;
+static void copy(void *d,const void *s,uint64_t n){unsigned char *a=d;const unsigned char *b=s;for(uint64_t i=0;i<n;i++)a[i]=b[i];}
+static void zero(void *d,uint64_t n){unsigned char *p=d;for(uint64_t i=0;i<n;i++)p[i]=0;}
+static int text(char *out,const char *s){if(!s){out[0]=0;return 1;}for(unsigned i=0;i<NX2_PATH_MAX;i++){out[i]=s[i];if(!s[i])return 1;}out[0]=0;return 0;}
+static uint32_t w(const void *v){const unsigned char *p=v;uint32_t r=0;for(unsigned i=0;i<4;i++)r|=(uint32_t)p[i]<<(i*8);return r;}
+static void wake(void){__asm__ volatile("sev" ::: "memory");}
+/* CPU event registers belong to cores, not scheduled threads. Poll the
+ * acquire state after a bounded kernel sleep; no event delivery is required. */
+static void wait(void){nx2_raw_sleep(100000);}
+uint32_t nx2_rpc(uint32_t op,uint64_t a,uint64_t b,uint64_t c,uint64_t d,void *buffer,const char *path,const char *path2,uint64_t *answer){
+ Nx2Launch *l=nx2_launch;Nx2Request *r=0;
+ for(;;){for(unsigned i=0;i<NX2_RPC_SLOTS;i++){uint32_t expected=0;if(__atomic_compare_exchange_n(&l->requests[i].state,&expected,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)){r=&l->requests[i];break;}}if(r)break;wait();}
+ r->op=op;r->a=a;r->b=b;r->c=c;r->d=d;r->buffer=buffer;r->answer=0;r->result=NX2_INVALID;
+ if(!text(r->path,path)||!text(r->path2,path2)){__atomic_store_n(&r->state,0,__ATOMIC_RELEASE);wake();return NX2_INVALID;}
+ __atomic_store_n(&r->state,2,__ATOMIC_RELEASE);wake();
+ while(__atomic_load_n(&r->state,__ATOMIC_ACQUIRE)!=3)wait();
+ uint32_t result=r->result;if(answer)*answer=r->answer;__atomic_store_n(&r->state,0,__ATOMIC_RELEASE);wake();return result;
+}
+static uint32_t extent(void *ctx,uint32_t file,uint64_t off,void *buf,uint64_t size){(void)ctx;return nx2_rpc(RPC_ROM_READ,file,off,size,0,buf,0,0,0);}
+static void noop(void *obj){(void)obj;}
+static uint32_t storage_read(void *self,int64_t offset,void *buffer,uint64_t size){(void)self;if(offset<0)return NX2_INVALID;return nx2_rom_read(&nx2_launch->rom,(uint64_t)offset,buffer,size,extent,0);}
+static uint32_t storage_write(void *self,int64_t off,const void *p,uint64_t n){(void)self;(void)off;(void)p;(void)n;return NX2_FS_UNSUPPORTED;}
+static uint32_t storage_flush(void *self){(void)self;return 0;}
+static uint32_t storage_resize(void *self,int64_t n){(void)self;(void)n;return NX2_FS_UNSUPPORTED;}
+static uint32_t storage_size(void *self,int64_t *n){(void)self;if(!n)return NX2_INVALID;*n=(int64_t)nx2_launch->rom.total;return 0;}
+static uint32_t storage_range(void *self,void *out,uint64_t outsize,uint32_t op,int64_t off,int64_t size,const void *in,uint64_t insize){(void)self;(void)off;(void)size;(void)in;(void)insize;if(op==3&&out&&outsize<=256){zero(out,outsize);return 0;}if(op==2||op==4)return 0;return NX2_FS_UNSUPPORTED;}
+static Nx2Object *object(uintptr_t vt,uint64_t handle,uint64_t mode){for(unsigned i=0;i<NX2_OBJECTS;i++){uint64_t expected=0;if(__atomic_compare_exchange_n(&nx2_launch->objects[i].active,&expected,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)){Nx2Object *o=&nx2_launch->objects[i];o->vtable=vt;o->handle=handle;o->mode=mode;return o;}}return 0;}
+static void release_file(void *p){Nx2Object *o=p;if(o->active){nx2_rpc(RPC_SAVE_CLOSE,o->handle,0,0,0,0,0,0,0);__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);}}
+static void release_dir(void *p){Nx2Object *o=p;if(o->active){nx2_rpc(RPC_DIR_CLOSE,o->handle,0,0,0,0,0,0,0);__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);}}
+static uint32_t file_read(void *p,uint64_t *read,int64_t offset,void *buf,uint64_t size,const void *option){(void)option;Nx2Object *o=p;if(offset<0||!read)return NX2_INVALID;uint64_t n=0;uint32_t rc=nx2_rpc(RPC_SAVE_READ,o->handle,offset,size,0,buf,0,0,&n);*read=n;return rc;}
+static uint32_t file_write(void *p,int64_t offset,const void *buf,uint64_t size,const void *option){Nx2Object *o=p;if(offset<0)return NX2_INVALID;return nx2_rpc(RPC_SAVE_WRITE,o->handle,offset,size,option?w(option):0,(void *)buf,0,0,0);}
+static uint32_t file_flush(void *p){return nx2_rpc(RPC_SAVE_FLUSH,((Nx2Object *)p)->handle,0,0,0,0,0,0,0);}
+static uint32_t file_resize(void *p,int64_t n){if(n<0)return NX2_INVALID;return nx2_rpc(RPC_SAVE_RESIZE,((Nx2Object *)p)->handle,n,0,0,0,0,0,0);}
+static uint32_t file_size(void *p,int64_t *n){uint64_t size=0;uint32_t rc=nx2_rpc(RPC_SAVE_SIZE,((Nx2Object *)p)->handle,0,0,0,0,0,0,&size);if(n)*n=(int64_t)size;return n?rc:NX2_INVALID;}
+static uint32_t file_range(void *p,void *out,uint64_t outsize,uint32_t op,int64_t off,int64_t n,const void *in,uint64_t insize){return storage_range(p,out,outsize,op,off,n,in,insize);}
+static const char *path(const void *p){return nx2_launch->api.path_string(p);}
+static uint32_t create_file(void *s,const void *p,int64_t size,int option){(void)s;if(size<0)return NX2_INVALID;return nx2_rpc(RPC_SAVE_CREATE,size,(uint32_t)option,0,0,0,path(p),0,0);}
+#define PATH_FN(name,operation) static uint32_t name(void *s,const void *p){(void)s;return nx2_rpc(operation,0,0,0,0,0,path(p),0,0);}
+PATH_FN(delete_file,RPC_SAVE_DELETE) PATH_FN(mkdir_save,RPC_SAVE_MKDIR) PATH_FN(rmdir_save,RPC_SAVE_RMDIR) PATH_FN(rmtree_save,RPC_SAVE_RMTREE) PATH_FN(clean_save,RPC_SAVE_CLEAN)
+static uint32_t rename_file(void *s,const void *a,const void *b){(void)s;return nx2_rpc(RPC_SAVE_RENAME_FILE,0,0,0,0,0,path(a),path(b),0);}
+static uint32_t rename_dir(void *s,const void *a,const void *b){(void)s;return nx2_rpc(RPC_SAVE_RENAME_DIR,0,0,0,0,0,path(a),path(b),0);}
+static uint32_t entry_type(void *s,uint32_t *out,const void *p){(void)s;uint64_t v=0;uint32_t rc=nx2_rpc(RPC_SAVE_TYPE,0,0,0,0,0,path(p),0,&v);if(out)*out=(uint32_t)v;return out?rc:NX2_INVALID;}
+static uint32_t free_size(void *s,int64_t *out,const void *p){(void)s;uint64_t v=0;uint32_t rc=nx2_rpc(RPC_SAVE_FREE,0,0,0,0,0,path(p),0,&v);if(out)*out=(int64_t)v;return out?rc:NX2_INVALID;}
+static uint32_t total_size(void *s,int64_t *out,const void *p){(void)s;uint64_t v=0;uint32_t rc=nx2_rpc(RPC_SAVE_TOTAL,0,0,0,0,0,path(p),0,&v);if(out)*out=(int64_t)v;return out?rc:NX2_INVALID;}
+static uint32_t open_file(void *s,void **out,const void *p,uint32_t mode){(void)s;if(!out)return NX2_INVALID;uint64_t handle=0;uint32_t rc=nx2_rpc(RPC_SAVE_OPEN,mode,0,0,0,0,path(p),0,&handle);if(rc)return rc;Nx2Object *o=object((uintptr_t)&nx2_launch->file_table[2],handle,mode);if(!o){nx2_rpc(RPC_SAVE_CLOSE,handle,0,0,0,0,0,0,0);return NX2_LIMIT;}*out=o;return 0;}
+static uint32_t open_dir(void *s,void **out,const void *p,uint32_t mode){(void)s;if(!out)return NX2_INVALID;uint64_t handle=0;uint32_t rc=nx2_rpc(RPC_DIR_OPEN,mode,0,0,0,0,path(p),0,&handle);if(rc)return rc;Nx2Object *o=object((uintptr_t)&nx2_launch->dir_table[2],handle,mode);if(!o){nx2_rpc(RPC_DIR_CLOSE,handle,0,0,0,0,0,0,0);return NX2_LIMIT;}*out=o;return 0;}
+static uint32_t commit(void *s){(void)s;return nx2_rpc(RPC_COMMIT,0,0,0,0,0,0,0,0);}
+static uint32_t commit_provisional(void *s,int64_t id){(void)id;return commit(s);}
+static uint32_t unsupported(void *s){(void)s;return NX2_FS_UNSUPPORTED;}
+static uint32_t dir_read(void *s,uint64_t *out,void *entries,int64_t max){if(!out||max<0)return NX2_INVALID;uint64_t n=0;uint32_t rc=nx2_rpc(RPC_DIR_READ,((Nx2Object *)s)->handle,max,0,0,entries,0,0,&n);*out=n;return rc;}
+static uint32_t dir_count(void *s,int64_t *out){uint64_t n=0;uint32_t rc=nx2_rpc(RPC_DIR_COUNT,((Nx2Object *)s)->handle,0,0,0,0,0,0,&n);if(out)*out=(int64_t)n;return out?rc:NX2_INVALID;}
+static uint32_t timestamp(void *self,void *out,const void *p){(void)self;if(!out)return NX2_INVALID;return nx2_rpc(RPC_SAVE_TIMESTAMP,0,0,0,0,out,path(p),0,0);}
+static uint32_t fs_attribute(void *self,void *out){(void)self;if(!out)return NX2_INVALID;zero(out,192);unsigned char *p=out;p[0]=p[1]=1;uint32_t *w=(void *)(p+40);w[0]=w[1]=0x300;return 0;}
+void nx2_bridge_init(Nx2Launch *l){
+ nx2_launch=l;
+ uintptr_t storage[]={0,l->api.storage_rtti,(uintptr_t)noop,(uintptr_t)noop,(uintptr_t)storage_read,(uintptr_t)storage_write,(uintptr_t)storage_flush,(uintptr_t)storage_resize,(uintptr_t)storage_size,(uintptr_t)storage_range};copy(l->storage_table,storage,sizeof(storage));l->storage.vtable=(uintptr_t)&l->storage_table[2];
+ uintptr_t fs[]={0,l->api.fs_rtti,(uintptr_t)noop,(uintptr_t)noop,(uintptr_t)create_file,(uintptr_t)delete_file,(uintptr_t)mkdir_save,(uintptr_t)rmdir_save,(uintptr_t)rmtree_save,(uintptr_t)clean_save,(uintptr_t)rename_file,(uintptr_t)rename_dir,(uintptr_t)entry_type,(uintptr_t)free_size,(uintptr_t)total_size,(uintptr_t)open_file,(uintptr_t)open_dir,(uintptr_t)commit,(uintptr_t)commit_provisional,(uintptr_t)unsupported,(uintptr_t)unsupported,(uintptr_t)timestamp,(uintptr_t)unsupported,(uintptr_t)fs_attribute};copy(l->fs_table,fs,sizeof(fs));l->save_fs.vtable=(uintptr_t)&l->fs_table[2];
+ uintptr_t file[]={0,l->api.file_rtti,(uintptr_t)release_file,(uintptr_t)release_file,(uintptr_t)file_read,(uintptr_t)file_write,(uintptr_t)file_flush,(uintptr_t)file_resize,(uintptr_t)file_size,(uintptr_t)file_range};copy(l->file_table,file,sizeof(file));
+ uintptr_t dir[]={0,l->api.dir_rtti,(uintptr_t)release_dir,(uintptr_t)release_dir,(uintptr_t)dir_read,(uintptr_t)dir_count};copy(l->dir_table,dir,sizeof(dir));
+}
+static void *arena_alloc(uint64_t size){Nx2Launch *l=nx2_launch;if(size>UINT64_MAX-15)return 0;size=(size+15)&~UINT64_C(15);if(!size)size=16;uint64_t off=__atomic_load_n(&l->arena_used,__ATOMIC_RELAXED);for(;;){if(off>l->arena_capacity||size>l->arena_capacity-off)return 0;uint64_t next=off+size;if(__atomic_compare_exchange_n(&l->arena_used,&off,next,0,__ATOMIC_RELAXED,__ATOMIC_RELAXED))return (void *)(uintptr_t)(l->arena_base+off);}}
+static void arena_free(void *p,uint64_t n){(void)p;(void)n;}
+uint32_t nx2_query_rom(uint64_t *size){return nx2_launch->api.query_cache(size,&nx2_launch->storage);}
+uint32_t nx2_query_rom_app(uint64_t *size,uint64_t app){(void)app;return nx2_query_rom(size);}
+uint32_t nx2_query_rom_index(uint64_t *size,int index){(void)index;return nx2_query_rom(size);}
+uint32_t nx2_mount_rom(const char *name,void *cache,uint64_t bytes){void *owned=&nx2_launch->storage;uint32_t rc=nx2_launch->api.mount_rom(name,&owned,cache,bytes);nx2_rpc(RPC_ROM_MOUNT,rc,bytes,0,0,0,name,0,0);return rc;}
+uint32_t nx2_mount_rom_default(const char *name){uint64_t size=0;uint32_t rc=nx2_query_rom(&size);if(rc)return rc;void *cache=arena_alloc(size);if(!cache)return NX2_LIMIT;return nx2_mount_rom(name,cache,size);}
+uint32_t nx2_mount_rom_app(const char *name,uint64_t app,void *p,uint64_t n){(void)app;return nx2_mount_rom(name,p,n);}
+uint32_t nx2_mount_rom_index(const char *name,int index,void *p,uint64_t n){(void)index;return nx2_mount_rom(name,p,n);}
+uint32_t nx2_mount_save(const char *name){void *owned=&nx2_launch->save_fs;uint32_t rc=nx2_launch->api.register_fs(name,&owned);nx2_rpc(RPC_SAVE_MOUNT,rc,0,0,0,0,name,0,0);return rc;}
+uint32_t nx2_ensure_save(uint64_t *required){if(required)*required=0;return 0;}
+uint32_t nx2_save_ok(void){return 0;}
+void nx2_main_gate(void){__atomic_store_n(&nx2_launch->main_entered,1,__ATOMIC_RELEASE);nx2_rpc(RPC_MAIN_ENTERED,0,0,0,0,0,0,0,0);nx2_launch->api.original_main();nx2_rpc(RPC_ABORT,0,0,0,0,0,"nnMain returned",0,0);for(;;)wait();}
+static uint32_t preflight_fs_policy(uint32_t result){(void)result;return 2;}
+void nx2_preflight_worker(Nx2Launch *l){
+ volatile unsigned char *tlr;uint64_t tp;unsigned char saved[128];__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));__asm__ volatile("mrs %0,tpidr_el0":"=r"(tp));
+ if(*(volatile uint16_t *)(tlr+0x100)){__atomic_store_n(&l->abort_requested,1,__ATOMIC_RELEASE);return;}
+ for(unsigned i=0;i<128;i++){saved[i]=tlr[0x180+i];tlr[0x180+i]=0;}
+ __asm__ volatile("msr tpidr_el0,xzr\n\tisb" ::: "memory");
+ __atomic_store_n(&l->stage,1,__ATOMIC_RELEASE);l->api.os_init(l->worker_handle,0);
+ l->api.set_fs_result_handler(preflight_fs_policy);l->api.set_fs_allocator(arena_alloc,arena_free);l->api.fs_init();
+ __atomic_store_n(&l->stage,2,__ATOMIC_RELEASE);uint32_t rc=nx2_query_rom(&l->cache_size);
+ void *cache=rc?0:arena_alloc(l->cache_size);if(!rc&&!cache)rc=NX2_LIMIT;if(!rc)rc=nx2_mount_rom("rom",cache,l->cache_size);l->preflight_result=rc;
+ if(!rc){
+  static const char *paths[]={"rom:/UECommandLine.txt","rom:/PJ045/Content/Paks/PJ045-Sage.utoc","rom:/PJ045/Content/Paks/PJ045-Sage.ucas"};
+  static const uint64_t offsets[]={0,0,UINT64_C(0x80010000)};static const uint32_t lengths[]={40,4096,4096};uint64_t option=0;
+  for(unsigned i=0;i<3;i++){uint64_t file=0;rc=l->api.open_file(&file,paths[i],1);if(!rc){rc=l->api.read_file(&l->sample_reads[i],file,offsets[i],l->samples[i],lengths[i],&option);l->api.close_file(file);}l->sample_results[i]=rc;}
+  l->api.unmount("rom");
+ }
+ __atomic_store_n(&l->stage,3,__ATOMIC_RELEASE);rc=nx2_mount_save("save");
+ if(!rc){
+  const char *p="save:/.__nx2_probe.bin";uint64_t file=0,value=UINT64_C(0x1122334455667788),option=1,read=0;
+  l->api.delete_file(p);rc=l->api.create_file(p,8);
+  if(!rc)rc=l->api.open_file(&file,p,3);
+  if(!rc){rc=l->api.write_file(file,0,&value,8,&option);l->api.close_file(file);file=0;}
+  if(!rc)rc=l->api.open_file(&file,p,1);
+  if(!rc){option=0;rc=l->api.read_file(&read,file,0,&l->save_cookie,8,&option);l->api.close_file(file);if(!rc&&read!=8)rc=NX2_INVALID;}
+  l->api.delete_file(p);l->api.unmount("save");
+ }l->save_result=rc;
+ if(*(volatile uint16_t *)(tlr+0x100))__atomic_store_n(&l->abort_requested,1,__ATOMIC_RELEASE);
+ for(unsigned i=0;i<128;i++){tlr[0x180+i]=saved[i];}
+ __asm__ volatile("msr tpidr_el0,%0\n\tisb" ::"r"(tp):"memory");
+ uint64_t restored_tp;__asm__ volatile("mrs %0,tpidr_el0":"=r"(restored_tp));if(restored_tp!=tp)__atomic_store_n(&l->abort_requested,1,__ATOMIC_RELEASE);for(unsigned i=0;i<128;i++)if(tlr[0x180+i]!=saved[i])__atomic_store_n(&l->abort_requested,1,__ATOMIC_RELEASE);
+ __atomic_store_n(&l->stage,4,__ATOMIC_RELEASE);__atomic_store_n(&l->finished,1,__ATOMIC_RELEASE);
+}
+void nx2_game_worker(Nx2Launch *l){volatile unsigned char *tlr;__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));if(*(volatile uint16_t *)(tlr+0x100)){__atomic_store_n(&l->abort_requested,1,__ATOMIC_RELEASE);for(;;)wait();}for(unsigned i=0;i<128;i++)tlr[0x180+i]=0;__asm__ volatile("msr tpidr_el0,xzr\n\tisb" ::: "memory");__atomic_store_n(&l->stage,10,__ATOMIC_RELEASE);l->api.rtld(0,l->worker_handle);nx2_rpc(RPC_ABORT,0,0,0,0,0,"Original rtld returned unexpectedly",0,0);for(;;)wait();}
+
+void nx2_nninit_gate(void){nx2_rpc(RPC_LOG,0,0,0,0,0,"NNINIT_STARTUP_ENTERED",0,0);nx2_launch->api.original_nninit();nx2_rpc(RPC_LOG,0,0,0,0,0,"NNINIT_STARTUP_RETURNED",0,0);}
+void nx2_sdk_init_gate(void){nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_MODULE_INIT_ENTERED",0,0);nx2_launch->api.original_sdk_init();nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_MODULE_INIT_RETURNED",0,0);}
+uint32_t nx2_false(void){return 0;}
+static int equal(const char *a,const char *b){if(!a||!b)return 0;while(*a&&*a==*b){a++;b++;}return *a==*b;}
+static uint64_t present_gate(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h){uint64_t result=__atomic_load_n(&nx2_launch->api.original_present,__ATOMIC_ACQUIRE)(a,b,c,d,e,f,g,h);uint64_t n=__atomic_load_n(&nx2_launch->frames,__ATOMIC_RELAXED);while(!__atomic_compare_exchange_n(&nx2_launch->frames,&n,n+1,0,__ATOMIC_RELEASE,__ATOMIC_RELAXED));return result;}
+static uintptr_t getproc_gate(void *device,const char *name){uintptr_t result=__atomic_load_n(&nx2_launch->api.original_getproc,__ATOMIC_ACQUIRE)(device,name);if(result&&equal(name,"nvnQueuePresentTexture")){__atomic_store_n(&nx2_launch->api.original_present,(void *)result,__ATOMIC_RELEASE);return (uintptr_t)present_gate;}return result;}
+uintptr_t nx2_bootstrap_gate(const char *name){uintptr_t result=nx2_launch->api.original_bootstrap(name);if(result&&equal(name,"nvnDeviceGetProcAddress")){__atomic_store_n(&nx2_launch->api.original_getproc,(void *)result,__ATOMIC_RELEASE);return (uintptr_t)getproc_gate;}return result;}
+
+uint32_t nx2_save_sizes(int64_t *size,int64_t *journal){if(size)*size=0x20000000;if(journal)*journal=0;return 0;}
+uint32_t nx2_save_available(int64_t *size){if(size)*size=0x20000000;return 0;}
+uint32_t nx2_save_journal(int64_t *size){if(size)*size=0;return 0;}
+uint32_t nx2_save_flags(uint32_t *flags){if(flags)*flags=0;return 0;}
+
+uint32_t nx2_true(void){return 1;}
+
+void nx2_os_init_gate(uint32_t handle,const void *args){nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_OS_INIT_ENTERED",0,0);nx2_launch->api.original_os_init(handle,args);nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_OS_INIT_RETURNED",0,0);}

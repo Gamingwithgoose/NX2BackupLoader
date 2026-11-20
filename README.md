@@ -1,102 +1,63 @@
-## Current test: Folder Execution Suite 0.3
+# NX2BackupLoader
 
-Run build.bat to build the current test into release/switch/ with its matching owned executable fixtures in release/games/. See probes/folder-suite/README.txt for setup, test coverage and remaining blockers. This test fully relocates Yoshi's verified modules and collects read-only startup capabilities; it does not start the game. Offline comparison with the original rtld matched all 2,691,120 relocation targets after lazy imports were resolved. Earlier diagnostics and the passed 0.1 test remain as source.
+A folder browser and experimental native launcher for decrypted ExeFS/RomFS
+backups under `/games`, using **Mario Kart World's homebrew title override**.
+The console continues to identify the host as MKW.
 
-# NX2BackupLoader 0.3.0
+## Current release: 0.13
 
-Switch 2 backup research and diagnostics. **Game execution is not implemented.**
-The project name describes the goal, not an existing launch capability.
+Merge `release/switch` into the SD root, fully close MKW, then open a fresh MKW
+homebrew override and NX2BackupLoader. Select a game with Up/Down or the left
+stick and press **A**. **X** refreshes the list; **PLUS** exits while browsing.
+The old diagnostic menus and unconditional three-minute gameplay timer are gone.
 
-## Start on the PC
+Both `/games/Name/{exefs,romfs}` and `/games/Name/base/{exefs,romfs}` are discovered.
+The selected folder supplies its own modules and directory index. No per-title
+whitelist, executable hash profile, fixed game-code offsets or separately prepared
+RomFS map selects what can be attempted. Updates/containers are not merged or
+installed; selections use the extracted root/base directories.
 
-Inspect a decrypted backup without contacting a console or changing the backup:
+## How it launches
 
-```powershell
-python scripts/inspect-backup.py "D:\Backups\MyGame" --inventory
-```
+The loader discovers rtld/main/subsdk*/sdk, resolves SDK exports and validates
+syscall wrapper instructions before placing detours. Original rtld handles game
+relocation and startup. It releases the unused homebrew heap tail so the original
+SDK can use real kernel virtual/physical memory allocation. A bounded file cache
+backs a metadata-only RomFS view with loose SD assets. Saves stay on SD in separate
+program-ID directories; the original demo's existing save directory is preserved.
+No tickets, signatures, installed titles, ownership databases or HEN files change.
 
-Supports `exefs/` + `romfs/` directly, or `base/exefs/` + `base/romfs/`.
-Checks NSO header/range consistency, bounded NPDM declarations, and optional FTP
-`.listing` file sizes. Outputs JSON to the terminal; exit code 1 means issues.
-This does not verify NSO compression/hashes, NPDM signatures, complete game
-content, update pairing, or launchability. Updates are not automatically overlaid.
+## Evidence and compatibility
 
-Compare host-title and backup policies using explicit NPDM files:
+The user confirmed Yoshi reached menus and gameplay in 0.12. Its report records
+ongoing rendering through 175 seconds; the armed 180-second diagnostic timer
+accounts for the closure. That timer is removed from 0.13.
 
-```powershell
-python scripts/compare-policies.py "D:\Backups\Host\base\exefs\main.npdm" "D:\Backups\Target\base\exefs\main.npdm"
-```
+The linked generic resolver prepares Yoshi, Zelda OOT, Mario Kart World and Kirby
+Air Riders fixtures, resolves their 20 bridge interfaces and 68 hooks, and rejects
+a damaged wrapper. The Yoshi hook sites match the hardware-working legacy set.
+The runtime index matches Yoshi's prior index byte-for-byte and validates Zelda's
+186587 files. Twelve linked-code emulator checks and 28695 host C assertions pass.
+See `probes/game-launch/tests/pc-validation.txt` for exact binary hashes and scope.
 
-Use the host NPDM matching the version installed on the console. This compares
-declarations, not a running process's effective permissions. A match is not
-evidence of compatibility.
+These are PC preparation/regression checks. The 0.13 browser and general launches
+still need hardware testing, and other titles have not been confirmed playable.
+SDK ABI changes, unavailable services/resources, legacy heap allocation and other
+runtime differences may require broader compatibility work. The loader refuses
+unrecognized wrappers/interfaces rather than applying another game's offsets.
+This is a general launch path, not a guarantee that every title works.
 
-With Python 3.14+, measure NUP-style compression/dedup savings without creating
-an archive or modifying the source backup:
+The current limits include 13 modules, 262144 files/directories, a 128 MiB index,
+64 folder levels, 512 MiB mapped per module and MKW's inherited capabilities.
+Large SD folders show indexing progress and may take several minutes. There is
+no timed gameplay exit; the remaining five-minute startup limit stops only a game
+that has not entered its instrumented main function. Use normal HOME/Close Software
+when finished. Copy `/nx2-launch-report.txt` before the next launch when reporting
+an issue. See `release/README.txt` for layouts, save locations and details.
 
-```powershell
-python scripts/estimate-nup-size.py "D:\Backups\MyGame" --level 3
-```
+## Build
 
-This reads all files, excludes `.listing`, and estimates payload only. It is not
-a NUP packer. The [NUP reference tools](https://github.com/a55uka/nup) provide
-actual packing and verification; see [feasibility notes](docs/FEASIBILITY.md).
-
-## Optional Switch 2 diagnostic build
-
-The console app scans `sdmc:/games/<game>/`, supports the same direct/base layouts,
-and checks folder presence and four-byte signatures only. Game files are read
-only. **A appends an SD report**, so the application does perform that SD write.
-
-- Up/Down: select; A: write report; X: rescan; +: exit.
-- Report: `sdmc:/nx2backuploader-report.txt`.
-- No native game launch, installation, NAND writes, ticket changes, or license work.
-
-Install the [ounce-devkit](https://github.com/ouncebrew/ounce-devkit) PC toolchain,
-then run `build.bat` from this repository. It logs to `build.log`, verifies the
-candidate, and writes `release/nx2backuploader.nro` only after format checks pass.
-The shell builder also verifies before publishing and clears stale candidates on
-failure. The Makefile supports incremental rebuilds after source changes.
-
-The verifier bounds NRO segments, follows the declared MOD0/startup extensions,
-and requires a Switch 2 OUN0 platform record with a supported version. It does
-not authenticate the code or establish compatibility with your hardware/runtime.
-This revision was PC-built and tested; it has **not been console-tested**.
-Building this project does not require replacing any working console HEN files.
-
-## Regression checks
-
-PC tests (Python 3.10+ and Windows PowerShell or PowerShell 7; compression tests
-require Python 3.14 and otherwise skip):
-
-```powershell
-python -m unittest discover -s tests -p "test_*.py" -v
-```
-
-Scanner fault tests on a desktop compiler:
-
-```sh
-cc -Itests/host tests/scanner_tests.c -o scanner-tests
-./scanner-tests
-```
-
-Or in a Visual Studio developer command prompt:
-
-```bat
-cl /nologo /W3 /D_CRT_SECURE_NO_WARNINGS /Itests/host tests/scanner_tests.c /Fescanner-tests.exe
-scanner-tests.exe
-```
-
-These substitute filesystem/controller/console operations. They test application
-logic and failures, not actual console I/O.
-
-## History
-
-- **0.3.0:** bounded platform-aware NRO verification; reliable write-error
-  reporting; complete incremental rebuilds; checked paths; sorted scans with
-  omitted/incomplete counts; `base/` layout support; PC backup, policy and
-  compression diagnostics; regression tests and explicit scope.
-- **0.2:** Switch 2 libounce toolchain correction.
-- **0.1 (retired):** earlier build used Switch 1 libnx rules. A console crash was
-  reported after running that build. The exact failure cause was not established
-  by this project. Older outputs should not be treated as tested Switch 2 builds.
+Use `build.bat` with ounce-devkit/libounce. The root build targets
+`probes/game-launch`; it verifies the Switch 2 NRO record and publishes the merge
+folder under `release/switch`. Metadata-only legacy fixtures and earlier test
+suites remain as development evidence; Nintendo binaries are not distributed.

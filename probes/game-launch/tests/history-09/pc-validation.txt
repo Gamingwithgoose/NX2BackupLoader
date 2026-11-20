@@ -1,0 +1,52 @@
+NX2BackupLoader Host Compatibility Test 0.9 — investigation/validation
+
+Release NRO: 491520 bytes
+SHA256 165ac76e81fcf9c5d86157d3588f5b5da0c1bacff46009fcd872415065b415fb
+
+Hardware 0.8 passed SDK module initialization and entered nninitStartup, then
+requested process exit. Full report retained as hardware-launch-08.txt.
+
+Original Yoshi nninitStartup jumps to main+0x11600. Its memory check calls
+nn::os::IsVirtualAddressMemoryEnabled and reaches main+0x11ad4 -> exit(1) when
+false. The SDK's implementation at sdk+0x14debc checks GetInfo type 16, current
+process/sub=0, for successful nonzero system-resource memory. Captured Pokopia
+GetInfo values are type16=0 and type17=0; its supplied NPDM offset0x14 is also0.
+Yoshi's NPDM offset0x14 requests0x1400000 (20 MiB).
+
+PASS actual original main startup guard replay after modeled OS initialization:
+using retained hardware GetInfo replies, reaches main+0x6c8b290 exit import with
+status1. The test observes this boundary; it does not run exit destructors or
+forward real services. Full SDK initialization was observed on hardware, not
+emulated for this focused test. See startup-memory-guard-09.json and its script.
+
+Candidate inspection (read-only):
+PLZA supplied base + populated updates65536/393216 identify Switch1, title
+0100f43008c44000, system resources16 MiB. Update1310720 has empty ExeFS; no
+matching executable metadata was available for it. The base's3 NSOs decode and
+parse, no missing required strong symbol names found. Base inventory26 files,
+4315835214 bytes, no basic errors; full completeness cannot be certified without
+trusted content manifests and correct base/update pairing.
+Mario Kart World base/update917504 identify Switch2, title0400c3f00006e000,
+system resources64 MiB. They declare Map/UnmapPhysicalMemory and cover Yoshi's
+services/syscalls. Base's4 NSOs decode/parse, no missing required strong names.
+Base inventory205687 files,24407507388 bytes, no basic errors. No game code run.
+
+0.9 change: X writes /nx2-host-report.txt under any working override host, without
+backup execution, kernel resizing or physical mapping by the report operation.
+It records live resource/physical-memory/heap values and safe QueryMemory data.
+The old launch path rejects zero resource budgets early and still rejects new
+unverified execution hosts. There is no fake capability flag or kernel change.
+The complete memory backend still needs actual resources/physical headroom.
+
+PASS clean native Switch2 build and NRO segment/MOD0/OUN0 verification.
+PASS matching published candidate. Report indices/query list reviewed against
+GetInfo definitions; unsuccessful queries are logged without using output values.
+Existing execution/backend code is unchanged except the early compatibility gate.
+Historical full backend PC checks are retained in history-08/.
+
+LIMITS: X report operation has not been hardware-tested yet. Kernel replies,
+PAC target behavior and single-thread atomics in the guard test are models. The
+candidate policies are PC declarations, not proof of installed-version policy
+or effective running permissions. Mario Kart World execution and a game title
+screen remain unverified. A compatible resource budget alone is insufficient
+when the homebrew heap has already consumed most physical memory.

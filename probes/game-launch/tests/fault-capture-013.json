@@ -1,0 +1,12 @@
+{
+  "worker_elf_sha256": "45489659e7743fe89beb85f181f6c6652963caedae23fecc748a7d856ff62e4c",
+  "real_runtime_exception_decoder_executed": true,
+  "debugged_process_capture_enabled": true,
+  "modeled_ReturnFromException_count": 1,
+  "registers_pc_lr_sp_esr_far_preserved": true,
+  "guest_TLS_registers_captured": true,
+  "second_fault_does_not_overwrite_first": true,
+  "faulted_thread_parked_without_resuming": true,
+  "real_console_services_forwarded": 0,
+  "scope": "Synthetic CPU exception packet through the actual linked libounce decoder and handler; kernel exception delivery is modeled, not a hardware guarantee."
+}

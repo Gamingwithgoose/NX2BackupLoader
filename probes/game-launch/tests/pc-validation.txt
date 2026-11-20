@@ -1,0 +1,55 @@
+NX2BackupLoader Folder Launcher 0.13 — validation
+
+Release NRO: 499712 bytes
+SHA256 05b106a540d7d9fdfa7bcaee34b9525579ef09a531f3c93774aa1efe69ce4918
+ELF SHA256 45489659e7743fe89beb85f181f6c6652963caedae23fecc748a7d856ff62e4c
+
+Hardware input: hardware-launch-012-success.txt. User explicitly reported menus
+and gameplay. Log shows WATCHDOG_ARMED limit_seconds=180, GAME_NNMAIN_ENTERED,
+asset reads, 7196 returned presents and continued heartbeats at 175 seconds, no
+captured CPU fault. This is 0.12 evidence, not proof of 0.13 hardware behavior.
+
+0.13 implements the general folder browser/loader, removes the unconditional
+watchdog, removes title hash/offset selection, indexes the selected SD directory,
+uses 13 variable modules/39 mapped regions, a 16-file LRU and isolated SD saves.
+The startup-only timeout remains; native input polling remains disabled.
+
+PASS 28695 C assertions: path/IPC/index/heap planning and gate boundaries.
+PASS folder/index C code compiled for Windows: direct/base catalog discovery,
+sorting, exclusion of hidden/incomplete/metadata folders. Actual Yoshi directory
+index equals the legacy 29428-byte index, SHA256
+6501175b6f91ad952b77bc935122df12d57212fb4e44744da2fe972a1447f96c.
+Actual Zelda index: 186587 files, 30562844 bytes, metadata 13672348 bytes, SHA256
+14473d2dbaa12c13d7a4f0743bf2ce03d7c34c39939bb0b4445f34c8da06ccc9.
+The directory source hash is retained in folder-index-013.json.
+
+Twelve current linked ELF emulator checks pass and identify the ELF hash above:
+- RPC delayed replies/backpressure without CPU events; volatile regs scrubbed;
+  no linked gameplay watchdog worker remains.
+- Checked heap release: pre/post malloc cursor states and ten failure scenarios.
+- Strong startup heap split, real page allocator allocate/free/range checks.
+- Actual runtime exception decoder/capture with synthetic exception delivery.
+- Original SDK SD reads, >2GiB offset and private save cookie roundtrip.
+- Native GetInfo/map/unmap adapters, alias/error and legacy heap-resize guards.
+- Yoshi original startup, with generic resolved detours, to 62GiB allocation entry.
+- Yoshi original rtld/CRT relocation and OS init with generic resolved detours,
+  ending at the first unmodeled SM connection.
+- General preparation of Yoshi, Zelda OOT, MKW and Kirby Air Riders: actual linked
+  module parser/resolver/detour writer, 20 API exports and 68 hooks each. Yoshi's
+  semantic hook sites equal legacy-yoshi-hooks.json from the 0.12 working path.
+  Each SDK fixture rejects a deliberately damaged output-SVC wrapper.
+
+The general preparation tests execute no game instructions. Error formatting is
+modeled there; the parser/resolver/writer and refusal branches are real code.
+The old SDK preflight worker is retained as a PC regression entry only, not a
+runtime menu or a required title-specific launch phase.
+The emulator models kernel replies, scheduling, selected atomics and PAC targets;
+it forwards no console service and models no GPU/cache coherence/multicore timing.
+The focused startup guard test stops at allocation entry, not allocation success.
+Windows folder enumeration is not console enumeration. Browser input/rendering,
+file-cache eviction with real SD services, general SDK class ABI, on-console
+module startup, gameplay beyond the old timer and other titles need hardware
+verification. Do not call the four prepared fixtures four successful game boots.
+
+The original 0.12 validation remains in history-012. No Nintendo assets, executable
+snapshots or tickets are included in the release or these test records.

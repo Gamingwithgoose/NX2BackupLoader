@@ -1,0 +1,177 @@
+{
+  "worker_elf_sha256": "b9f5e3c0afd3e64304600ae9b235f278e51fda5f32ddaf826e2cfce8a84d3e43",
+  "scope": "Original game nninitStartup memory check with modeled hardware GetInfo values, after OS initialization; no real services forwarded. Observes the game exit import without running destructors.",
+  "exit": [
+    {
+      "pc": "main+0x6c8b290",
+      "status": 1
+    }
+  ],
+  "system_resource_total": 0,
+  "queries": [
+    {
+      "svc": "0x25",
+      "pc": "sdk+0x180cf0",
+      "args": [
+        "0x1780afee10",
+        "0x1234",
+        "0x1c0",
+        "0x1780a00000"
+      ],
+      "synthetic_thread_id": 17185
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x74016bf0",
+      "args": [
+        "0x1780afee78",
+        "0x2",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x3408200000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x74016bf0",
+      "args": [
+        "0x1780afee70",
+        "0x3",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x2000000000"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x74016bf0",
+      "args": [
+        "0x1780afee68",
+        "0x1c",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x74016bf0",
+      "args": [
+        "0x1780afee88",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x74016bf0",
+      "args": [
+        "0x1780afee88",
+        "0x1d",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x74016bf0",
+      "args": [
+        "0x1780afee88",
+        "0x1e",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x6",
+      "pc": "sdk+0x180b88",
+      "args": [
+        "0x1780afef08",
+        "0x1780afef04",
+        "0x80d1000",
+        "0x0"
+      ],
+      "model": {
+        "base": "0x80d1000",
+        "size": 1966080,
+        "state": 0,
+        "permission": 0,
+        "module": "free"
+      }
+    },
+    {
+      "svc": "0x1f",
+      "pc": "0x74016c08",
+      "args": [
+        "0x1780afee2c",
+        "0x17ac11c0",
+        "0x73000568",
+        "0x0"
+      ]
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x74016bf0",
+      "args": [
+        "0x1780afef98",
+        "0x10",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x74016bf0",
+      "args": [
+        "0x1780afef98",
+        "0x11",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    },
+    {
+      "svc": "0x29",
+      "pc": "0x74016bf0",
+      "args": [
+        "0x1780afef88",
+        "0x10",
+        "0xffff8001",
+        "0x0"
+      ],
+      "observed_process_info": {
+        "result": "0x0",
+        "value": "0x0"
+      }
+    }
+  ]
+}
