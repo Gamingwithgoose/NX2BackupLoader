@@ -282,6 +282,13 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
    return NX2_INVALID;
  }
  uint64_t answer=0;uint32_t rc=NX2_FS_UNSUPPORTED,op=0;
+ /* Initialize the isolated guest root only when creating contents.
+  * Reads and file opens retain genuine not-found behavior. */
+ if((cmd==0||cmd==2)&&!obj->read_only){
+  uint32_t prepared=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,
+                            obj->root,0,0);
+  if(prepared)return prepared;
+ }
  switch(cmd){
   case 0:
    if(len<16)return NX2_INVALID;
@@ -383,18 +390,29 @@ static uint32_t do_dir(const VfsObject *obj,uint32_t cmd,
 /* A native SaveDataAttribute is exactly 0x40 bytes. Canonicalize the
  * resulting subdirectory once, for both explicit creation and opening.
  * This namespace never escapes the selected guest title's SD root. */
+/* No formatted I/O or allocation from the guest's intercepted FSP call.
+ * Preserve existing private save namespace bytes exactly. */
+static char *hex_fixed(char *dst,uint64_t n,unsigned digits){
+ static const char hex[]="0123456789abcdef";
+ for(unsigned i=digits;i;i--)
+  dst[digits-i]=hex[(n>>((i-1)*4))&15U];
+ return dst+digits;
+}
 static int save_namespace(uint8_t space,const unsigned char *attr,
                           char name[128]){
- uint64_t app=read64(attr),uid0=read64(attr+8);
- uint64_t uid1=read64(attr+16),system_id=read64(attr+24);
- uint32_t type=attr[32],index=(uint32_t)attr[34] |
-                               ((uint32_t)attr[35]<<8);
- int n=snprintf(name,128,
-     "vsave-%02x-%02x-%04x-%016llx-%016llx-%016llx-%016llx",
-     (unsigned)space,type,index,
-     (unsigned long long)app,(unsigned long long)uid0,
-     (unsigned long long)uid1,(unsigned long long)system_id);
- return n>0&&n<128;
+ if(!attr||!name)return 0;
+ char *p=name;
+ memcpy(p,"vsave-",6);p+=6;
+ p=hex_fixed(p,space,2);*p++='-';
+ p=hex_fixed(p,attr[32],2);*p++='-';
+ uint16_t index=(uint16_t)attr[34]|((uint16_t)attr[35]<<8);
+ p=hex_fixed(p,index,4);*p++='-';
+ p=hex_fixed(p,read64(attr),16);*p++='-';
+ p=hex_fixed(p,read64(attr+8),16);*p++='-';
+ p=hex_fixed(p,read64(attr+16),16);*p++='-';
+ p=hex_fixed(p,read64(attr+24),16);
+ *p=0;
+ return (size_t)(p-name)<128;
 }
 int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
                         uint32_t session_kind,Nx2IpcDecision d){
@@ -457,13 +475,13 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
    if(avail<0x48||!save_namespace(in[0],in+8,name))
     rc=NX2_INVALID;
    else{
-    rc=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,name,0,0);
-    if(!rc){
-     new_id=allocate_object(session,VFS_FS,d.command==53,0,name);
-     if(!new_id)rc=NX2_LIMIT;
-    }
+    /* Return the domain object without synchronously creating an SD
+     * directory inside the guest's intercepted IPC. Namespace creation
+     * is delayed to the first mutating filesystem operation. */
+    new_id=allocate_object(session,VFS_FS,d.command==53,0,name);
+    rc=new_id?0:NX2_LIMIT;
    }
-   nx2_rpc(RPC_LOG,session,d.object_id,d.command,rc,0,
+   nx2_rpc(RPC_LOG,session,d.object_id,d.command,rc,new_id,
            "GUEST_FSP_SAVE_OPEN",0,0);
   }
  }else{
