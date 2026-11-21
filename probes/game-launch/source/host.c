@@ -306,6 +306,10 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   case RPC_SAVE_MOUNT:
     logline(h, "PRIVATE_SAVE_MOUNT name=%s result=%08x root=%s\n", r->path,
             (unsigned)r->a, h->save_root);
+    if(r->a==0){
+      __atomic_store_n(&l->late_trace_active,1,__ATOMIC_RELEASE);
+      logline(h,"LATE_STARTUP_TRACE_ARMED after_successful_save_mount=1\n");
+    }
     break;
   case RPC_PHYSICAL_MEMORY:
     logline(h,
