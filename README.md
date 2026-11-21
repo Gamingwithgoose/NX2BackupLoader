@@ -86,7 +86,7 @@ Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro**. Copy 
 
 ## Current limitations
 
-Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUP launching is newly implemented and **untested on hardware**. It currently selects a base package only; updates and DLC are not merged. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
+Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUP launching is newly implemented and **untested on hardware**. It selects a base package, or a standalone-update package explicitly marked with the NUP v1 standalone flag; ordinary updates and DLC are not merged. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
 
 **Early experimental release. Use at your own risk.**
 
@@ -98,4 +98,8 @@ Direct NUP support reuses the Zstandard decoder already bundled with this projec
 
 ### Known OOT launch blocker
 
-The current extracted OOT test successfully built/loaded a cached index for 186,587 files and prepared all ExeFS modules. Its startup then stopped at `Refused legacy SetHeapSize while native virtual memory is active` during `NNINIT_STARTUP`. This is a deliberate memory-safety guard, not an indexing failure. Do not bypass it blindly: the host process memory layout must remain valid. NUP storage support alone will not fix this game-specific startup request.
+The current extracted OOT test successfully built/loaded a cached index for 186,587 files and prepared all ExeFS modules. Its startup previously stopped at `Refused legacy SetHeapSize while native virtual memory is active` during `NNINIT_STARTUP`. The experimental native-VM heap hook now calls the real kernel `svcSetHeapSize` only when the request fits the original host heap region, preserves the existing host allocator and leaves at least 3 GiB of physical budget for other native allocations. A kernel refusal is returned to the game and logged as `NATIVE_HEAP_SET_RESULT`; requests outside the bounds are logged as `NATIVE_HEAP_BOUNDS_REFUSED` or `NATIVE_HEAP_BUDGET_REFUSED`. This is untested on real hardware and does not guarantee OOT can allocate everything it needs.
+
+### NUP package support
+
+NUP v1 archives can contain a base package or an update explicitly flagged `standalone_update` (flag bit 0). Both are eligible for experimental launch when their ExeFS and RomFS trees exist. Update-only archives lacking that standalone flag are not launchable without a base, and DLC/update layering is not yet implemented. If validation fails, the selected entry shows package index, kind, flags and directory indices to assist diagnosis.
