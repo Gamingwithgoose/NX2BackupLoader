@@ -70,7 +70,10 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
  * fake arena pointer. Preserve the host allocator's committed prefix,
  * stay in the game's original reserved heap span, and keep physical
  * headroom for native physical-memory maps. */
-#define NX2_NATIVE_PHYSICAL_FLOOR UINT64_C(0xC0000000) /* 3 GiB */
+/* EXPERIMENTAL: 2.5 GiB minimum to test whether the kernel can
+ * satisfy the guest after accounting/isolation. Do not merge into the
+ * stable branch without real physical-map telemetry and ownership review. */
+#define NX2_NATIVE_PHYSICAL_FLOOR UINT64_C(0xA0000000) /* 2.5 GiB */
 uint32_t nx2_virtual_heap(void **out,uint64_t size){
  Nx2Launch *l=nx2_launch;
  if(!out || !size || (size & (NX2_GAME_ALIGNMENT-1)))return 0xd001;
@@ -95,42 +98,44 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
  const uint64_t original_end=plan->original_begin+plan->original_bytes;
  const uint64_t cut=plan->game_begin;
  uint64_t retain=cut-base;
+ uint64_t previous_guest=__atomic_load_n(&l->heap_size,__ATOMIC_ACQUIRE);
+ /* For repeated resizes, the memory at cut is already guest heap.
+  * Verify the end of the *current* allocation instead of requiring
+  * cut to remain unmapped forever. */
+ if(plan->original_bytes>UINT64_MAX-plan->original_begin ||
+    plan->original_begin<base || cut<base || cut>original_end ||
+    original_end<base || previous_guest>original_end-cut ||
+    size>original_end-cut || size>UINT64_MAX-retain ||
+    (previous_guest && l->heap_base!=cut)) {
+   nx2_rpc(RPC_LOG,size,retain,previous_guest,original_end,0,
+           "GUEST_HEAP_RANGE_REFUSED",0,0);
+   return 0xd001;
+ }
+ const uint64_t boundary=cut+previous_guest;
  MemoryInfo end_region,tail;u32 page=0;
- rc=svcQueryMemory(&end_region,&page,cut-1);
+ rc=svcQueryMemory(&end_region,&page,boundary-1);
  if(R_FAILED(rc))return rc;
- rc=svcQueryMemory(&tail,&page,cut);
+ rc=svcQueryMemory(&tail,&page,boundary);
  if(R_FAILED(rc))return rc;
  uint64_t available=total>=used?total-used:0;
  uint64_t end_of_commit=end_region.addr+end_region.size;
  nx2_rpc(RPC_LOG,size,retain,end_of_commit,available,0,
          "NATIVE_HEAP_BOUNDS_INPUT",0,0);
- nx2_rpc(RPC_LOG,cut,tail.addr,tail.type,tail.perm,0,
+ nx2_rpc(RPC_LOG,boundary,tail.addr,tail.type,tail.perm,0,
          "NATIVE_HEAP_TAIL_INPUT",0,0);
- if(plan->original_bytes>UINT64_MAX-plan->original_begin ||
-    plan->original_begin<base || cut<base || cut>original_end ||
-    original_end<base || size>original_end-base ||
-    end_region.addr>cut-1 || end_region.size>UINT64_MAX-end_region.addr ||
-    end_of_commit!=cut || end_region.type!=MemType_Heap ||
+ if(end_region.addr>boundary-1 ||
+    end_region.size>UINT64_MAX-end_region.addr ||
+    end_of_commit!=boundary || end_region.type!=MemType_Heap ||
     (end_region.perm&Perm_Rw)!=Perm_Rw ||
     tail.type!=MemType_Unmapped || tail.perm!=Perm_None) {
-   nx2_rpc(RPC_LOG,size,retain,end_of_commit,tail.type,0,
+   nx2_rpc(RPC_LOG,size,previous_guest,end_of_commit,tail.type,0,
            "NATIVE_HEAP_BOUNDS_REFUSED",0,0);
    return 0xd001;
  }
- /* The guest's requested heap starts AFTER the retained launcher
-  * prefix. The kernel's contiguous heap must cover both, so request
-  * retain+guest_size from the kernel but only return [cut,cut+size)
-  * to the guest. The original base must never be handed to the game. */
- if(size>UINT64_MAX-retain || retain+size>original_end-base) {
-   nx2_rpc(RPC_LOG,size,retain,original_end-base,0,0,
-           "GUEST_HEAP_RANGE_REFUSED",0,0);
-   return 0xd001;
- }
- uint64_t kernel_size=retain+size;
- /* Repeated SetHeapSize calls grow only the uncommitted delta. A shrink
-  * does not consume more physical memory. */
- uint64_t previous_guest=__atomic_load_n(&l->heap_size,__ATOMIC_ACQUIRE);
- uint64_t increase=size>previous_guest?size-previous_guest:0;
+ const uint64_t kernel_size=retain+size;
+ const uint64_t increase=size>previous_guest?size-previous_guest:0;
+ nx2_rpc(RPC_LOG,previous_guest,size,kernel_size,NX2_NATIVE_PHYSICAL_FLOOR,0,
+         "GUEST_HEAP_RESIZE_GUARD",0,0);
  if(increase>available || available-increase<NX2_NATIVE_PHYSICAL_FLOOR) {
    nx2_rpc(RPC_LOG,size,kernel_size,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
            "GUEST_HEAP_BUDGET_REFUSED",0,0);
