@@ -45,6 +45,9 @@ typedef struct {
  uint64_t (*original_present)(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
  void (*rtld)(uint64_t,uint64_t);
  void (*original_os_init)(uint32_t,const void *);
+ uint32_t (*original_device_initialize)(void *,const void *);
+ uint32_t (*original_queue_initialize)(void *,const void *);
+ uint32_t (*original_window_initialize)(void *,const void *);
 } Nx2LaunchApi;
 typedef struct {
  uint64_t begin,end;uint32_t type,permission;
@@ -75,6 +78,9 @@ typedef struct {
  uint64_t handle_tags[128];
  uint32_t nvn_bootstrap_calls,nvn_getproc_calls,nvn_present_lookups;
  uint32_t nvn_present_entered,nvn_present_returned;
+ uint32_t nvn_device_entered,nvn_device_returned,nvn_device_result;
+ uint32_t nvn_queue_entered,nvn_queue_returned,nvn_queue_result;
+ uint32_t nvn_window_entered,nvn_window_returned,nvn_window_result;
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
  Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
  uint32_t graphics_ipc_next;
