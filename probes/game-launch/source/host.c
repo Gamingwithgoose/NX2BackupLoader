@@ -162,6 +162,24 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       return NX2_INVALID;
   }
   switch (r->op) {
+  case RPC_VFS_PREPARE_ROOT: {
+    /* Never accept a native path or arbitrary directory from the guest.
+     * Only a single generated per-profile namespace under the active title.
+     * Host directories remain private to this launcher and selected NUP. */
+    const char *name=r->path;
+    if(strncmp(name,"vsave-",6))return NX2_INVALID;
+    size_t len=strlen(name);
+    if(len<20||len>110)return NX2_INVALID;
+    for(size_t k=6;k<len;k++){
+      char c=name[k];
+      if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||c=='-'))
+        return NX2_INVALID;
+    }
+    if(!nx2_save_path(p,sizeof(p),h->save_root,name))return NX2_INVALID;
+    rc=mkdir_one(h->sd,p);
+    logline(h,"GUEST_VFS_PREPARE namespace=%s result=%08x\n",name,rc);
+    break;
+  }
   case RPC_CACHE_CREATE:
   case RPC_CACHE_CHECK: {
     /* Cache indexes and quotas are properties of the virtual guest store,
