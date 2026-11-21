@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "nup.h"
+#include <limits.h>
+#ifdef _WIN32
+#define nup_seek _fseeki64
+#define nup_tell _ftelli64
+#else
+#define nup_seek fseeko
+#define nup_tell ftello
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -78,8 +86,8 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
   uint32_t packages=rd32(header+0x48);
   if (!packages || packages>4096 || toc_size<48 || toc_size>128*1024*1024 ||
       blob%16 || blob<128 || toc_size>blob-128 || file_size<blob ||
-      fseek(f,0,SEEK_END) || ftell(f)<0 || (uint64_t)ftell(f)!=file_size ||
-      fseek(f,128,SEEK_SET)) goto done;
+      nup_seek(f,0,SEEK_END) || nup_tell(f)<0 || (uint64_t)nup_tell(f)!=file_size ||
+      nup_seek(f,128,SEEK_SET)) goto done;
   toc=malloc((size_t)toc_size);
   if (!toc || fread(toc,1,(size_t)toc_size,f)!=(size_t)toc_size) goto done;
   sha256(toc,(size_t)toc_size,digest);
@@ -112,4 +120,309 @@ done:
   free(toc);
   fclose(f);
   return ok;
+}
+
+/* Base-package contents are a virtual filesystem. Read a file by name and
+ * offset rather than unpacking its siblings onto the SD card. */
+typedef struct {
+  FILE *f;
+  unsigned char *toc;
+  size_t toc_size;
+  uint64_t blob_start, file_length;
+  uint64_t ndirs, nfiles;
+  uint32_t exefs_dir, romfs_dir;
+  const unsigned char *dirs, *files, *children, *pool;
+  uint64_t child_count, pool_size;
+  uint32_t cached_file;
+  unsigned char *cached_bytes;
+  size_t cached_size;
+} NupMount;
+static NupMount mounted;
+
+/* Standalone Zstandard decoder, vendored from its dual BSD/GPL source. */
+extern size_t ZSTD_decompress(void *,size_t,const void *,size_t);
+extern unsigned ZSTD_isError(size_t);
+typedef struct ZSTD_DCtx_s ZSTD_DStream;
+typedef struct {const void *src;size_t size,pos;} NupIn;
+typedef struct {void *dst;size_t size,pos;} NupOut;
+extern ZSTD_DStream *ZSTD_createDStream(void);
+extern size_t ZSTD_initDStream(ZSTD_DStream *);
+extern size_t ZSTD_decompressStream(ZSTD_DStream *,NupOut *,NupIn *);
+extern size_t ZSTD_freeDStream(ZSTD_DStream *);
+static uint32_t dirchild(const NupMount *m,uint32_t d,uint32_t j) {
+  return rd32(m->children+(rd32(m->dirs+(size_t)d*24+8)+j)*4);
+}
+static const unsigned char *name_for(const NupMount *m,uint32_t node,
+                                    uint32_t *length) {
+  const unsigned char *r;
+  if(node<m->ndirs) r=m->dirs+(size_t)node*24;
+  else r=m->files+(size_t)(node-m->ndirs)*80;
+  uint32_t off=rd32(r),len=rd32(r+4);
+  if(off>m->pool_size||len>m->pool_size-off) return NULL;
+  if(length) *length=len;
+  return m->pool+off;
+}
+static int safe_name(const unsigned char *s,uint32_t n) {
+  if(!s||!n||n>255||(n==1&&s[0]=='.')||
+     (n==2&&s[0]=='.'&&s[1]=='.'))return 0;
+  for(uint32_t i=0;i<n;i++)
+    if(!s[i]||s[i]=='/'||s[i]=='\\'||s[i]==':')return 0;
+  return 1;
+}
+static uint32_t lookup_child(NupMount *m,uint32_t dir,
+                             const char *name,size_t len) {
+  if(dir>=m->ndirs)return UINT32_MAX;
+  const unsigned char *d=m->dirs+(size_t)dir*24;
+  uint32_t start=rd32(d+8),count=rd32(d+12);
+  if(start>m->child_count||count>m->child_count-start)
+    return UINT32_MAX;
+  /* Names are sorted in the NUP TOC. A linear fallback also works if
+   * the producer hasn't preserved bytewise ordering. */
+  for(uint32_t i=0;i<count;i++) {
+    uint32_t node=dirchild(m,dir,i),n=0;
+    const unsigned char *s=name_for(m,node,&n);
+    if(s&&n==len&&!memcmp(s,name,len))return node;
+  }
+  return UINT32_MAX;
+}
+static uint32_t lookup_file(const char *path) {
+  if(!mounted.f||!path)return UINT32_MAX;
+  uint32_t dir;
+  if(!strncmp(path,"romfs/",6)) {
+    dir=mounted.romfs_dir;path+=6;
+  } else if(!strncmp(path,"exefs/",6)) {
+    dir=mounted.exefs_dir;path+=6;
+  } else return UINT32_MAX;
+  if(dir==UINT32_MAX)return UINT32_MAX;
+  while(*path) {
+    const char *slash=strchr(path,'/');
+    size_t len=slash?(size_t)(slash-path):strlen(path);
+    if(!len||len>255)return UINT32_MAX;
+    uint32_t node=lookup_child(&mounted,dir,path,len);
+    if(node==UINT32_MAX)return UINT32_MAX;
+    if(!slash)return node>=mounted.ndirs?node-mounted.ndirs:UINT32_MAX;
+    if(node>=mounted.ndirs)return UINT32_MAX;
+    dir=node;path=slash+1;
+  }
+  return UINT32_MAX;
+}
+void nx2_nup_close(void) {
+  if(mounted.f)fclose(mounted.f);
+  free(mounted.toc);
+  free(mounted.cached_bytes);
+  memset(&mounted,0,sizeof(mounted));
+}
+int nx2_nup_active(void) {return mounted.f!=NULL;}
+int nx2_nup_open(const char *path) {
+  nx2_nup_close();
+  uint64_t id=0,files=0;
+  if(!nx2_nup_probe(path,&id,&files))return 0;
+  FILE *f=fopen(path,"rb");
+  if(!f)return 0;
+  unsigned char h[128];
+  if(fread(h,1,128,f)!=128){fclose(f);return 0;}
+  uint64_t count=rd64(h+0x10),nd=0,nf=0;
+  if(count>128*1024*1024 || count<48) {fclose(f);return 0;}
+  unsigned char *toc=malloc((size_t)count);
+  if(!toc||fread(toc,1,(size_t)count,f)!=(size_t)count) {
+    free(toc);fclose(f);return 0;
+  }
+  uint32_t pc=rd32(toc+4);
+  nd=rd64(toc+8);nf=rd64(toc+16);
+  uint64_t pool_off=rd64(toc+24),pool_len=rd64(toc+32);
+  uint64_t dirs_start=48+(uint64_t)pc*64;
+  uint64_t files_start=dirs_start+nd*24,children_start=files_start+nf*80;
+  if(!nd||nd>262144||nf>262144||children_start>pool_off||
+     pool_off>count||pool_len>count-pool_off||
+     (pool_off-children_start)%4) {
+    free(toc);fclose(f);return 0;
+  }
+  NupMount m={0};
+  m.f=f;m.toc=toc;m.toc_size=(size_t)count;
+  m.blob_start=rd64(h+0x38);m.file_length=rd64(h+0x40);
+  m.ndirs=nd;m.nfiles=nf;
+  m.dirs=toc+dirs_start;m.files=toc+files_start;
+  m.children=toc+children_start;m.pool=toc+pool_off;
+  m.child_count=(pool_off-children_start)/4;m.pool_size=pool_len;
+  m.exefs_dir=m.romfs_dir=UINT32_MAX;
+  m.cached_file=UINT32_MAX;
+  for(uint32_t i=0;i<pc;i++){
+    const unsigned char *p=toc+48+(size_t)i*64;
+    if(p[24]==0){
+      m.exefs_dir=rd32(p+12);
+      m.romfs_dir=rd32(p+16);
+      break;
+    }
+  }
+  if(m.exefs_dir>=nd||m.romfs_dir>=nd)goto fail;
+  /* Validate every directory edge and file extent before exposing paths. */
+  for(uint64_t i=0;i<nd;i++){
+    const unsigned char *d=m.dirs+i*24;
+    uint32_t first=rd32(d+8),n=rd32(d+12);
+    if(first>m.child_count||n>m.child_count-first||rd64(d+16))goto fail;
+    for(uint32_t j=0;j<n;j++){
+      uint32_t child=dirchild(&m,(uint32_t)i,j),len=0;
+      if((uint64_t)child>=nd+nf ||
+         !safe_name(name_for(&m,child,&len),len))goto fail;
+    }
+  }
+  for(uint64_t i=0;i<nf;i++){
+    const unsigned char *e=m.files+i*80;
+    uint32_t nl=0;
+    if(!safe_name(name_for(&m,(uint32_t)(nd+i),&nl),nl))goto fail;
+    uint64_t size=rd64(e+8),at=rd64(e+16),stored=rd64(e+24);
+    unsigned codec=e[64];
+    if(codec>1||e[65]||e[66]||e[67]||
+       (size==0 && (at||stored||codec))||
+       (size>0 && (at<m.blob_start||(at&15)||
+                    at>m.file_length||stored>m.file_length-at))||
+       (codec==0 && stored!=size))goto fail;
+  }
+  mounted=m;
+  return 1;
+fail:
+  free(toc);
+  fclose(f);
+  return 0;
+}
+int nx2_nup_file_info(const char *path,uint64_t *size,unsigned *codec){
+  uint32_t i=lookup_file(path);
+  if(i==UINT32_MAX)return 0;
+  const unsigned char *e=mounted.files+(size_t)i*80;
+  if(size)*size=rd64(e+8);
+  if(codec)*codec=e[64];
+  return 1;
+}
+static int nup_seek_file(FILE *f,uint64_t offset) {
+  if(offset>INT64_MAX)return 0;
+  return nup_seek(f,(int64_t)offset,SEEK_SET)==0;
+}
+static int read_compressed(const unsigned char *e,uint32_t file,
+                           uint64_t offset,void *dest,size_t length) {
+  uint64_t total=rd64(e+8),at=rd64(e+16),packed=rd64(e+24);
+  if(total<=16*1024*1024 && packed<=32*1024*1024) {
+    if(mounted.cached_file!=file) {
+      free(mounted.cached_bytes);
+      mounted.cached_bytes=NULL;mounted.cached_file=UINT32_MAX;
+      unsigned char *raw=malloc((size_t)packed),*out=malloc((size_t)total);
+      if(!raw||!out||!nup_seek_file(mounted.f,at)||
+         fread(raw,1,(size_t)packed,mounted.f)!=(size_t)packed) {
+        free(raw);free(out);return 0;
+      }
+      size_t n=ZSTD_decompress(out,(size_t)total,raw,(size_t)packed);
+      free(raw);
+      if(ZSTD_isError(n)||n!=total){free(out);return 0;}
+      unsigned char hash[32];
+      sha256(out,(size_t)total,hash);
+      if(memcmp(hash,e+32,32)){free(out);return 0;}
+      mounted.cached_bytes=out;
+      mounted.cached_size=(size_t)total;
+      mounted.cached_file=file;
+    }
+    memcpy(dest,mounted.cached_bytes+offset,length);
+    return 1;
+  }
+  /* Large frames are decompressed in small pieces. Nothing is extracted
+   * permanently and we never allocate the entire large game asset. */
+  if(!nup_seek_file(mounted.f,at))return 0;
+  ZSTD_DStream *stream=ZSTD_createDStream();
+  unsigned char *input=malloc(128*1024),*output=malloc(128*1024);
+  if(!stream||!input||!output||ZSTD_isError(ZSTD_initDStream(stream))) {
+    if(stream)ZSTD_freeDStream(stream);
+    free(input);free(output);return 0;
+  }
+  uint64_t consumed=0,produced=0;
+  size_t remaining=length;
+  unsigned char *out=dest;
+  int ok=0;
+  NupIn in={input,0,0};
+  while(remaining && consumed<packed) {
+    if(in.pos==in.size) {
+      size_t n=(size_t)(packed-consumed);
+      if(n>128*1024)n=128*1024;
+      if(fread(input,1,n,mounted.f)!=n)break;
+      consumed+=n;in.size=n;in.pos=0;
+    }
+    NupOut z={output,128*1024,0};
+    size_t step=ZSTD_decompressStream(stream,&z,&in);
+    if(ZSTD_isError(step))break;
+    uint64_t end=produced+z.pos;
+    if(end>offset && produced<offset+length){
+      uint64_t begin=produced>offset?produced:offset;
+      uint64_t finish=end<offset+length?end:offset+length;
+      if(finish>begin){
+        size_t n=(size_t)(finish-begin);
+        memcpy(out,output+(size_t)(begin-produced),n);
+        out+=n;remaining-=n;
+      }
+    }
+    produced=end;
+    if(step==0 && remaining)break;
+    if(!z.pos && in.pos==in.size && consumed==packed)break;
+  }
+  ok=remaining==0;
+  ZSTD_freeDStream(stream);
+  free(input);free(output);
+  return ok;
+}
+int nx2_nup_read(const char *path,uint64_t offset,void *dest,size_t length){
+  uint32_t i=lookup_file(path);
+  if(i==UINT32_MAX || (!dest&&length))return 0;
+  const unsigned char *e=mounted.files+(size_t)i*80;
+  uint64_t size=rd64(e+8),at=rd64(e+16);
+  if(offset>size||length>size-offset)return 0;
+  if(!length)return 1;
+  if(e[64]==0) {
+    return nup_seek_file(mounted.f,at+offset) &&
+           fread(dest,1,length,mounted.f)==length;
+  }
+  return read_compressed(e,i,offset,dest,length);
+}
+void *nx2_nup_read_all(const char *path,size_t limit,size_t *length){
+  uint64_t size=0;
+  if(length)*length=0;
+  if(!nx2_nup_file_info(path,&size,NULL)||!size||size>limit)return NULL;
+  void *p=malloc((size_t)size);
+  if(!p)return NULL;
+  if(!nx2_nup_read(path,0,p,(size_t)size)){free(p);return NULL;}
+  uint32_t i=lookup_file(path);
+  unsigned char hash[32];
+  sha256(p,(size_t)size,hash);
+  if(i==UINT32_MAX ||
+     memcmp(hash,mounted.files+(size_t)i*80+32,32)){
+    free(p);return NULL;
+  }
+  if(length)*length=(size_t)size;
+  return p;
+}
+static int walk_dir(uint32_t d,char path[1024],unsigned depth,
+                    Nx2NupVisit visit,void *ctx,uint32_t stack[65]){
+  if(depth>=64)return 0;
+  for(unsigned i=0;i<depth;i++)if(stack[i]==d)return 0;
+  stack[depth]=d;
+  const unsigned char *node=mounted.dirs+(size_t)d*24;
+  uint32_t start=rd32(node+8),count=rd32(node+12);
+  size_t prefix=strlen(path);
+  for(uint32_t i=0;i<count;i++){
+    uint32_t child=rd32(mounted.children+(size_t)(start+i)*4),len=0;
+    const unsigned char *name=name_for(&mounted,child,&len);
+    if(!safe_name(name,len))return 0;
+    if(len==8&&!memcmp(name,".listing",8))continue;
+    size_t add=(prefix?1:0)+len;
+    if(prefix+add>=1024)return 0;
+    char *dst=path+prefix;
+    if(prefix)*dst++='/';
+    memcpy(dst,name,len);dst[len]=0;
+    int directory=child<mounted.ndirs;
+    uint64_t size=directory?0:rd64(mounted.files+(size_t)(child-mounted.ndirs)*80+8);
+    if(!visit(ctx,path,directory,size))return 0;
+    if(directory && !walk_dir(child,path,depth+1,visit,ctx,stack))return 0;
+    path[prefix]=0;
+  }
+  return 1;
+}
+int nx2_nup_romfs_walk(Nx2NupVisit visit,void *context) {
+  if(!mounted.f||mounted.romfs_dir>=mounted.ndirs||!visit)return 0;
+  char path[1024]={0};uint32_t stack[65]={0};
+  return walk_dir(mounted.romfs_dir,path,0,visit,context,stack);
 }
