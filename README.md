@@ -2,7 +2,7 @@
 
 > **USE AT OWN RISK.** I am not responsible for bricks that may or may not occur as this is still in early development and experimental. Back up your SD card and saves first.
 
-BackupLoaderMKW is an experimental **Switch 2** homebrew launcher for extracted backups. It uses **Mario Kart World's title override** because Mario Kart World provides more memory for homebrew. The console still sees MKW as the host.
+BackupLoaderMKW is an experimental **Switch 2** homebrew launcher for extracted backups and, on this branch, NUP archives. It uses **Mario Kart World's title override** because Mario Kart World provides more memory for homebrew. The console still sees MKW as the host.
 
 **Only Yoshi and the Mysterious Book Demo has been confirmed to reach gameplay.** Other games still need testing. Some will crash or simply not work. No games are included.
 
@@ -12,11 +12,11 @@ BackupLoaderMKW is an experimental **Switch 2** homebrew launcher for extracted 
 - Mario Kart World and its **title override** for launching Homebrew Menu (not Album mode).
 - Your own extracted game files and an SD card.
 
-**Experimental branch:** NUP files can now be recognized and listed, but cannot be launched yet. Do not expect playable NUP support in this build. Encrypted containers are unsupported.
+**Experimental branch:** NUP v1 base-game archives now have a direct-launch path. The app reads ExeFS modules and RomFS assets from the archive, decompressing Zstandard entries when needed. This has **not** been verified on a Switch 2 yet; some archives or games may fail. Encrypted containers are unsupported.
 
 ## Put games on the SD card
 
-Create a folder called **games** at the very root of the SD card. Each game gets its own folder containing **exefs** and **romfs**.
+Create a folder called **games** at the root of the SD card. Extracted games can use **exefs** and **romfs** folders as before. Experimental NUP v1 base-game files can be placed directly in that same games folder.
 
     SD:/
       games/
@@ -44,7 +44,7 @@ Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs
 5. Select an extracted game using Up/Down or the left stick. Press **A** to launch, **X** to refresh the list, or **+** to exit. Hold **B** while pressing **A** to rebuild an extracted game’s index. While a large folder is being indexed, press **B** to cancel and return to the game list. Cancelled scans do not yet resume.
 6. Use HOME / Close Software to stop playing.
 
-If the list is empty, confirm the game folders contain real exefs and romfs directories. Large backups may take several minutes to index the first time. Completed indexes are saved in SD:/switch/BackupLoaderMKW/cache/ so later launches can skip the file-by-file scan. The cache checks the top-level romfs folder timestamp; changes inside nested folders may require **B+A** to rebuild it. NUP files appear in the list if their header and table of contents pass initial checks, but selecting one only shows a development notice.
+If the list is empty, check that extracted games have valid exefs and romfs folders or that NUP archives are complete and valid. Extracted games use batched directory reads where supported and can save progress to a .part file in SD:/switch/BackupLoaderMKW/cache/. Press B during scanning to stop; launching the same game again resumes after completed directories instead of starting over. A directory interrupted halfway through is rescanned. After a full scan, the loader saves a compact .idx file for later launches. Hold B+A to force a rebuild after changing game files. The cache only checks the top-level romfs timestamp, so nested file changes can go unnoticed. NUP games read their existing archive table; they do not scan extracted directories or unpack the entire archive.
 
 ## Where saves go
 
@@ -68,7 +68,7 @@ If a backup crashes, copy this file **before launching something else**, because
 
 The loader discovers the selected backup's executable modules and files. It connects supported game SDK calls, lets the game's original startup code run, and handles supported game file and save requests through the SD card. Mario Kart World remains the system's host title, so the loader has MKW's memory allocation and permissions — not necessarily every resource other games require.
 
-It does not install game tickets, rewrite game ownership, or install backups to NAND. The working game launcher currently reads loose files from SD. Different titles have different services, graphics, and memory needs, so there is no promise that they will all launch or save correctly.
+It does not install game tickets, rewrite game ownership, or install backups to NAND. The extracted-folder launcher reads loose files from SD. The experimental NUP path reads game files from the archive instead. Different titles have different services, graphics, and memory needs, so there is no promise that they will all launch or save correctly.
 
 ## Building yourself on Windows
 
@@ -86,6 +86,13 @@ Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro**. Copy 
 
 ## Current limitations
 
-Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUP discovery is experimental; direct NUP launch and other packaged/encrypted backups are unsupported. Updates are not merged. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
+Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUP launching is newly implemented and **untested on hardware**. It currently selects a base package only; updates and DLC are not merged. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Updates are not merged. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
 
 **Early experimental release. Use at your own risk.**
+
+
+## Experimental NUP and index test
+
+Use the experimental-nup-support branch, run build.bat, and keep the old working NRO as a backup. Test an extracted game first: start indexing, press B after a few progress updates, then select it again. You should see the previous completed directories recovered and the file count jump forward. After a successful scan, the next launch should load the saved index. Then select a valid NUP base-game archive and press A. It should attempt the same native launch path without extracting the archive. The SD root gameplay log records NUP_OPEN_OK, NUP_ROMFS_INDEX_BUILT, module preparation and any launch failure. Copy the log before another test replaces it.
+
+Direct NUP support uses a standalone Zstandard decoder derived from the dual-licensed Zstandard project (Yann Collet/Facebook). See the copyright notices in source/zstd_decoder.c. No games or Nintendo executables are included.
