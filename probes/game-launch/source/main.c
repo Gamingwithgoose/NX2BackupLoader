@@ -350,6 +350,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   u64 trace_sample = began;
   u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX, previous_trace_begin = UINT32_MAX;
+  u32 previous_graphics_ipc = UINT32_MAX;
   for (;;) {
     check_fault(f, images);
     nx2_host_poll(host, l);
@@ -436,6 +437,38 @@ static void run(const Nx2Game *game, int rebuild_index) {
           __atomic_load_n(&l->nvn_present_lookups,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE));
+      /* Compare against emulator's documented NVDRV commands (0 Open,
+       * 3 Initialize) and VI layer/display commands (1010, 2020, 2030,
+       * 5202) without emulating their replies or changing the native SVC. */
+      uint32_t gnext=__atomic_load_n(&l->graphics_ipc_next,__ATOMIC_ACQUIRE);
+      if(gnext!=previous_graphics_ipc){
+        row(f,"GRAPHICS_SERVICE_HISTORY total=%u previous=%u\n",
+            gnext,previous_graphics_ipc);
+        uint32_t gcount=gnext<16?gnext:16;
+        for(uint32_t back=gcount;back;back--){
+          uint32_t slot=(gnext-back)%NX2_GRAPHICS_TRACE_SLOTS;
+          Nx2IpcBreadcrumb *e=&l->graphics_ipc[slot];
+          uint32_t phase=__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE);
+          if(!phase)continue;
+          const char *meaning="";
+          if(e->service[0]=='n'&&e->service[1]=='v'){
+            if(e->command==0)meaning="NVDRV_OPEN";
+            else if(e->command==3)meaning="NVDRV_INITIALIZE";
+            else if(e->command==1||e->command==11||e->command==12)
+              meaning="NVDRV_IOCTL";
+          }else if(e->service[0]=='v'&&e->service[1]=='i'){
+            if(e->command==1010||e->command==1011)meaning="VI_OPEN_DISPLAY";
+            else if(e->command==2020||e->command==2030)
+              meaning="VI_CREATE_OR_OPEN_LAYER";
+            else if(e->command==5202)meaning="VI_GET_VSYNC";
+          }
+          row(f,"GRAPHICS_SERVICE_CALL phase=%u service=%s command=%u hint=%s kernel=%08x cmif=%08x handle=%08llx caller=%016llx\n",
+              phase,e->service,e->command,meaning,e->result,
+              __atomic_load_n(&e->service_result,__ATOMIC_ACQUIRE),
+              (unsigned long long)e->handle,(unsigned long long)e->caller);
+        }
+        previous_graphics_ipc=gnext;
+      }
     }
     if (!__atomic_load_n(&l->main_entered, __ATOMIC_ACQUIRE) &&
         armTicksToNs(armGetSystemTick() - began) > 300000000000ULL)
