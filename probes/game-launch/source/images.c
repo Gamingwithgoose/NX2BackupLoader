@@ -25,8 +25,15 @@ static int gate(FILE *f, Nx2Module *m, uint32_t *cursor, uint32_t offset,
                 uintptr_t to, uintptr_t *original, const char *name) {
   int ok = nx2_patch_gate(m->guest, m->file_size[0], m->address[1], cursor,
                           offset, to, 0, original);
-  row(f, "PATCH name=%s offset=%x status=%s\n", name, offset,
-      ok ? "OK" : "FAILED");
+  row(f, "PATCH name=%s offset=%x status=%s method=%s reason=%s text_bytes=%u padded_end=%u trampoline_offset=%u first=%08x\n",
+      name, offset, ok ? "OK" : "FAILED",
+      nx2_patch_method(),nx2_patch_failure_reason(),
+      m->file_size[0],m->address[1],*cursor,
+      offset+4<=m->file_size[0]?
+        ((uint32_t)m->guest[offset] |
+         ((uint32_t)m->guest[offset+1]<<8) |
+         ((uint32_t)m->guest[offset+2]<<16) |
+         ((uint32_t)m->guest[offset+3]<<24)):0);
   return ok;
 }
 static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
