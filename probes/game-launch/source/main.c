@@ -483,6 +483,37 @@ static void run(const Nx2Game *game, int rebuild_index) {
           __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE));
     }
+    /* Guest-to-host RPC callsites are recorded before IPC, independently of
+     * filesystem logging. Keep a short tail in the separate crash file;
+     * correlate guest module offsets even if the last event has no reply. */
+    if(crash && armTicksToNs(armGetSystemTick()-crash_sample)<30000000ULL){
+      uint32_t next=__atomic_load_n(&l->rpc_trace_next,__ATOMIC_ACQUIRE);
+      uint32_t count=next<4?next:4;
+      for(uint32_t back=count;back;back--){
+        uint32_t ticket=next-back+1;
+        Nx2RpcTrace *t=&l->rpc_trace[(ticket-1)%NX2_RPC_TRACE_SLOTS];
+        if(__atomic_load_n(&t->sequence,__ATOMIC_ACQUIRE)!=ticket)continue;
+        uint64_t caller=__atomic_load_n(&t->caller,__ATOMIC_RELAXED);
+        uint64_t thread=__atomic_load_n(&t->thread,__ATOMIC_RELAXED);
+        uint32_t op=__atomic_load_n(&t->op,__ATOMIC_RELAXED);
+        uint32_t phase=__atomic_load_n(&t->phase,__ATOMIC_ACQUIRE);
+        uint32_t result=__atomic_load_n(&t->result,__ATOMIC_RELAXED);
+        if(__atomic_load_n(&t->sequence,__ATOMIC_ACQUIRE)!=ticket)continue;
+        int module=-1;
+        uint64_t offset=0;
+        for(unsigned k=0;k<images->count;k++){
+          const Nx2Module *m=&images->modules[k];
+          uint64_t base=(uintptr_t)m->guest;
+          uint64_t length=m->total>=4096?m->total-4096:0;
+          if(caller>=base && caller-base<length){
+            module=(int)k;offset=caller-base;break;
+          }
+        }
+        row(crash,"RPC_TRAIL ticket=%u op=%u phase=%u result=%08x thread=%016llx caller=%016llx module=%d module_offset=%llx\n",
+            ticket,op,phase,result,(unsigned long long)thread,
+            (unsigned long long)caller,module,(unsigned long long)offset);
+      }
+    }
     /* Capture recent guest SVCs from shared memory without generating
      * any guest RPCs. This survives a guest thread stuck inside the SVC.
      * A short interval is used only after private-save startup. */
