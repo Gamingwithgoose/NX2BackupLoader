@@ -53,8 +53,12 @@ static uint32_t allocate_object(uint32_t session,uint32_t kind,
   vfs_objects[i].kind=kind;
   vfs_objects[i].read_only=read_only;
   vfs_objects[i].token=token;
-  if(root)snprintf(vfs_objects[i].root,sizeof(vfs_objects[i].root),"%s",root);
-  else vfs_objects[i].root[0]=0;
+  if(root){
+   unsigned j=0;
+   for(;j<sizeof(vfs_objects[i].root)-1&&root[j];j++)
+    vfs_objects[i].root[j]=root[j];
+   vfs_objects[i].root[j]=0;
+  }else vfs_objects[i].root[0]=0;
   break;
  }
  unlock_vfs();
@@ -249,9 +253,15 @@ static int scoped_path(const VfsObject *obj,const char *path,
                        char out[NX2_PATH_MAX]){
  if(!obj->root[0])return 0;
  while(*path=='/')path++;
- int n=snprintf(out,NX2_PATH_MAX,"%s%s%s",obj->root,
-                *path?"/":"",path);
- return n>=0&&n<NX2_PATH_MAX;
+ /* Use plain bounded copies, not formatted I/O from an IPC hook. */
+ size_t nr=strlen(obj->root),np=strlen(path);
+ if(nr>=NX2_PATH_MAX||np>NX2_PATH_MAX-nr-1)return 0;
+ memcpy(out,obj->root,nr);
+ if(np)out[nr++]='/';
+ if(np>=NX2_PATH_MAX-nr)return 0;
+ memcpy(out+nr,path,np);
+ out[nr+np]=0;
+ return 1;
 }
 static uint32_t close_child(const VfsObject *obj){
  if(obj->kind==VFS_FILE)
