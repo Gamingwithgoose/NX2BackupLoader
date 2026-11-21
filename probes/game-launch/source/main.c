@@ -67,9 +67,7 @@ static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game) {
   }
   return 1;
 }
-static void check_fault(FILE *f, const Nx2Images *images) {
-  if (__atomic_load_n(&nx2_fault.state, __ATOMIC_ACQUIRE) != 2)
-    return;
+static void write_fault_report(FILE *f, const Nx2Images *images) {
   const ThreadExceptionDump *d = &nx2_fault.dump;
   extern void _start(void);
   row(f,
@@ -95,6 +93,19 @@ static void check_fault(FILE *f, const Nx2Images *images) {
         row(f, "FAULT_LR_MODULE module=%u offset=%llx\n", i,
             (unsigned long long)(d->lr.x - begin));
     }
+
+}
+/* The existing libounce exception handler only copies CPU state. Report it
+ * from the still-running host thread to both logs, without doing I/O on the
+ * faulted thread's emergency stack. */
+static void check_fault(FILE *f, FILE *crash, const Nx2Images *images) {
+  if (__atomic_load_n(&nx2_fault.state, __ATOMIC_ACQUIRE) != 2)
+    return;
+  if (crash) {
+    row(crash,"CRASH_CAPTURED_CPU_EXCEPTION exception_handler=libounce\n");
+    write_fault_report(crash,images);
+  }
+  write_fault_report(f,images);
   stop(f, "CPU fault captured; faulted thread remains parked; process exiting");
 }
 static int prepare_phase(FILE *f, const char *root, Nx2Images *images,
@@ -333,6 +344,17 @@ static void run(const Nx2Game *game, int rebuild_index) {
                             "Game preparation failed; see BackupLoaderMKW-gameplay.log.");
     goto done;
   }
+  /* Separate, flushed diagnostic survives abrupt process termination where
+   * the game cannot flush its own shutdown record. It is overwritten per run.
+   * This cannot capture kernel/GPU faults that never reach the CPU handler. */
+  FILE *crash = fopen("sdmc:/BackupLoaderMKW-crash.log","w");
+  if (crash)
+    row(crash,"NX2_CRASH_DIAGNOSTIC version=1 game=%s guest=%016llx host=0400c3f00006e000\n"
+              "CAPTURE_MODE libounce_cpu_exception_plus_host_snapshot\n"
+              "LIMITATION no_external_kernel_or_gpu_exception_monitor\n",
+        game->name,(unsigned long long)game->id);
+  row(f,"CRASH_REPORT path=sdmc:/BackupLoaderMKW-crash.log status=%s\n",
+      crash?"OPEN":"FAILED");
   row(f, "ACTUAL_ENTRY_ABOUT_TO_EXECUTE rtld=%016llx physical_budget=%llu\n",
       (unsigned long long)(uintptr_t)l->api.rtld,
       (unsigned long long)l->heap_capacity);
@@ -349,6 +371,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     stop(f, "Game worker could not start");
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   u64 trace_sample = began;
+  u64 crash_sample = began;
   u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX, previous_trace_begin = UINT32_MAX;
   u32 previous_graphics_ipc = UINT32_MAX;
   u32 last_graphics_bootstrap=UINT32_MAX,last_graphics_getproc=UINT32_MAX,
@@ -360,7 +383,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   uint32_t last_nvn_stage[NX2_NVN_STAGE_COUNT]={0};
   uint32_t last_nvn_stage_done[NX2_NVN_STAGE_COUNT]={0};
   for (;;) {
-    check_fault(f, images);
+    check_fault(f, crash, images);
     nx2_host_poll(host, l);
     if (host->abort || __atomic_load_n(&l->abort_requested, __ATOMIC_ACQUIRE))
       stop(f, "Native launch requested stop");
@@ -426,6 +449,39 @@ static void run(const Nx2Game *game, int rebuild_index) {
       }
       last_nvn_stage[n]=entered;
       last_nvn_stage_done[n]=returned;
+    }
+    /* Maintain an independently flushed process-end breadcrumb. A final
+     * snapshot with no exception record means only that the app disappeared
+     * without invoking the libounce handler; it is not a kernel diagnosis. */
+    if(crash && armTicksToNs(armGetSystemTick()-crash_sample)>=500000000ULL){
+      crash_sample=armGetSystemTick();
+      unsigned pending=0;
+      for(unsigned i=0;i<NX2_RPC_SLOTS;i++)
+        if(__atomic_load_n(&l->requests[i].state,__ATOMIC_ACQUIRE))
+          pending++;
+      row(crash,"HOST_SNAPSHOT elapsed_ms=%llu stage=%u fault_state=%u guest_main=%llu rpc=%llu rom_bytes=%llu pending=%u guest_abort=%u host_abort=%u frames=%llu nvn_bootstrap=%u getproc=%u queues=%u/%u window=%u/%u submit=%u/%u finish=%u/%u acquire=%u/%u present=%u/%u ipc=%u/%u\n",
+          (unsigned long long)(armTicksToNs(crash_sample-began)/1000000ULL),
+          stage,__atomic_load_n(&nx2_fault.state,__ATOMIC_ACQUIRE),
+          (unsigned long long)__atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE),
+          (unsigned long long)host->calls,(unsigned long long)host->bytes,
+          pending,__atomic_load_n(&l->abort_requested,__ATOMIC_ACQUIRE),
+          host->abort,(unsigned long long)frames,
+          __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_stage_entered[0],__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_stage_returned[0],__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_stage_entered[2],__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_stage_returned[2],__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_stage_entered[3],__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_stage_returned[3],__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE));
     }
     /* Capture recent guest SVCs from shared memory without generating
      * any guest RPCs. This survives a guest thread stuck inside the SVC.
