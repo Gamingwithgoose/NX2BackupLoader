@@ -127,9 +127,44 @@ static uint64_t present_gate(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_
  __atomic_fetch_add(&nx2_launch->frames,1,__ATOMIC_RELAXED);
  return result;
 }
+/* Observe native initialization without altering the real NVN implementation,
+ * arguments, or returned success/failure result. No RPC or synchronous I/O. */
+static uint32_t device_init_gate(void *obj,const void *builder){
+ __atomic_fetch_add(&nx2_launch->nvn_device_entered,1,__ATOMIC_RELAXED);
+ uint32_t rc=nx2_launch->api.original_device_initialize(obj,builder);
+ __atomic_store_n(&nx2_launch->nvn_device_result,rc,__ATOMIC_RELEASE);
+ __atomic_fetch_add(&nx2_launch->nvn_device_returned,1,__ATOMIC_RELEASE);
+ return rc;
+}
+static uint32_t queue_init_gate(void *obj,const void *builder){
+ __atomic_fetch_add(&nx2_launch->nvn_queue_entered,1,__ATOMIC_RELAXED);
+ uint32_t rc=nx2_launch->api.original_queue_initialize(obj,builder);
+ __atomic_store_n(&nx2_launch->nvn_queue_result,rc,__ATOMIC_RELEASE);
+ __atomic_fetch_add(&nx2_launch->nvn_queue_returned,1,__ATOMIC_RELEASE);
+ return rc;
+}
+static uint32_t window_init_gate(void *obj,const void *builder){
+ __atomic_fetch_add(&nx2_launch->nvn_window_entered,1,__ATOMIC_RELAXED);
+ uint32_t rc=nx2_launch->api.original_window_initialize(obj,builder);
+ __atomic_store_n(&nx2_launch->nvn_window_result,rc,__ATOMIC_RELEASE);
+ __atomic_fetch_add(&nx2_launch->nvn_window_returned,1,__ATOMIC_RELEASE);
+ return rc;
+}
 static uintptr_t getproc_gate(void *device,const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_getproc(device,name);
+ if(result&&equal(name,"nvnDeviceInitialize")){
+   __atomic_store_n(&nx2_launch->api.original_device_initialize,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)device_init_gate;
+ }
+ if(result&&equal(name,"nvnQueueInitialize")){
+   __atomic_store_n(&nx2_launch->api.original_queue_initialize,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)queue_init_gate;
+ }
+ if(result&&equal(name,"nvnWindowInitialize")){
+   __atomic_store_n(&nx2_launch->api.original_window_initialize,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)window_init_gate;
+ }
  if(result&&equal(name,"nvnQueuePresentTexture")){
    __atomic_fetch_add(&nx2_launch->nvn_present_lookups,1,__ATOMIC_RELAXED);
    __atomic_store_n(&nx2_launch->api.original_present,(void *)result,__ATOMIC_RELEASE);
