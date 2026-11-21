@@ -342,6 +342,43 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
         logline(h,"SDK_BREAK_CODE unavailable query=%08x\n",q);
       }
     }
+    /* Stack scan is diagnostic only. Validate the readable portion before
+     * following any pointers and report only values inside guest code.
+     * Captures callers above the patched SVC wrapper without changing the
+     * game's execution or suppressing its break. */
+    uintptr_t sp=(uintptr_t)r->buffer;
+    if(sp && !(sp&7)){
+      MemoryInfo stack;u32 page=0;
+      Result q=svcQueryMemory(&stack,&page,sp);
+      logline(h,"SDK_BREAK_STACK sp=%016llx query=%08x type=%u perm=%u\n",
+              (unsigned long long)sp,q,
+              R_SUCCEEDED(q)?stack.type:0,
+              R_SUCCEEDED(q)?stack.perm:0);
+      if(R_SUCCEEDED(q) && stack.addr<=sp &&
+         stack.size<=UINT64_MAX-stack.addr &&
+         sp<stack.addr+stack.size && (stack.perm&Perm_R)){
+        uint64_t accessible=(stack.addr+stack.size)-sp;
+        if(accessible>2048)accessible=2048;
+        const uint64_t *words=(const uint64_t *)sp;
+        unsigned matches=0;
+        for(uint64_t i=0;i<accessible/8 && matches<24;i++){
+          uintptr_t candidate=(uintptr_t)words[i];
+          if(candidate&3)continue;
+          for(uint32_t j=0;j<l->region_count;j++){
+            const Nx2Region *m=&l->regions[j];
+            if(m->permission==5 && candidate>=m->begin &&
+               candidate<m->end){
+              logline(h,
+                "SDK_BREAK_STACK_CODE stack_offset=%llu region=%u code_offset=%llx\n",
+                (unsigned long long)(i*8),j,
+                (unsigned long long)(candidate-m->begin));
+              matches++;
+              break;
+            }
+          }
+        }
+      }
+    }
     if (r->c == 4 && r->b <= UINT64_MAX - 4) {
       MemoryInfo mi;
       u32 page = 0;
