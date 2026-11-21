@@ -36,9 +36,14 @@ const char *nx2_rom_path(const Nx2RomView *v,uint32_t i){if(!v||i>=v->count)retu
 uint32_t nx2_rom_read(const Nx2RomView *v,uint64_t offset,void *buffer,uint64_t bytes,Nx2RomReadFile read,void *context){
  if(!v||!span(offset,bytes,v->total)||(!buffer&&bytes))return 0x2f5e02;
  unsigned char *out=buffer;
+ /* A 40+ MiB IStorage read currently monopolizes the host in 4-MiB
+  * chunks, starving other guest RPCs on slower SD storage. Split only
+  * large requests into 1-MiB chunks, preserving exact read semantics
+  * and the existing fast path for small, normal asset requests. */
+ const uint64_t fair_chunk=bytes>0x400000U?0x100000U:0x400000U;
  while(bytes){
   uint64_t amount=bytes;
-  if(amount>0x400000)amount=0x400000;
+  if(amount>fair_chunk)amount=fair_chunk;
   if(offset<v->metadata_size){if(amount>v->metadata_size-offset)amount=v->metadata_size-offset;for(uint64_t i=0;i<amount;i++)out[i]=v->metadata[offset+i];}
   else{
    uint32_t lo=0,hi=v->count;
