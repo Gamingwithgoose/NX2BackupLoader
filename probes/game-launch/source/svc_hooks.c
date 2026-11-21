@@ -24,6 +24,22 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
    if(l && out && handle==CUR_PROCESS_HANDLE && !sub &&
       (type==5 || type==6 || type==7 || type==16 ||
        type==21 || type==22)){
+     uint64_t kernel_value=(!rc)?*out:0;
+     /* The kernel reports the *host* process, including the reserved
+      * launcher heap. A guest's UsedNonSystemMemorySize must not charge
+      * the launcher-owned retained heap against the guest's own memory
+      * budget. Only translate this accounting query; real GetInfo totals,
+      * heap allocation, and physical memory remain kernel-governed.
+      * Refuse to subtract unless all of the launcher-owned heap fits in
+      * the reported usage. This is generic for any guest, not a game
+      * ID/version-specific assertion bypass. */
+     if(!rc && type==22 && nx2_process_heap_status==NX2_HEAP_READY &&
+        nx2_process_heap.host_bytes &&
+        kernel_value>=nx2_process_heap.host_bytes){
+       *out=kernel_value-nx2_process_heap.host_bytes;
+       nx2_rpc(RPC_LOG,kernel_value,*out,nx2_process_heap.host_bytes,type,0,
+               "GUEST_MEMORY_ACCOUNTING_SUBTRACT_HOST",0,0);
+     }
      static uint32_t budget_query_count=0;
      uint32_t ordinal=__atomic_fetch_add(&budget_query_count,1,__ATOMIC_RELAXED);
      if(ordinal<256)
