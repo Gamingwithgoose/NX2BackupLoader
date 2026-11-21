@@ -130,4 +130,4 @@ MKW title override gives the loader an application context and a large heap. Tha
 
 ## Known reporting limitations
 
-This is the **best reconstruction from source and supplied logs**, not a substitute for all historical chat artifacts. Some old experiment logs and full hashes are not available in this session. Do not invent them or say every historic failure has been conclusively resolved. Document additional old logs with source filenames and exact build SHAs as they become accessible.
+This is the **best reconstruction from source and supplied logs**, not a substitute for all historical artifacts. Some old experiment logs and full hashes are not available. Document additional old logs with source filenames and exact build SHAs as they become accessible.
