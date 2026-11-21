@@ -19,6 +19,9 @@ void nx2_free_pages(void *memory){free(memory);}
 static uint32_t read32(const void *p){uint32_t v;memcpy(&v,p,4);return v;}
 static void write32(void *p,uint32_t v){memcpy(p,&v,4);}
 static uint64_t page(uint64_t n){return (n+4095)&~4095ULL;}
+/* Common input-size boundary for both NUP and folder executable modules.
+ * Do not use a lower title-specific cap than the 512 MiB mapped image boundary. */
+#define NX2_NSO_INPUT_LIMIT (UINT64_C(512)*1024*1024)
 static int lz4(void *output,size_t capacity,const unsigned char *in,size_t size){
     unsigned char *out=output;size_t a=0,b=0;
     while(a<size){
@@ -44,7 +47,16 @@ int nx2_prepare_nso(const char *path,const char *expected,Nx2Sha256 hash,void **
         char internal[64];
         snprintf(internal,sizeof(internal),"exefs/%s",leaf+7);
         size_t n=0;
-        raw=nx2_nup_read_all(internal,160*1024*1024,&n);
+        uint64_t source_bytes=0;
+        if(!nx2_nup_file_info(internal,&source_bytes,NULL))
+            FAIL("NUP ExeFS module missing");
+        if(source_bytes<256 || source_bytes>NX2_NSO_INPUT_LIMIT){
+            snprintf(error,160,"NUP %.20s: NSO size=%llu exceeds shared limit=%llu",
+                     leaf+7,(unsigned long long)source_bytes,
+                     (unsigned long long)NX2_NSO_INPUT_LIMIT);
+            goto finish;
+        }
+        raw=nx2_nup_read_all(internal,(size_t)NX2_NSO_INPUT_LIMIT,&n);
         if(!raw) {
             snprintf(error,160,"NUP %.20s: %.120s",
                      leaf+7,nx2_nup_read_error());
@@ -56,12 +68,20 @@ int nx2_prepare_nso(const char *path,const char *expected,Nx2Sha256 hash,void **
         if(!f)FAIL("cannot open NSO");
         if(seek64(f,0,SEEK_END))FAIL("NSO seek failed");
         length=tell64(f);
-        if(length<256||length>160*1024*1024)FAIL("NSO file size outside limit");
+        if(length<256||length>(int64_t)NX2_NSO_INPUT_LIMIT){
+            snprintf(error,160,"NSO input bytes=%lld outside shared limit=%llu",
+                     (long long)length,(unsigned long long)NX2_NSO_INPUT_LIMIT);
+            goto finish;
+        }
         if(seek64(f,0,SEEK_SET))FAIL("NSO rewind failed");
         raw=malloc((size_t)length);if(!raw)FAIL("NSO input allocation failed");
         if(fread(raw,1,(size_t)length,f)!=(size_t)length||ferror(f))FAIL("NSO read failed");
     }
-    if(length<256||length>160*1024*1024)FAIL("NSO file size outside limit");
+    if(length<256||length>(int64_t)NX2_NSO_INPUT_LIMIT){
+        snprintf(error,160,"NSO input bytes=%lld outside shared limit=%llu",
+                 (long long)length,(unsigned long long)NX2_NSO_INPUT_LIMIT);
+        goto finish;
+    }
     if(memcmp(raw,"NSO0",4))FAIL("NSO0 header missing");
     unsigned char digest[32];char digest_text[65];hash(digest,raw,(size_t)length);hex(digest_text,digest);
     if(expected&&strcmp(expected,digest_text))FAIL("NSO differs from verified PC copy");
