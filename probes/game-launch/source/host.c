@@ -255,7 +255,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     }
     if(!nx2_save_path(p,sizeof(p),h->save_root,name))return NX2_INVALID;
     rc=mkdir_one(h->sd,p);
-    logline(h,"GUEST_VFS_PREPARE namespace=%s result=%08x\n",name,rc);
+    logline(h,"GUEST_VFS_PREPARE namespace=[account-scoped] result=%08x\n",rc);
     break;
   }
   case RPC_CACHE_CREATE:
@@ -631,8 +631,11 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   default:
     return NX2_FS_UNSUPPORTED;
   }
-  if (r->op >= RPC_SAVE_CREATE && r->op <= RPC_COMMIT)
-    logline(h, "PRIVATE_SAVE op=%u result=%08x path=%s\n", r->op, rc, r->path);
+  if (r->op >= RPC_SAVE_CREATE && r->op <= RPC_COMMIT){
+    const char *visible=r->path;
+    if(!strncmp(visible,"vsave-",6))visible="[account-scoped]";
+    logline(h, "PRIVATE_SAVE op=%u result=%08x path=%s\n", r->op, rc, visible);
+  }
   return rc;
 }
 int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
