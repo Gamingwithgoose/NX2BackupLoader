@@ -17,6 +17,14 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
    return 0;
  }
  if(__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE)){
+   /* The guest's heap address must agree with SetHeapSize's isolated
+    * return value. Leave the kernel's own heap base unchanged for host
+    * code, which calls svcGetInfo directly rather than this guest hook. */
+   if(l && out && handle==CUR_PROCESS_HANDLE && !sub &&
+      type==4 && l->heap_base){
+     *out=l->heap_base;
+     return 0;
+   }
    /* Preserve the real kernel's memory accounting. A bounded trace of
     * guest-visible queries also captures values after SetHeapSize, unlike
     * the old first-per-type log. The host prints all four RPC fields. */
