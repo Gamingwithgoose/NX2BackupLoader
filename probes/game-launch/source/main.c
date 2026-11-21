@@ -355,6 +355,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
         game->name,(unsigned long long)game->id);
   row(f,"CRASH_REPORT path=sdmc:/BackupLoaderMKW-crash.log status=%s\n",
       crash?"OPEN":"FAILED");
+  row(f,"DIAGNOSTIC_PROFILE version=2 guest_fs_callsite=1 save_gate=1 exit_observer=existing CPU_exception_observer=libounce\n");
   row(f, "ACTUAL_ENTRY_ABOUT_TO_EXECUTE rtld=%016llx physical_budget=%llu\n",
       (unsigned long long)(uintptr_t)l->api.rtld,
       (unsigned long long)l->heap_capacity);
@@ -380,6 +381,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
       last_nvn_window=UINT32_MAX;
   u32 last_nvn_dev_done=UINT32_MAX,last_nvn_queue_done=UINT32_MAX,
       last_nvn_window_done=UINT32_MAX;
+  uint32_t last_save_gate_phase=UINT32_MAX;
   uint32_t last_nvn_stage[NX2_NVN_STAGE_COUNT]={0};
   uint32_t last_nvn_stage_done[NX2_NVN_STAGE_COUNT]={0};
   for (;;) {
@@ -515,6 +517,48 @@ static void run(const Nx2Game *game, int rebuild_index) {
             ticket,op,phase,result,(unsigned long long)thread,
             (unsigned long long)caller,module,(unsigned long long)offset);
       }
+    }
+    /* Record real C++ guest callsites instead of generic RPC bridge callers.
+     * A nonzero entry/return gap may be normal while concurrent reads run. */
+    if(crash && captured_snapshot){
+      uint64_t sites[2]={
+        __atomic_load_n(&l->fs_guest_read_caller,__ATOMIC_ACQUIRE),
+        __atomic_load_n(&l->save_gate_caller,__ATOMIC_ACQUIRE)};
+      const char *site_names[2]={"rom_storage_read","save_mount"};
+      for(unsigned t=0;t<2;t++){
+        int module=-1; uint64_t offset=0;
+        for(unsigned j=0;j<images->count;j++){
+          const Nx2Module *m=&images->modules[j];
+          uint64_t base=(uintptr_t)m->guest;
+          uint64_t length=m->total>=4096?m->total-4096:0;
+          if(sites[t]>=base && sites[t]-base<length){
+            module=(int)j;offset=sites[t]-base;break;
+          }
+        }
+        row(crash,"GUEST_CALLSITE name=%s caller=%016llx module=%d offset=%llx\n",
+            site_names[t],(unsigned long long)sites[t],module,
+            (unsigned long long)offset);
+      }
+      row(crash,"GUEST_FS_READ entries=%u returned=%u last_offset=%016llx last_size=%llu last_result=%08x\n",
+          __atomic_load_n(&l->fs_guest_read_entries,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->fs_guest_read_returns,__ATOMIC_ACQUIRE),
+          (unsigned long long)__atomic_load_n(&l->fs_guest_read_offset,__ATOMIC_ACQUIRE),
+          (unsigned long long)__atomic_load_n(&l->fs_guest_read_size,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->fs_guest_read_result,__ATOMIC_ACQUIRE));
+      row(crash,"GUEST_SAVE_GATE phase=%u result=%08x guest_main_returned=%u\n",
+          __atomic_load_n(&l->save_gate_phase,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->save_gate_result,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->guest_main_returned,__ATOMIC_ACQUIRE));
+    }
+    uint32_t save_phase=__atomic_load_n(&l->save_gate_phase,__ATOMIC_ACQUIRE);
+    if(save_phase!=last_save_gate_phase){
+      row(f,"SAVE_GATE_PROGRESS phase=%u result=%08x caller=%016llx\n",
+          save_phase,__atomic_load_n(&l->save_gate_result,__ATOMIC_ACQUIRE),
+          (unsigned long long)__atomic_load_n(&l->save_gate_caller,__ATOMIC_ACQUIRE));
+      if(crash)row(crash,"SAVE_GATE_PROGRESS phase=%u result=%08x caller=%016llx\n",
+          save_phase,__atomic_load_n(&l->save_gate_result,__ATOMIC_ACQUIRE),
+          (unsigned long long)__atomic_load_n(&l->save_gate_caller,__ATOMIC_ACQUIRE));
+      last_save_gate_phase=save_phase;
     }
     /* Capture recent guest SVCs from shared memory without generating
      * any guest RPCs. This survives a guest thread stuck inside the SVC.
