@@ -247,19 +247,26 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  }
  /* Only trace bounded known-service non-Close operations. Raw request
   * type 2 is HIPC Close, where ConnectionClosed can be expected. */
- static uint32_t detailed_calls=0;
- uint32_t ordinal=request_type!=2 && (owner[0]||kind)?
-   __atomic_fetch_add(&detailed_calls,1,__ATOMIC_RELAXED):UINT32_MAX;
- int detailed=ordinal<512;
+ static uint32_t early_detailed_calls=0,late_detailed_calls=0;
+ const uint32_t late=__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE);
+ uint32_t ordinal=UINT32_MAX;
+ if(request_type!=2 && (owner[0]||kind)){
+   ordinal=__atomic_fetch_add(late?&late_detailed_calls:&early_detailed_calls,
+                             1,__ATOMIC_RELAXED);
+ }
+ /* Preserve the useful early sample but reserve 1024 call pairs for
+  * the crucial post-save-mount phase. Never force a request result. */
+ int detailed=ordinal<(late?1024U:48U);
  if(detailed){
    nx2_rpc(RPC_LOG,h,((uint64_t)request_type<<32)|cmd,caller,
-           ((uint64_t)has<<32)|kind,0,"IPC_SESSION_CALL_BEGIN",owner,0);
+           ((uint64_t)has<<32)|kind,0,
+           late?"IPC_LATE_CALL_BEGIN":"IPC_SESSION_CALL_BEGIN",owner,0);
  }
  if(kind)nx2_rpc(RPC_IPC,h,cmd,UINT64_MAX,kind,0,"IPC_BEGIN",service,0);
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
  if(detailed){
    nx2_rpc(RPC_LOG,h,rc,caller,((uint64_t)request_type<<32)|cmd,0,
-           "IPC_SESSION_CALL_END",owner,0);
+           late?"IPC_LATE_CALL_END":"IPC_SESSION_CALL_END",owner,0);
  }
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
