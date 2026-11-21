@@ -120,9 +120,32 @@ void nx2_nninit_gate(void){nx2_rpc(RPC_LOG,0,0,0,0,0,"NNINIT_STARTUP_ENTERED",0,
 void nx2_sdk_init_gate(void){nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_MODULE_INIT_ENTERED",0,0);nx2_launch->api.original_sdk_init();nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_MODULE_INIT_RETURNED",0,0);}
 uint32_t nx2_false(void){return 0;}
 static int equal(const char *a,const char *b){if(!a||!b)return 0;while(*a&&*a==*b){a++;b++;}return *a==*b;}
-static uint64_t present_gate(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h){uint64_t result=__atomic_load_n(&nx2_launch->api.original_present,__ATOMIC_ACQUIRE)(a,b,c,d,e,f,g,h);uint64_t n=__atomic_load_n(&nx2_launch->frames,__ATOMIC_RELAXED);while(!__atomic_compare_exchange_n(&nx2_launch->frames,&n,n+1,0,__ATOMIC_RELEASE,__ATOMIC_RELAXED));return result;}
-static uintptr_t getproc_gate(void *device,const char *name){uintptr_t result=__atomic_load_n(&nx2_launch->api.original_getproc,__ATOMIC_ACQUIRE)(device,name);if(result&&equal(name,"nvnQueuePresentTexture")){__atomic_store_n(&nx2_launch->api.original_present,(void *)result,__ATOMIC_RELEASE);return (uintptr_t)present_gate;}return result;}
-uintptr_t nx2_bootstrap_gate(const char *name){uintptr_t result=nx2_launch->api.original_bootstrap(name);if(result&&equal(name,"nvnDeviceGetProcAddress")){__atomic_store_n(&nx2_launch->api.original_getproc,(void *)result,__ATOMIC_RELEASE);return (uintptr_t)getproc_gate;}return result;}
+static uint64_t present_gate(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h){
+ __atomic_fetch_add(&nx2_launch->nvn_present_entered,1,__ATOMIC_RELAXED);
+ uint64_t result=__atomic_load_n(&nx2_launch->api.original_present,__ATOMIC_ACQUIRE)(a,b,c,d,e,f,g,h);
+ __atomic_fetch_add(&nx2_launch->nvn_present_returned,1,__ATOMIC_RELAXED);
+ __atomic_fetch_add(&nx2_launch->frames,1,__ATOMIC_RELAXED);
+ return result;
+}
+static uintptr_t getproc_gate(void *device,const char *name){
+ __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
+ uintptr_t result=nx2_launch->api.original_getproc(device,name);
+ if(result&&equal(name,"nvnQueuePresentTexture")){
+   __atomic_fetch_add(&nx2_launch->nvn_present_lookups,1,__ATOMIC_RELAXED);
+   __atomic_store_n(&nx2_launch->api.original_present,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)present_gate;
+ }
+ return result;
+}
+uintptr_t nx2_bootstrap_gate(const char *name){
+ __atomic_fetch_add(&nx2_launch->nvn_bootstrap_calls,1,__ATOMIC_RELAXED);
+ uintptr_t result=nx2_launch->api.original_bootstrap(name);
+ if(result&&equal(name,"nvnDeviceGetProcAddress")){
+   __atomic_store_n(&nx2_launch->api.original_getproc,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)getproc_gate;
+ }
+ return result;
+}
 
 uint32_t nx2_save_sizes(int64_t *size,int64_t *journal){if(size)*size=0x20000000;if(journal)*journal=0;return 0;}
 uint32_t nx2_save_available(int64_t *size){if(size)*size=0x20000000;return 0;}
