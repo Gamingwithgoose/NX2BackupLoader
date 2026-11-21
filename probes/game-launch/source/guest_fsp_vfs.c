@@ -69,13 +69,13 @@ static int forget_object(uint32_t session,uint32_t id,VfsObject *old){
  unlock_vfs();
  return found;
 }
-static uint32_t u32(const void *p){
+static uint32_t read32(const void *p){
  const unsigned char *b=p;
  return (uint32_t)b[0]|((uint32_t)b[1]<<8)|((uint32_t)b[2]<<16)|
         ((uint32_t)b[3]<<24);
 }
-static uint64_t u64(const void *p){
- return (uint64_t)u32(p)|((uint64_t)u32((const char*)p+4)<<32);
+static uint64_t read64(const void *p){
+ return (uint64_t)read32(p)|((uint64_t)read32((const char*)p+4)<<32);
 }
 static void put32(void *p,uint32_t v){
  unsigned char *b=p;for(unsigned i=0;i<4;i++)b[i]=(unsigned char)(v>>(8*i));
@@ -117,7 +117,7 @@ int nx2_guest_fsp_unsupported(void *buffer,uint64_t size,Nx2IpcDecision d){
  const unsigned char *start=cmifGetAlignedDataStart(q.data.data_words,buffer);
  const unsigned char *hdr=start+(d.domain?16:0);
  if(hdr+16<=(const unsigned char*)buffer+size)
-  token=u32(hdr+12);
+  token=read32(hdr+12);
  return write_reply(buffer,size,d.domain,NX2_FS_UNSUPPORTED,0,0,0,token);
 }
 static int path_argument(const HipcParsedRequest *req,unsigned index,
@@ -187,7 +187,7 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
  if(obj->read_only&&(cmd==0||cmd==1||cmd==2||cmd==3||
                      cmd==4||cmd==5||cmd==6||cmd==8||cmd==13)){
   if(cmd!=8)return NX2_FS_UNSUPPORTED;
-  if(len<4||(u32(in)&2U))return NX2_FS_UNSUPPORTED;
+  if(len<4||(read32(in)&2U))return NX2_FS_UNSUPPORTED;
  }
  if(cmd==5||cmd==6){
   if(!path_argument(rq,1,pb)||!scoped_path(obj,pb,b))
@@ -197,7 +197,7 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
  switch(cmd){
   case 0:
    if(len<16)return NX2_INVALID;
-   return nx2_rpc(RPC_SAVE_CREATE,u64(in+8),u32(in),0,0,0,a,0,0);
+   return nx2_rpc(RPC_SAVE_CREATE,read64(in+8),read32(in),0,0,0,a,0,0);
   case 1:op=RPC_SAVE_DELETE;break;
   case 2:op=RPC_SAVE_MKDIR;break;
   case 3:op=RPC_SAVE_RMDIR;break;
@@ -219,7 +219,7 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
  }
  if(cmd==8||cmd==9){
   if(len<4)return NX2_INVALID;
-  uint32_t mode=u32(in);
+  uint32_t mode=read32(in);
   if(obj->read_only&&cmd==8&&(mode&2U))return NX2_FS_UNSUPPORTED;
   rc=nx2_rpc(op,mode,0,0,0,0,a,0,&answer);
   if(rc)return rc;
@@ -246,22 +246,22 @@ static uint32_t do_file(const VfsObject *obj,uint32_t cmd,
  switch(cmd){
   case 0:
   case 1:{
-   if(len<24||((int64_t)u64(in+8))<0)return NX2_INVALID;
+   if(len<24||((int64_t)read64(in+8))<0)return NX2_INVALID;
    if(cmd==1&&obj->read_only)return NX2_FS_UNSUPPORTED;
-   uint64_t offset=u64(in+8),n=u64(in+16);
+   uint64_t offset=read64(in+8),n=read64(in+16);
    void *buf=0;uint64_t cap=0;
    if(n>0x1000000U||!data_buffer(rq,cmd==0,&buf,&cap)||n>cap)
     return NX2_INVALID;
    uint32_t rc=nx2_rpc(cmd==0?RPC_SAVE_READ:RPC_SAVE_WRITE,
-                       obj->token,offset,n,u32(in),buf,0,0,&answer);
+                       obj->token,offset,n,read32(in),buf,0,0,&answer);
    if(!rc&&cmd==0){memcpy(out,&answer,8);*out_size=8;}
    return rc;
   }
   case 2:return nx2_rpc(RPC_SAVE_FLUSH,obj->token,0,0,0,0,0,0,0);
   case 3:
-   if(obj->read_only||len<8||(int64_t)u64(in)<0)
+   if(obj->read_only||len<8||(int64_t)read64(in)<0)
     return NX2_FS_UNSUPPORTED;
-   return nx2_rpc(RPC_SAVE_RESIZE,obj->token,u64(in),0,0,0,0,0,0);
+   return nx2_rpc(RPC_SAVE_RESIZE,obj->token,read64(in),0,0,0,0,0,0);
   case 4:{
    uint32_t rc=nx2_rpc(RPC_SAVE_SIZE,obj->token,0,0,0,0,0,0,&answer);
    if(!rc){memcpy(out,&answer,8);*out_size=8;}
@@ -312,9 +312,9 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  const unsigned char *head=cmif+16;
  const unsigned char *in=head+16;
  const unsigned char *end=(const unsigned char*)buffer+size;
- if(in>end||u32(head)!=0x49434653U)return 0;
+ if(in>end||read32(head)!=0x49434653U)return 0;
  uint64_t avail=(uint64_t)(end-in);
- uint32_t token=u32(head+12);
+ uint32_t token=read32(head+12);
  uint32_t rc=NX2_FS_UNSUPPORTED,new_id=0;
  uint32_t out_size=0;unsigned char out[64]={0};
  if(!obj.kind){
@@ -324,8 +324,8 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
   if(avail<72)rc=NX2_INVALID;
   else{
    const unsigned char *attr=in+8;
-   uint64_t app=u64(attr),uid0=u64(attr+8),uid1=u64(attr+16);
-   uint64_t system_id=u64(attr+24);
+   uint64_t app=read64(attr),uid0=read64(attr+8),uid1=read64(attr+16);
+   uint64_t system_id=read64(attr+24);
    uint32_t type=attr[32],index=attr[34]|((uint32_t)attr[35]<<8);
    char name[128];
    int n=snprintf(name,sizeof(name),
