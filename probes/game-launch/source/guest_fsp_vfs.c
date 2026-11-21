@@ -128,6 +128,44 @@ int nx2_guest_fsp_unsupported(void *buffer,uint64_t size,Nx2IpcDecision d){
  * and one A-buffer, with the unused side explicitly set to NULL/zero.
  * They are the same logical argument index, not two consecutive paths.
  * This also handles pure static and pure transfer-buffer calls. */
+/* The IPC policy has already validated the SFCI/domain header. For the
+ * first save operation, avoid reinterpreting a full libnx HipcRequest with
+ * pointers derived from untrusted descriptor counts. Work from the bounded
+ * HIPC data section instead. Child file/directory methods still parse their
+ * descriptors separately, after these bounds have been verified. */
+static int native_domain_payload(const void *buffer,uint64_t size,
+                                 Nx2IpcDecision d,
+                                 const unsigned char **out_head,
+                                 const unsigned char **out_in,
+                                 uint64_t *out_bytes,
+                                 uint32_t *out_token){
+ const unsigned char *p=buffer;
+ if(!p||size<48||!d.valid||!d.domain||d.control||d.close_kind)
+  return 0;
+ uint32_t a=read32(p),b=read32(p+4);
+ uint64_t off=8;
+ if(b&0x80000000U){
+  if(size<12)return 0;
+  uint32_t extra=read32(p+8);
+  off=12+((extra&1U)?8U:0U)+
+      4U*(((extra>>1)&15U)+((extra>>5)&15U));
+ }
+ off+=8U*((a>>16)&15U)+
+      12U*(((a>>20)&15U)+((a>>24)&15U)+((a>>28)&15U));
+ uint64_t n=4U*(b&1023U);
+ if(off>size||n>size-off)return 0;
+ uint64_t end=off+n;
+ uint64_t start=(off+15U)&~UINT64_C(15);
+ if(start>end||end-start<32U)return 0;
+ if(p[start]!=1||read32(p+start+4)!=d.object_id||
+    read32(p+start+16)!=0x49434653U||
+    read32(p+start+24)!=d.command)return 0;
+ *out_head=p+start+16;
+ *out_in=p+start+32;
+ *out_bytes=end-(start+32);
+ *out_token=read32(p+start+12);
+ return 1;
+}
 static int path_argument(const HipcParsedRequest *req,unsigned index,
                          char out[NX2_PATH_MAX]){
  const void *ptr=0;uint64_t len=0;
@@ -345,6 +383,10 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
   return 0;
  if(!obj.kind&&d.close_kind)return 0;
  if(size<64)return 0;
+ if(!obj.kind && !d.close_kind){
+  nx2_rpc(RPC_LOG,session,d.object_id,d.command,size,0,
+          "GUEST_FSP_ROOT_ROUTE_ENTER",0,0);
+ }
  if(d.close_kind==1){
   VfsObject old={0};
   if(forget_object(session,d.object_id,&old))
@@ -354,20 +396,11 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
   return 1;
  }
  if(d.close_kind)return 0;
- HipcParsedRequest rq=hipcParseRequest(buffer);
- const unsigned char *cmif=cmifGetAlignedDataStart(rq.data.data_words,buffer);
- const unsigned char *head=cmif+16;
- const unsigned char *in=head+16;
- const unsigned char *end=(const unsigned char*)buffer+size;
- const unsigned char *declared_end=(const unsigned char*)rq.data.data_words+
-                                    (uint64_t)rq.meta.num_data_words*4;
- /* Validate the declared HIPC payload, not leftover data in reused TLS. */
- if(declared_end>end||in>declared_end||read32(head)!=0x49434653U)
-  return 0;
- uint64_t avail=(uint64_t)(declared_end-in);
- /* Domain requests carry their context token in the domain header.
-  * Non-domain CMIF uses the inner SFCI token. Echo the correct one. */
- uint32_t token=read32(d.domain?cmif+12:head+12);
+ const unsigned char *head=0,*in=0;
+ uint64_t avail=0;
+ uint32_t token=0;
+ if(!native_domain_payload(buffer,size,d,&head,&in,&avail,&token))
+   return 0;
  uint32_t rc=NX2_FS_UNSUPPORTED,new_id=0;
  uint32_t out_size=0;unsigned char out[64]={0};
  if(!obj.kind){
@@ -401,12 +434,17 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
    nx2_rpc(RPC_LOG,session,d.object_id,d.command,rc,0,
            "GUEST_FSP_SAVE_OPEN",0,0);
   }
- }else if(obj.kind==VFS_FS)
-  rc=do_fs(&obj,d.command,in,avail,&rq,session,&new_id,out,&out_size);
- else if(obj.kind==VFS_FILE)
-  rc=do_file(&obj,d.command,in,avail,&rq,out,&out_size);
- else if(obj.kind==VFS_DIR)
-  rc=do_dir(&obj,d.command,&rq,out,&out_size);
+ }else{
+  /* Parse descriptor lists only for already allocated virtual child
+   * interfaces, where path/read/write buffers are actually required. */
+  HipcParsedRequest rq=hipcParseRequest(buffer);
+  if(obj.kind==VFS_FS)
+   rc=do_fs(&obj,d.command,in,avail,&rq,session,&new_id,out,&out_size);
+  else if(obj.kind==VFS_FILE)
+   rc=do_file(&obj,d.command,in,avail,&rq,out,&out_size);
+  else if(obj.kind==VFS_DIR)
+   rc=do_dir(&obj,d.command,&rq,out,&out_size);
+ }
  if(!write_reply(buffer,size,1,rc,rc?0:new_id,
                  rc?0:out,rc?0:out_size,token))return 0;
  return 1;
