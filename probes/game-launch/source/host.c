@@ -172,26 +172,28 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     int x=snprintf(parent,sizeof(parent),"%s/cache-storage",h->save_root);
     int y=snprintf(dir,sizeof(dir),"%s/%llu",parent,
                    (unsigned long long)r->a);
-    int z=snprintf(marker,sizeof(marker),"sdmc:%s/.nx2-capacity",dir);
+    /* Keep quota bookkeeping outside the directory visible to the guest. */
+    int z=snprintf(marker,sizeof(marker),"sdmc:%s/.nx2-capacity-%llu",
+                   parent,(unsigned long long)r->a);
     if(x<0||x>=(int)sizeof(parent)||y<0||y>=(int)sizeof(dir)||
        z<0||z>=(int)sizeof(marker))return NX2_INVALID;
     if(r->op==RPC_CACHE_CHECK){
       FsDirEntryType type;
       rc=fsFsGetEntryType(h->sd,dir,&type);
       if(R_SUCCEEDED(rc) && type!=FsDirEntryType_Dir)rc=NX2_INVALID;
-      logline(h,"VIRTUAL_CACHE_CHECK index=%llu result=%08x path=%s\\n",
+      logline(h,"VIRTUAL_CACHE_CHECK index=%llu result=%08x path=%s\n",
               (unsigned long long)r->a,rc,dir);
       break;
     }
     s64 free_bytes=0;
     rc=fsFsGetFreeSpace(h->sd,h->save_root,&free_bytes);
     if(R_FAILED(rc)){
-      logline(h,"VIRTUAL_CACHE_FREE_SPACE_FAILED result=%08x\\n",rc);
+      logline(h,"VIRTUAL_CACHE_FREE_SPACE_FAILED result=%08x\n",rc);
       break;
     }
     if(free_bytes<0 || r->b+r->c>(uint64_t)free_bytes){
       rc=NX2_LIMIT;
-      logline(h,"VIRTUAL_CACHE_SPACE_REFUSED index=%llu size=%llu journal=%llu free=%lld\\n",
+      logline(h,"VIRTUAL_CACHE_SPACE_REFUSED index=%llu size=%llu journal=%llu free=%lld\n",
               (unsigned long long)r->a,(unsigned long long)r->b,
               (unsigned long long)r->c,(long long)free_bytes);
       break;
@@ -210,7 +212,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
         if(fclose(f))rc=NX2_INVALID;
       }
     }
-    logline(h,"VIRTUAL_CACHE_CREATE index=%llu size=%llu journal=%llu free=%lld result=%08x path=%s\\n",
+    logline(h,"VIRTUAL_CACHE_CREATE index=%llu size=%llu journal=%llu free=%lld result=%08x path=%s\n",
             (unsigned long long)r->a,(unsigned long long)r->b,
             (unsigned long long)r->c,(long long)free_bytes,rc,dir);
     break;
