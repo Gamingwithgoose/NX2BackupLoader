@@ -237,6 +237,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     fclose(f);
     return;
   }
+  if(rebuild_index && !game->is_nup)nx2_folder_part_clear(rom);
   size_t map_bytes = 0;
   void *map = rebuild_index ? NULL : nx2_cache_load(rom, &map_bytes);
   if (map) {
