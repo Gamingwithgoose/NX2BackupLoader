@@ -187,6 +187,25 @@ extern ZSTD_DStream *ZSTD_createDStream(void);
 extern size_t ZSTD_initDStream(ZSTD_DStream *);
 extern size_t ZSTD_decompressStream(ZSTD_DStream *,NupOut *,NupIn *);
 extern size_t ZSTD_freeDStream(ZSTD_DStream *);
+
+/* NUP v1 has no frame seek table. Keep two bounded decoder cursors for
+ * large Zstd entries across consecutive reads; host RPCs are serialized. */
+typedef struct {
+  uint32_t file;
+  ZSTD_DStream *ctx;
+  unsigned char *input,*output;
+  uint64_t at,packed,total,consumed,produced,last_output_at,stamp;
+  size_t input_size,input_pos,last_output_size;
+  int finished;
+} NupLargeStream;
+static NupLargeStream large_stream[2];
+static uint64_t large_clock;
+static void large_discard(NupLargeStream *s) {
+  if(s->ctx)ZSTD_freeDStream(s->ctx);
+  free(s->input);free(s->output);
+  memset(s,0,sizeof(*s));
+  s->file=UINT32_MAX;
+}
 static uint32_t dirchild(const NupMount *m,uint32_t d,uint32_t j) {
   return rd32(m->children+(rd32(m->dirs+(size_t)d*24+8)+j)*4);
 }
@@ -247,7 +266,11 @@ static uint32_t lookup_file(const char *path) {
 void nx2_nup_close(void) {
   if(mounted.f)fclose(mounted.f);
   free(mounted.toc);
-  for(unsigned j=0;j<2;j++)free(mounted.cached_bytes[j]);
+  for(unsigned j=0;j<2;j++){
+    free(mounted.cached_bytes[j]);
+    large_discard(&large_stream[j]);
+  }
+  large_clock=0;
   memset(&mounted,0,sizeof(mounted));
 }
 int nx2_nup_active(void) {return mounted.f!=NULL;}
@@ -304,6 +327,7 @@ int nx2_nup_open(const char *path) {
   m.child_count=(pool_off-children_start)/4;m.pool_size=pool_len;
   m.exefs_dir=m.romfs_dir=UINT32_MAX;
   for(unsigned j=0;j<2;j++)m.cached_file[j]=UINT32_MAX;
+  for(unsigned j=0;j<2;j++)large_stream[j].file=UINT32_MAX;
   for(uint32_t i=0;i<pc;i++){
     const unsigned char *p=toc+48+(size_t)i*64;
     if(p[24]==0 || (p[24]==1 && (p[25]&1))){
@@ -402,6 +426,126 @@ static int nup_seek_file(FILE *f,uint64_t offset) {
   if(offset>INT64_MAX)return 0;
   return nup_seek(f,(int64_t)offset,SEEK_SET)==0;
 }
+
+static int large_begin(NupLargeStream *s,uint32_t file,
+                       uint64_t at,uint64_t packed,uint64_t total) {
+  large_discard(s);
+  s->ctx=ZSTD_createDStream();
+  s->input=malloc(128*1024);
+  s->output=malloc(128*1024);
+  if(!s->ctx||!s->input||!s->output ||
+     ZSTD_isError(ZSTD_initDStream(s->ctx))) {
+    read_error="Zstandard large-stream allocation/init failure";
+    large_discard(s);
+    return 0;
+  }
+  s->file=file;s->at=at;s->packed=packed;s->total=total;
+  return 1;
+}
+static int read_large_compressed(const unsigned char *e,uint32_t file,
+                                 uint64_t offset,void *dest,size_t length) {
+  uint64_t total=rd64(e+8),at=rd64(e+16),packed=rd64(e+24);
+  uint64_t wanted=offset+(uint64_t)length;
+  NupLargeStream *s=NULL;
+  for(unsigned i=0;i<2;i++) {
+    NupLargeStream *candidate=&large_stream[i];
+    if(candidate->file!=file || !candidate->ctx)continue;
+    if(offset<candidate->produced &&
+       offset<candidate->last_output_at) {
+      /* Older data is outside the 128-KiB backtrack window. */
+      large_discard(candidate);
+    }else s=candidate;
+    break;
+  }
+  if(!s) {
+    unsigned slot=large_stream[0].file==UINT32_MAX?0:
+                  large_stream[1].file==UINT32_MAX?1:
+                  large_stream[0].stamp<=large_stream[1].stamp?0:1;
+    s=&large_stream[slot];
+    if(!large_begin(s,file,at,packed,total))return 0;
+  }
+  s->stamp=++large_clock;
+  unsigned char *out=dest;
+  uint64_t position=offset;
+  size_t left=length;
+  unsigned stalls=0;
+  while(left) {
+    uint64_t cached_end=s->last_output_at+s->last_output_size;
+    if(s->last_output_size && position>=s->last_output_at &&
+       position<cached_end) {
+      uint64_t available=cached_end-position;
+      size_t take=(size_t)(available<left?available:left);
+      memcpy(out,s->output+(size_t)(position-s->last_output_at),take);
+      out+=take;position+=take;left-=take;
+      continue;
+    }
+    if(position<s->produced || s->finished) {
+      read_error="Zstandard large-stream requested unavailable output";
+      large_discard(s);
+      return 0;
+    }
+    if(s->input_pos==s->input_size && s->consumed<s->packed) {
+      size_t n=(size_t)(s->packed-s->consumed);
+      if(n>128*1024)n=128*1024;
+      if(s->consumed>UINT64_MAX-s->at ||
+         !nup_seek_file(mounted.f,s->at+s->consumed) ||
+         fread(s->input,1,n,mounted.f)!=n) {
+        read_error="Zstandard large-stream packed read failed";
+        large_discard(s);
+        return 0;
+      }
+      s->consumed+=n;s->input_size=n;s->input_pos=0;
+    }
+    NupIn in={s->input,s->input_size,s->input_pos};
+    NupOut z={s->output,128*1024,0};
+    size_t prior=in.pos;
+    size_t step=ZSTD_decompressStream(s->ctx,&z,&in);
+    s->input_pos=in.pos;
+    if(ZSTD_isError(step)) {
+      snprintf(probe_details,sizeof(probe_details),
+          "ZSTD stream code=%llu packed=%llu/%llu produced=%llu/%llu",
+          (unsigned long long)(0-(uint64_t)step),
+          (unsigned long long)s->consumed,(unsigned long long)s->packed,
+          (unsigned long long)s->produced,(unsigned long long)s->total);
+      read_error=probe_details;
+      large_discard(s);
+      return 0;
+    }
+    if(z.pos>s->total-s->produced) {
+      read_error="Zstandard large-stream exceeds declared entry size";
+      large_discard(s);
+      return 0;
+    }
+    if(z.pos) {
+      s->last_output_at=s->produced;
+      s->last_output_size=z.pos;
+      s->produced+=z.pos;
+    }
+    if(step==0) {
+      if(s->produced!=s->total || wanted>s->produced) {
+        read_error="Zstandard large-stream frame ended early";
+        large_discard(s);
+        return 0;
+      }
+      s->finished=1;
+    }
+    if(in.pos==prior && !z.pos) {
+      if(++stalls>=2) {
+        read_error="Zstandard large-stream made no progress";
+        large_discard(s);
+        return 0;
+      }
+    }else stalls=0;
+    if(!s->finished && s->consumed==s->packed &&
+       s->input_pos==s->input_size && !z.pos) {
+      read_error="Zstandard large-stream missing frame terminator";
+      large_discard(s);
+      return 0;
+    }
+  }
+  read_error="OK";
+  return 1;
+}
 static int read_compressed(const unsigned char *e,uint32_t file,
                            uint64_t offset,void *dest,size_t length) {
   uint64_t total=rd64(e+8),at=rd64(e+16),packed=rd64(e+24);
@@ -459,95 +603,7 @@ static int read_compressed(const unsigned char *e,uint32_t file,
     memcpy(dest,mounted.cached_bytes[slot]+offset,length);
     return 1;
   }
-  /* Large frames are decompressed in small pieces. Nothing is extracted
-   * permanently and we never allocate the entire large game asset. */
-  read_error="Zstandard large-entry seek/decode failed";
-  if(!nup_seek_file(mounted.f,at))return 0;
-  ZSTD_DStream *stream=ZSTD_createDStream();
-  unsigned char *input=malloc(128*1024),*output=malloc(128*1024);
-  if(!stream||!input||!output||ZSTD_isError(ZSTD_initDStream(stream))) {
-    if(stream)ZSTD_freeDStream(stream);
-    free(input);free(output);return 0;
-  }
-  uint64_t consumed=0,produced=0;
-  size_t remaining=length;
-  unsigned char *out=dest;
-  int ok=0;
-  NupIn in={input,0,0};
-  unsigned stalls=0;
-  for(;;) {
-    /* Reading the last compressed chunk is NOT the same as consuming it.
-     * ZSTD_decompressStream can still have buffered input and output to
-     * process, including the final checksum and frame terminator. */
-    if(in.pos==in.size && consumed<packed) {
-      size_t n=(size_t)(packed-consumed);
-      if(n>128*1024)n=128*1024;
-      if(fread(input,1,n,mounted.f)!=n){
-        read_error="Zstandard stream truncated while reading packed bytes";
-        break;
-      }
-      consumed+=n;in.size=n;in.pos=0;
-    }
-    size_t prior=in.pos;
-    NupOut z={output,128*1024,0};
-    size_t step=ZSTD_decompressStream(stream,&z,&in);
-    if(ZSTD_isError(step)){
-      snprintf(probe_details,sizeof(probe_details),
-          "ZSTD stream code=%llu packed=%llu/%llu produced=%llu/%llu",
-          (unsigned long long)(0-(uint64_t)step),
-          (unsigned long long)consumed,(unsigned long long)packed,
-          (unsigned long long)produced,(unsigned long long)total);
-      read_error=probe_details;
-      break;
-    }
-    if(z.pos>UINT64_MAX-produced) {
-      read_error="Zstandard stream output overflow";break;
-    }
-    uint64_t end=produced+z.pos;
-    if(end>total){
-      read_error="Zstandard stream exceeds declared entry size";break;
-    }
-    if(end>offset && produced<offset+length){
-      uint64_t begin=produced>offset?produced:offset;
-      uint64_t finish=end<offset+length?end:offset+length;
-      if(finish>begin){
-        size_t n=(size_t)(finish-begin);
-        memcpy(out,output+(size_t)(begin-produced),n);
-        out+=n;remaining-=n;
-      }
-    }
-    produced=end;
-    /* Random-access reads need only the requested range, not the rest
-     * of a potentially multi-GiB single-frame asset. Full-file reads
-     * still decode the whole frame and are SHA-256 checked by read_all.
-     * This avoids re-decoding gigabytes for every small read near the
-     * beginning, without changing the standard NUP file format. */
-    if(!remaining && offset+length<total){
-      ok=1;
-      read_error="OK";
-      break;
-    }
-    if(step==0){
-      if(produced!=total || remaining){
-        read_error="Zstandard frame finished before declared output size";
-        break;
-      }
-      ok=1;
-      read_error="OK";
-      break;
-    }
-    if(in.pos==prior && z.pos==0){
-      if(++stalls>=2){
-        read_error="Zstandard stream made no progress";break;
-      }
-    }else stalls=0;
-    if(consumed==packed && in.pos==in.size && z.pos==0){
-      read_error="Zstandard stream ended without completing frame";break;
-    }
-  }
-  ZSTD_freeDStream(stream);
-  free(input);free(output);
-  return ok;
+  return read_large_compressed(e,file,offset,dest,length);
 }
 int nx2_nup_read(const char *path,uint64_t offset,void *dest,size_t length){
   uint32_t i=lookup_file(path);
