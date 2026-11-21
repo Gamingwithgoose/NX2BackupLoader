@@ -71,25 +71,33 @@ static void sha256(const unsigned char *data, size_t size, unsigned char out[32]
   for (unsigned i=0;i<8;i++) for(unsigned j=0;j<4;j++)
     out[4*i+j]=(unsigned char)(h[i]>>(24-8*j));
 }
+static const char *probe_error = "Not checked";
+const char *nx2_nup_probe_error(void) { return probe_error; }
 int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
   unsigned char header[128], digest[32];
   FILE *f=fopen(path,"rb");
+  probe_error = "Cannot open NUP file";
   if (!f) return 0;
+  probe_error = "Incomplete NUP header";
   int ok=0;
   unsigned char *toc=NULL;
   if (fread(header,1,sizeof(header),f)!=sizeof(header)) goto done;
+  probe_error = "Invalid NUP v1 header";
   if (memcmp(header,"NUP\1",4) || header[4]!=0x80 || header[5] ||
       header[6]!=1 || header[7] || rd32(header+0x4c) ||
       rd64(header+8)!=128) goto done;
   uint64_t toc_size=rd64(header+0x10), blob=rd64(header+0x38),
            file_size=rd64(header+0x40);
   uint32_t packages=rd32(header+0x48);
+  probe_error = "Incomplete copy, invalid file size or TOC bounds";
   if (!packages || packages>4096 || toc_size<48 || toc_size>128*1024*1024 ||
       blob%16 || blob<128 || toc_size>blob-128 || file_size<blob ||
       nup_seek(f,0,SEEK_END) || nup_tell(f)<0 || (uint64_t)nup_tell(f)!=file_size ||
       nup_seek(f,128,SEEK_SET)) goto done;
+  probe_error = "Cannot read NUP table of contents";
   toc=malloc((size_t)toc_size);
   if (!toc || fread(toc,1,(size_t)toc_size,f)!=(size_t)toc_size) goto done;
+  probe_error = "NUP table checksum or format mismatch";
   sha256(toc,(size_t)toc_size,digest);
   if (memcmp(digest,header+0x18,32) || memcmp(toc,"TOC\1",4) ||
       rd32(toc+4)!=packages || rd64(toc+0x28) ||
@@ -97,12 +105,14 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
   uint64_t dirs=rd64(toc+8), nfiles=rd64(toc+16);
   uint64_t pool_off=rd64(toc+0x18), pool_len=rd64(toc+0x20);
   uint64_t start=48+(uint64_t)packages*64;
+  probe_error = "NUP directory/file counts exceed supported limits";
   if (!dirs || dirs>262144 || nfiles>262144 ||
       dirs>(toc_size-start)/24) goto done;
   start+=dirs*24;
   if (nfiles>(toc_size-start)/80) goto done;
   start+=nfiles*80;
   if (pool_off<start || pool_off>toc_size || pool_len>toc_size-pool_off) goto done;
+  probe_error = "NUP package metadata invalid or no base game";
   for (uint32_t i=0;i<packages;i++) {
     const unsigned char *p=toc+48+(size_t)i*64;
     uint32_t root=rd32(p+8), exefs=rd32(p+12), romfs=rd32(p+16);
@@ -113,6 +123,7 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
       if (title_id) *title_id=rd64(p);
       if (files) *files=nfiles;
       ok=1;
+      probe_error = "Ready for experimental launch";
       break;
     }
   }
