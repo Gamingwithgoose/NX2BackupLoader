@@ -325,6 +325,23 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
         break;
       }
     }
+    /* Capture a few executable instructions before the Break thunk caller.
+     * Do not read a guest pointer without verifying its mapped permission. */
+    if(r->d>=16 && r->d<=UINT64_MAX-16){
+      MemoryInfo code;u32 page=0;
+      uint64_t at=(r->d-16)&~UINT64_C(3);
+      Result q=svcQueryMemory(&code,&page,at);
+      if(R_SUCCEEDED(q) && code.addr<=at &&
+         code.size>=32 && at-code.addr<=code.size-32 &&
+         (code.perm&Perm_R)){
+        const uint32_t *words=(const uint32_t *)(uintptr_t)at;
+        logline(h,"SDK_BREAK_CODE start=%016llx words=%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x\n",
+                (unsigned long long)at,words[0],words[1],words[2],words[3],
+                words[4],words[5],words[6],words[7]);
+      }else{
+        logline(h,"SDK_BREAK_CODE unavailable query=%08x\n",q);
+      }
+    }
     if (r->c == 4 && r->b <= UINT64_MAX - 4) {
       MemoryInfo mi;
       u32 page = 0;
