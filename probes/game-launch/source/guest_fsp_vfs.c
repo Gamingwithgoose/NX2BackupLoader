@@ -356,6 +356,12 @@ static uint32_t do_file(const VfsObject *obj,uint32_t cmd,
    if(len<24||((int64_t)read64(in+8))<0)return NX2_INVALID;
    if(cmd==1&&obj->read_only)return NX2_FS_UNSUPPORTED;
    uint64_t offset=read64(in+8),n=read64(in+16);
+   /* Native IFile zero-byte reads/writes need no transfer descriptor.
+    * Return an actual 0-byte read count without touching SD state. */
+   if(!n){
+    if(cmd==0){memset(out,0,8);*out_size=8;}
+    return 0;
+   }
    void *buf=0;uint64_t cap=0;
    if(n>0x1000000U||!data_buffer(rq,cmd==0,&buf,&cap)||n>cap)
     return NX2_INVALID;
