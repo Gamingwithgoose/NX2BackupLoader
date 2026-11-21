@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "folder.h"
 #include "nup.h"
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -270,6 +273,55 @@ static int tree_entry(void *v, const char *name) {
     progress_callback(t->nf, progress_context);
   return ok;
 }
+
+/* Switch directory IPC already includes file sizes. Read 32 entries per
+ * request instead of stat'ing every file on a slow SD card. */
+static int list_game(const char *dir, Tree *t) {
+#ifdef __SWITCH__
+  FsFileSystem *sd=fsdevGetDeviceFileSystem("sdmc");
+  if(sd && !strncmp(dir,"sdmc:",5)) {
+    FsDir d;
+    Result rc=fsFsOpenDirectory(sd,dir+5,3,&d);
+    if(R_SUCCEEDED(rc)) {
+      FsDirectoryEntry *batch=malloc(32*sizeof(*batch));
+      if(!batch) {fsDirClose(&d);return 0;}
+      int ok=1;
+      for(;;) {
+        s64 count=0;
+        rc=fsDirRead(&d,&count,32,batch);
+        if(R_FAILED(rc)) {ok=0;break;}
+        if(count<=0) break;
+        for(s64 i=0;i<count;i++) {
+          if(cancel_callback && cancel_callback(cancel_context)) {ok=0;break;}
+          const FsDirectoryEntry *e=&batch[i];
+          if(!strcmp(e->name,".") || !strcmp(e->name,"..") ||
+             !strcmp(e->name,".listing")) continue;
+          if(strchr(e->name,':') || strchr(e->name,'\\')) {ok=0;break;}
+          char rel[1024];
+          int n=snprintf(rel,sizeof(rel),"%s%s%s",t->relative,
+                         *t->relative?"/":"",e->name);
+          if(n<=0 || (size_t)n>=sizeof(rel)) {ok=0;break;}
+          if(e->type==FsDirEntryType_Dir) {
+            if(!add(&t->dirs,&t->nd,&t->dc,rel,0)) {ok=0;break;}
+          } else if(e->type==FsDirEntryType_File && e->file_size>=0) {
+            if(!add(&t->files,&t->nf,&t->fc,rel,(uint64_t)e->file_size)) {
+              ok=0;break;
+            }
+            if(progress_callback && !(t->nf%1024))
+              progress_callback(t->nf,progress_context);
+          } else {ok=0;break;}
+        }
+        if(!ok) break;
+      }
+      free(batch);
+      fsDirClose(&d);
+      return ok;
+    }
+  }
+#endif
+  return list(dir,tree_entry,t);
+}
+
 static int entry_compare(const void *a, const void *b) {
   return strcmp(((const Entry *)a)->path, ((const Entry *)b)->path);
 }
@@ -486,7 +538,7 @@ void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
     if(!*rel) snprintf(dir,sizeof(dir),"%s",root);
     else if(!child(dir,sizeof(dir),root,rel)) {scan_ok=0;break;}
     uint32_t file_from=t.nf,dir_from=t.nd;
-    if(!list(dir,tree_entry,&t)) {scan_ok=0;break;}
+    if(!list_game(dir,&t)) {scan_ok=0;break;}
     if(!part_write(part,&t,rel,file_from,dir_from)) {scan_ok=0;break;}
     t.dirs[d].hash=1;
   }
