@@ -369,8 +369,12 @@ int main(int argc, char **argv) {
     if (catalog.count && move)
       selected = move < 0 ? (selected ? selected - 1 : catalog.count - 1)
                           : (selected + 1) % catalog.count;
-    if (catalog.count && (down & HidNpadButton_A))
-      run(&catalog.items[selected], (held & HidNpadButton_B) != 0);
+    if (catalog.count && (down & HidNpadButton_A)) {
+      if (catalog.items[selected].is_nup)
+        snprintf(outcome, sizeof(outcome), "NUP recognized. Archive-backed loading is not ready yet.");
+      else
+        run(&catalog.items[selected], (held & HidNpadButton_B) != 0);
+    }
     draw(&catalog, selected);
     svcSleepThread(16666667);
   }
