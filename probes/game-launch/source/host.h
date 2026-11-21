@@ -20,6 +20,9 @@ typedef struct {
   } cache[16];
   uint64_t calls, bytes, save_bytes, lines;
   uint64_t nup_large_reads;
+  /* Storage worker publishes this before blocking SD operations. */
+  uint64_t rpc_started_tick,rpc_completed_count;
+  uint32_t rpc_active_slot,rpc_active_op;
   int abort;
 } Nx2Host;
 int nx2_host_init(Nx2Host *, FILE *, const char *, const char *,uint64_t);
