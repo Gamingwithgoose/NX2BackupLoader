@@ -286,6 +286,30 @@ static void trace_reply_handles(const unsigned char *p,uint64_t n,
  }
 }
 static void response_tags(const unsigned char *p,uint64_t n,uint32_t kind){if(n<12||!(word(p+4)&0x80000000))return;uint32_t s=word(p+8),copy=(s>>1)&15,move=(s>>5)&15;uint64_t off=12+((s&1)?8:0);if(off+4*(copy+move)>n)return;for(uint32_t i=0;i<copy+move;i++)set_tag(word(p+off+4*i),kind);}
+/* Every guest SVC gets request and completion records, including untagged
+ * services and virtual filesystem replies. Payloads and UID data are excluded.
+ * Publication never blocks on SD logging or an RPC from the guest thread. */
+static void ipc_event_emit(uint32_t call_id,uint32_t phase,uint32_t h,
+                           uint32_t kind,Nx2IpcDecision d,
+                           uint32_t request_type,uint32_t flags,
+                           uint32_t hdr0,uint32_t hdr1,uint32_t special,
+                           uint32_t kernel,uint32_t cmif,
+                           uintptr_t caller,const char *name){
+ Nx2Launch *l=nx2_launch;
+ uint32_t seq=__atomic_fetch_add(&l->ipc_event_next,1,__ATOMIC_RELAXED);
+ Nx2IpcEvent *e=&l->ipc_events[seq%NX2_IPC_EVENT_SLOTS];
+ __atomic_store_n(&e->sequence,0,__ATOMIC_RELAXED);
+ e->caller=caller;e->tick=armGetSystemTick();e->call_id=call_id;
+ e->phase=phase;e->handle=h;e->kind=kind;e->request_type=request_type;
+ e->command=d.valid?d.command:UINT32_MAX;
+ e->object_id=d.domain?d.object_id:0;
+ e->flags=flags;e->hdr0=hdr0;e->hdr1=hdr1;e->special=special;
+ e->kernel_result=kernel;e->cmif_result=cmif;
+ unsigned j=0;
+ if(name)for(;j<8&&name[j];j++)e->service[j]=name[j];
+ for(;j<9;j++)e->service[j]=0;
+ __atomic_store_n(&e->sequence,seq+1,__ATOMIC_RELEASE);
+}
 static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uintptr_t caller){
  unsigned char *p=buffer;uint32_t kind=tag(h);
  Nx2IpcDecision d=nx2_ipc_decide(p,n,kind);
@@ -295,6 +319,16 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  char service[9]={0},owner[9]={0};
  if(kind==1)nx2_ipc_service_name(p,n,service);
  trace_name(h,owner);
+ const uint32_t hdr0=n>=4?word(p):0;
+ const uint32_t hdr1=n>=8?word(p+4):0;
+ const uint32_t special=n>=12&&(hdr1&0x80000000U)?word(p+8):0;
+ const char *trace_label=(kind==1&&service[0])?service:owner;
+ const uint32_t flags=(d.valid?1U:0U)|(d.domain?2U:0U)|
+                      (d.control?4U:0U)|(external?8U:0U)|
+                      (d.close_kind?16U:0U)|(want_fsp?32U:0U);
+ uint32_t call_id=__atomic_add_fetch(&nx2_launch->ipc_call_next,1,__ATOMIC_RELAXED);
+ ipc_event_emit(call_id,1,h,kind,d,request_type,flags,hdr0,hdr1,
+                special,UINT32_MAX,UINT32_MAX,caller,trace_label);
  /* A first request to a newly acquired SM service is a valuable
   * last-operation marker if the process exits before any snapshot. */
  int first_root_method=(kind==0 && request_type!=2 && owner[0] &&
@@ -304,9 +338,6 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            "SERVICE_ROOT_FIRST_IPC_BEGIN",owner,0);
  /* Snapshot before SVC: kernel may replace TLS request bytes with its
   * reply. No payload contents, guest pointers, or sensitive IDs logged. */
- const uint32_t hdr0=n>=4?word(p):0;
- const uint32_t hdr1=n>=8?word(p+4):0;
- const uint32_t special=n>=12&&(hdr1&0x80000000U)?word(p+8):0;
  /* Classify native filesystem capabilities by interface and command.
   * This never grants new kernel permissions or mutates host save data.
   * A cache save-info reader is an explicitly read-only child object. */
@@ -318,8 +349,13 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  /* Route native FS-domain interfaces to this title's private SD backend.
   * No guest save objects are ever sent to the host title's fsp-srv. */
  if(kind==2 && !reader_domain &&
-    nx2_guest_fsp_route(p,n,h,kind,d))
+    nx2_guest_fsp_route(p,n,h,kind,d)){
+   uint32_t guest_rc=UINT32_MAX;
+   (void)nx2_ipc_reply_result(p,n,request_type,&guest_rc);
+   ipc_event_emit(call_id,3,h,kind,d,request_type,flags,hdr0,hdr1,
+                  special,0,guest_rc,caller,trace_label);
    return 0;
+ }
  if(reader_domain && !closing && nx2_ipc_save_reader_allowed(d))
    nx2_rpc(RPC_LOG,h,d.object_id,cmd,d.domain,0,
            "FSP_DOMAIN_READ_ONLY_REQUEST_ALLOWED",owner,0);
@@ -342,15 +378,24 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    if(nx2_guest_fsp_unsupported(p,n,d)){
      nx2_rpc(RPC_LOG,h,d.object_id,cmd,NX2_FS_UNSUPPORTED,0,
              "GUEST_FSP_UNSUPPORTED_RESPONSE",owner,0);
+     ipc_event_emit(call_id,4,h,kind,d,request_type,flags,hdr0,hdr1,
+                    special,0,NX2_FS_UNSUPPORTED,caller,trace_label);
      return 0;
    }
+   ipc_event_emit(call_id,5,h,kind,d,request_type,flags,hdr0,hdr1,
+                  special,NX2_INVALID,UINT32_MAX,caller,trace_label);
    nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
            "Malformed or unroutable native FSP request",0,0);
    for(;;)__asm__ volatile("wfe");
  }
  if(kind==3&&!closing&&!nx2_ipc_save_reader_allowed(d)){
-   if(nx2_guest_fsp_unsupported(p,n,d))
+   if(nx2_guest_fsp_unsupported(p,n,d)){
+     ipc_event_emit(call_id,4,h,kind,d,request_type,flags,hdr0,hdr1,
+                    special,0,NX2_FS_UNSUPPORTED,caller,trace_label);
      return 0;
+   }
+   ipc_event_emit(call_id,5,h,kind,d,request_type,flags,hdr0,hdr1,
+                  special,NX2_INVALID,UINT32_MAX,caller,trace_label);
    nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
            "Malformed read-only FSP iterator request",0,0);
    for(;;)__asm__ volatile("wfe");
@@ -418,6 +463,9 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    domain_cap_forget_handle(h);
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
+ ipc_event_emit(call_id,2,h,kind,d,request_type,flags,hdr0,hdr1,
+                special,rc,reply_decoded?service_result:UINT32_MAX,
+                caller,trace_label);
  if(first_root_method)
    nx2_rpc(RPC_LOG,h,rc,reply_decoded?service_result:UINT32_MAX,cmd,0,
            "SERVICE_ROOT_FIRST_IPC_RESULT",owner,0);
