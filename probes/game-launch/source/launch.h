@@ -60,6 +60,7 @@ typedef struct {
  uint64_t guest_program_id;
  uint64_t arena_base,arena_capacity,arena_used;
  uint32_t worker_handle,stage,finished,abort_requested;
+ uint32_t late_trace_active; /* host arms diagnostics on successful save mount */
  uint64_t fsp_denied,rom_reads,save_calls,main_entered,frames;
  uint64_t handle_tags[128];
  Nx2Region regions[39];uint32_t region_count;
