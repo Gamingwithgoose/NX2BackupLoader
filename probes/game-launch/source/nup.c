@@ -196,10 +196,10 @@ static uint64_t raw_cache_hits,raw_prefetch_reads,raw_direct_reads;
 static uint64_t raw_prefetch_bytes;
 void nx2_nup_raw_stats(uint64_t out[4]) {
   if(!out)return;
-  out[0]=raw_cache_hits;
-  out[1]=raw_prefetch_reads;
-  out[2]=raw_direct_reads;
-  out[3]=raw_prefetch_bytes;
+  out[0]=__atomic_load_n(&raw_cache_hits,__ATOMIC_RELAXED);
+  out[1]=__atomic_load_n(&raw_prefetch_reads,__ATOMIC_RELAXED);
+  out[2]=__atomic_load_n(&raw_direct_reads,__ATOMIC_RELAXED);
+  out[3]=__atomic_load_n(&raw_prefetch_bytes,__ATOMIC_RELAXED);
 }
 
 
@@ -477,7 +477,7 @@ static int read_raw(uint32_t file,uint64_t base,uint64_t total,
        length<=w->length-(size_t)(offset-w->offset)){
       memcpy(dest,w->bytes+(size_t)(offset-w->offset),length);
       w->stamp=++raw_clock;
-      raw_cache_hits++;
+      __atomic_fetch_add(&raw_cache_hits,1,__ATOMIC_RELAXED);
       return 1;
     }
   }
@@ -508,8 +508,8 @@ static int read_raw(uint32_t file,uint64_t base,uint64_t total,
         w->length=prefetch;
         w->stamp=++raw_clock;
         memcpy(dest,w->bytes,length);
-        raw_prefetch_reads++;
-        raw_prefetch_bytes+=prefetch;
+        __atomic_fetch_add(&raw_prefetch_reads,1,__ATOMIC_RELAXED);
+        __atomic_fetch_add(&raw_prefetch_bytes,prefetch,__ATOMIC_RELAXED);
         return 1;
       }
       /* Opportunistic reads must never turn a valid direct read into a
@@ -517,7 +517,7 @@ static int read_raw(uint32_t file,uint64_t base,uint64_t total,
       clearerr(mounted.f);
     }
   }
-  raw_direct_reads++;
+  __atomic_fetch_add(&raw_direct_reads,1,__ATOMIC_RELAXED);
   return base<=UINT64_MAX-offset &&
          nup_seek_file(mounted.f,base+offset) &&
          fread(dest,1,length,mounted.f)==length;
