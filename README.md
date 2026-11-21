@@ -4,7 +4,7 @@
 
 BackupLoaderMKW is an experimental **Switch 2** homebrew launcher for extracted backups and, on this branch, NUP archives. It uses **Mario Kart World's title override** because Mario Kart World provides more memory for homebrew. The console still sees MKW as the host.
 
-**Only Yoshi and the Mysterious Book Demo has been confirmed to reach gameplay.** Other games still need testing. Some will crash or simply not work. No games are included.
+**Yoshi and the Mysterious Book Demo** has reached gameplay from an extracted folder and the title/profile-selection screen from a fast NUP. Other games remain experimental and may crash or stall. No games are included.
 
 ## What you need
 
@@ -12,11 +12,11 @@ BackupLoaderMKW is an experimental **Switch 2** homebrew launcher for extracted 
 - Mario Kart World and its **title override** for launching Homebrew Menu (not Album mode).
 - Your own extracted game files and an SD card.
 
-**Experimental branch:** NUP v1 base-game archives now have a direct-launch path. The app reads ExeFS modules and RomFS assets from the archive, decompressing Zstandard entries when needed. This has **not** been verified on a Switch 2 yet; some archives or games may fail. Encrypted containers are unsupported.
+**Experimental branch:** NUP v1 base-game archives now have a direct-launch path. The app reads ExeFS modules and RomFS assets from the archive, decompressing Zstandard entries when needed. This has been tested on Switch 2 hardware, but compatibility varies by game; some archives or games still fail. Encrypted containers are unsupported.
 
 ## Put games on the SD card
 
-Create a folder called **games** at the root of the SD card. Extracted games can use **exefs** and **romfs** folders as before. Experimental NUP v1 base-game files can be placed directly in that same games folder.
+Create a folder called **games** at the root of the SD card. Extracted games can use **exefs** and **romfs** folders as before. Experimental NUP v1 base-game files can be placed directly in that same games folder. You can mix folders and NUP files.
 
     SD:/
       games/
@@ -41,7 +41,7 @@ Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs
 2. Fully close Mario Kart World.
 3. Start Homebrew Menu using **Mario Kart World's title override**.
 4. Start BackupLoaderMKW.
-5. Select an extracted game using Up/Down or the left stick. Press **A** to launch, **X** to refresh the list, or **+** to exit. Hold **B** while pressing **A** to rebuild an extracted game’s index. While a large folder is being indexed, press **B** to cancel and return to the game list. Cancelled scans do not yet resume.
+5. Select an extracted game folder or NUP archive using Up/Down or the left stick. Press **A** to launch, **X** to refresh the list, or **+** to exit. Hold **B** while pressing **A** to rebuild an extracted game’s index. While a large folder is being indexed, press **B** to cancel and return to the game list. Cancelled scans do not yet resume.
 6. Use HOME / Close Software to stop playing.
 
 If the list is empty, check that extracted games have valid exefs and romfs folders or that NUP archives are complete and valid. Extracted games use batched directory reads where supported and can save progress to a .part file in SD:/switch/BackupLoaderMKW/cache/. Press B during scanning to stop; launching the same game again resumes after completed directories instead of starting over. A directory interrupted halfway through is rescanned. After a full scan, the loader saves a compact .idx file for later launches. Hold B+A to force a rebuild after changing game files. The cache only checks the top-level romfs timestamp, so nested file changes can go unnoticed. NUP games read their existing archive table; they do not scan extracted directories or unpack the entire archive. A file with a .nup extension is listed even if its initial validation fails, with the reason shown when selected. Incomplete transfers and unsupported archives are not launchable.
@@ -70,6 +70,16 @@ The loader discovers the selected backup's executable modules and files. It conn
 
 It does not install game tickets, rewrite game ownership, or install backups to NAND. The extracted-folder launcher reads loose files from SD. The experimental NUP path reads game files from the archive instead. Different titles have different services, graphics, and memory needs, so there is no promise that they will all launch or save correctly.
 
+## Quick walkthrough: build, package, launch
+
+**Build the launcher (NRO):** Clone or download the repository, follow the Windows SDK prerequisites below, and run `build.bat`. Copy the **contents** of `release/switch/` to the SD card root.
+
+**Prepare games:** You can copy a game with `exefs/` and `romfs/` directly under `SD:/games/Game Name/` (or under its `base/` directory). Alternatively, for a NUP, place each extracted game folder under `extracted/` beside the BAT files, then run `build-nup.bat`. It writes one `nups/Game Name.nup` per input without changing the inputs or overwriting existing archives. Copy selected output NUPs into `SD:/games/` alongside any extracted folders.
+
+**Run:** Close Mario Kart World, open Homebrew Menu using its title override, launch BackupLoaderMKW, select a game, and press A. If it fails, inspect the applicable overwritten log file before launching anything else. Current NUP support is experimental; packing a fast NUP helps with large random-access reads but does not guarantee a game will boot.
+
+**First-time NUP packaging requirements:** Windows Python 3 (with `py`), Git, and internet access. The BAT installs the upstream Python NUP packer from GitHub plus `zstandard` into the user's Python environment when missing. It does **not** depend on any personal NUP-Tool checkout. The NRO build has separate devkitPro/ounce-devkit requirements described below.
+
 ## Building yourself on Windows
 
 Download the repository as a ZIP or clone it with GitHub Desktop. Keep the directories together. Save the provided **BackupLoaderMKW-homebrew-icon.jpg** from the project chat as **assets/BackupLoaderMKW.jpg** inside the repository (create the assets folder if needed), then double-click **build.bat**. The build embeds that JPEG into the NRO's Homebrew Menu assets. If the file is missing, the build reports an error instead of silently producing an iconless release.
@@ -86,7 +96,7 @@ Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro**. Copy 
 
 ## Current limitations
 
-Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUP launching is newly implemented and **untested on hardware**. It selects a base package, or a standalone-update package explicitly marked with the NUP v1 standalone flag; ordinary updates and DLC are not merged. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
+**Yoshi and the Mysterious Book Demo** has reached gameplay in extracted-folder form and title/profile selection using a fast NUP. Other games remain unverified or have known startup failures. It selects a base package, or a standalone-update package explicitly marked with the NUP v1 standalone flag; ordinary updates and DLC are not merged. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
 
 **Early experimental release. Use at your own risk.**
 
