@@ -284,6 +284,9 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  /* Apply service permissions to the target domain object, not just the
   * underlying session handle. Do not grant command 0 globally to FSP. */
  int reader_domain=(kind==2 && d.domain && domain_kind==3);
+ if(reader_domain && nx2_ipc_save_reader_allowed(d))
+   nx2_rpc(RPC_LOG,h,d.object_id,cmd,d.domain,0,
+           "FSP_DOMAIN_READ_ONLY_REQUEST_ALLOWED",owner,0);
  if(kind==2 && !(reader_domain?nx2_ipc_save_reader_allowed(d):
                             nx2_ipc_fsp_allowed(d))){
    nx2_rpc(RPC_LOG,h,d.object_id,d.domain,cmd,0,
