@@ -121,3 +121,9 @@ Extracted OOT reached `GAME_NNMAIN_ENTERED`, mounted RomFS and read `System/Heap
 The NUP run reaches `NUP_NPDM_ENTRY present=1 bytes=1828 codec=1`, confirming its NPDM file exists but is Zstandard compressed. The metadata TLV fallback also failed. This build does **not** yet establish whether the failed entry was unreadable, had a Zstandard decode error, or failed its SHA-256 check. The next log includes `NUP_NPDM_READ reason=...` and the stored extent information to distinguish these cases. No integrity check was bypassed.
 
 Extracted OOT successfully enters `nnMain`, mounts RomFS, and reads three startup files before `SDK_BREAK` from SDK code region offset `0xBC03C`. It did **not** demonstrate slow loading at that stage. The next run captures eight instruction words around the caller using `SDK_BREAK_CODE` so the source of this break can be analyzed; the handler still stops safely instead of suppressing the break.
+
+### NUP compressed NPDM decoder fix (experimental)
+
+The 1,259-byte NPDM frame extracted from OOT's NUP independently decompresses with standard libzstd to 1,828 bytes beginning with `META`. The previous bundled decoder used `ZSTD_ZBIC_SUPPORT=1`, which selected Nintendo ZBIC frame magic and its altered FSE normalized-count decoder even for ordinary NUP Zstandard frames. The shared vendor decoder now selects standard Zstandard magic/FSE when reading NUP entries, and `nx2_zbic_decode` temporarily selects ZBIC for original NSO segments. This avoids including a second copy of the giant Zstandard translation unit and keeps both formats available. Neither a full Switch 2 hardware build nor runtime success has been verified; avoid assuming the NUP launches before testing.
+
+Game startup speed after `nnMain` is unchanged by this fix. The extracted OOT startup break requires its own investigation. Yoshi first-frame startup time is a separate useful baseline.
