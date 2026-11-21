@@ -85,7 +85,8 @@ void nx2_cache_save(const char *root, const void *data, size_t bytes) {
   if (!f) return;
   int ok = fwrite(&header, 1, sizeof(header), f) == sizeof(header) &&
            fwrite(data, 1, bytes, f) == bytes;
-  if (fflush(f) || fclose(f)) ok = 0;
+  if (fflush(f)) ok = 0;
+  if (fclose(f)) ok = 0;
   if (ok) {
     remove(path);
     if (!rename(tmp, path)) return;
