@@ -12,12 +12,25 @@ static void wake(void){__asm__ volatile("sev" ::: "memory");}
 static void wait(void){nx2_raw_sleep(100000);}
 uint32_t nx2_rpc(uint32_t op,uint64_t a,uint64_t b,uint64_t c,uint64_t d,void *buffer,const char *path,const char *path2,uint64_t *answer){
  Nx2Launch *l=nx2_launch;Nx2Request *r=0;
+ /* The host can persist the last guest callsites even if the guest disappears
+  * before its log RPC finishes. Never log from the exception handler. */
+ uint32_t ticket=__atomic_fetch_add(&l->rpc_trace_next,1,__ATOMIC_RELAXED)+1;
+ Nx2RpcTrace *trace=&l->rpc_trace[(ticket-1)%NX2_RPC_TRACE_SLOTS];
+ uint64_t thread=0;
+ __asm__ volatile("mrs %0,tpidrro_el0":"=r"(thread));
+ __atomic_store_n(&trace->sequence,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&trace->caller,(uint64_t)(uintptr_t)__builtin_return_address(0),__ATOMIC_RELAXED);
+ __atomic_store_n(&trace->thread,thread,__ATOMIC_RELAXED);
+ __atomic_store_n(&trace->op,op,__ATOMIC_RELAXED);
+ __atomic_store_n(&trace->result,NX2_INVALID,__ATOMIC_RELAXED);
+ __atomic_store_n(&trace->phase,1,__ATOMIC_RELAXED);
+ __atomic_store_n(&trace->sequence,ticket,__ATOMIC_RELEASE);
  for(;;){for(unsigned i=0;i<NX2_RPC_SLOTS;i++){uint32_t expected=0;if(__atomic_compare_exchange_n(&l->requests[i].state,&expected,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)){r=&l->requests[i];break;}}if(r)break;wait();}
  r->op=op;r->a=a;r->b=b;r->c=c;r->d=d;r->buffer=buffer;r->answer=0;r->result=NX2_INVALID;
- if(!text(r->path,path)||!text(r->path2,path2)){__atomic_store_n(&r->state,0,__ATOMIC_RELEASE);wake();return NX2_INVALID;}
+ if(!text(r->path,path)||!text(r->path2,path2)){__atomic_store_n(&trace->result,NX2_INVALID,__ATOMIC_RELAXED);__atomic_store_n(&trace->phase,2,__ATOMIC_RELEASE);__atomic_store_n(&r->state,0,__ATOMIC_RELEASE);wake();return NX2_INVALID;}
  __atomic_store_n(&r->state,2,__ATOMIC_RELEASE);wake();
  while(__atomic_load_n(&r->state,__ATOMIC_ACQUIRE)!=3)wait();
- uint32_t result=r->result;if(answer)*answer=r->answer;__atomic_store_n(&r->state,0,__ATOMIC_RELEASE);wake();return result;
+ uint32_t result=r->result;if(answer)*answer=r->answer;__atomic_store_n(&trace->result,result,__ATOMIC_RELAXED);__atomic_store_n(&trace->phase,2,__ATOMIC_RELEASE);__atomic_store_n(&r->state,0,__ATOMIC_RELEASE);wake();return result;
 }
 static uint32_t extent(void *ctx,uint32_t file,uint64_t off,void *buf,uint64_t size){(void)ctx;return nx2_rpc(RPC_ROM_READ,file,off,size,0,buf,0,0,0);}
 static void noop(void *obj){(void)obj;}
