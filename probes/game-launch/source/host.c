@@ -78,10 +78,30 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     if(nx2_nup_active()) {
       if(snprintf(p,sizeof(p),"romfs/%s",relative)>=(int)sizeof(p))
         return NX2_INVALID;
-      if(!nx2_nup_read(p,r->b,r->buffer,(size_t)r->c))
+      uint64_t entry_size=0;
+      unsigned codec=0;
+      int large=nx2_nup_file_info(p,&entry_size,&codec) &&
+                codec==1 && entry_size>16*1024*1024;
+      int sampled=large && (++h->nup_large_reads<=8 ||
+                   !(h->nup_large_reads&63));
+      /* Flush the start of unusually expensive reads before decoding, so
+       * a long-running compressed frame still leaves useful evidence. */
+      if(sampled)
+        logline(h,"NUP_LARGE_READ_BEGIN file=%s entry_bytes=%llu offset=%llu bytes=%llu\n",
+                relative,(unsigned long long)entry_size,
+                (unsigned long long)r->b,(unsigned long long)r->c);
+      if(!nx2_nup_read(p,r->b,r->buffer,(size_t)r->c)){
+        logline(h,"NUP_ASSET_READ_FAILED file=%s offset=%llu bytes=%llu reason=%s\n",
+                relative,(unsigned long long)r->b,(unsigned long long)r->c,
+                nx2_nup_read_error());
         return NX2_INVALID;
+      }
       h->bytes+=r->c;
-      if(h->calls<64) logline(h,"NUP_ASSET_READ file=%s offset=%llu bytes=%llu\n",
+      if(sampled)
+        logline(h,"NUP_LARGE_READ_DONE file=%s offset=%llu bytes=%llu\n",
+                relative,(unsigned long long)r->b,(unsigned long long)r->c);
+      else if(h->calls<64)
+        logline(h,"NUP_ASSET_READ file=%s offset=%llu bytes=%llu\n",
                 relative,(unsigned long long)r->b,(unsigned long long)r->c);
       return 0;
     }
