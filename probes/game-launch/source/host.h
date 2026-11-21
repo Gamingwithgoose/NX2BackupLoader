@@ -19,6 +19,7 @@ typedef struct {
     uint32_t index, open, logged;
   } cache[16];
   uint64_t calls, bytes, save_bytes, lines;
+  uint64_t nup_large_reads;
   int abort;
 } Nx2Host;
 int nx2_host_init(Nx2Host *, FILE *, const char *, const char *);
