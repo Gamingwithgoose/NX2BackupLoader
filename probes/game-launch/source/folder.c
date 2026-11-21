@@ -272,7 +272,7 @@ static int tree_entry(void *v, const char *name) {
   Tree *t = v;
   if (cancel_callback && cancel_callback(cancel_context)) return 0;
   if (!strcmp(name, ".listing")) return 1;
-  if (strchr(name, ':') || strchr(name, '\\\\')) return 0;
+  if (strchr(name, ':') || strchr(name, '\\')) return 0;
   size_t old = strlen(t->relative);
   char rel[1024], full[2400];
   int n = snprintf(rel, sizeof(rel), "%s%s%s", t->relative,
