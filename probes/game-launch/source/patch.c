@@ -69,6 +69,42 @@ static int relocate_one(uint32_t ins,uint32_t from,uint32_t to,
   }
   return !pc_relative(ins);
 }
+/* An exported function can consist solely of an unconditional B to its
+ * implementation, followed by alignment padding. When a remote trampoline
+ * cannot be reached, preserve the original destination directly instead of
+ * copying a branch or overwriting the next neighboring function. No title
+ * names, fixed offsets or game-specific assumptions are involved. */
+static int branch_alias_entry(unsigned char *text,uint32_t original_size,
+                              uint32_t at,uintptr_t target,
+                              uintptr_t *original) {
+  if(original_size-at<16) {
+    patch_reason="branch_alias_has_less_than_16_bytes";return 0;
+  }
+  uint32_t first=word(text+at);
+  if((first&0xfc000000)!=0x14000000) {
+    patch_reason="not_an_unconditional_B_alias";return 0;
+  }
+  int64_t displacement=(int64_t)(first&0x3ffffff);
+  if(displacement&(1LL<<25))displacement-=1LL<<26;
+  int64_t destination=(int64_t)at+(displacement<<2);
+  if(destination<0 || (uint64_t)destination>=original_size ||
+     (destination>=(int64_t)at && destination<(int64_t)at+16)) {
+    patch_reason="branch_alias_destination_not_safe";return 0;
+  }
+  for(unsigned i=1;i<4;i++){
+    uint32_t ins=word(text+at+4*i);
+    if(ins!=0 && ins!=0xd503201f) {
+      patch_reason="branch_alias_padding_not_isolated";return 0;
+    }
+  }
+  if(original)*original=(uintptr_t)destination;
+  put(text+at,0x58000050);  /* ldr x16, [pc,#8] */
+  put(text+at+4,0xd61f0200); /* br x16 */
+  put64(text+at+8,target);
+  patch_reason="OK";
+  patch_method="absolute_branch_alias";
+  return 1;
+}
 /* Common fallback for a hooked entry point beyond the immediate B range.
  * Replace the first 16 bytes with an absolute branch to the host gate.
  * Save four safe original instructions in the executable text padding,
@@ -132,6 +168,10 @@ int nx2_patch_gate(unsigned char *text,uint32_t original_size,uint32_t padded,
   uint32_t off=*cursor,b;
   if(!branch((int64_t)off-at,&b)){
     patch_reason="short_branch_out_of_128MiB_range";
+    /* A plain B veneer can forward straight to the original destination;
+     * this also avoids stealing padding from neighboring entrypoints. */
+    if((word(text+at)&0xfc000000)==0x14000000)
+      return branch_alias_entry(text,original_size,at,target,original);
     return absolute_entry(text,original_size,padded,cursor,at,
                           target,guest,original);
   }
