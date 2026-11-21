@@ -385,9 +385,10 @@ static void run(const Nx2Game *game, int rebuild_index) {
           Nx2IpcBreadcrumb *e=&l->ipc_breadcrumbs[slot];
           uint32_t phase=__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE);
           if(phase)
-            row(f,"IPC_WATCHDOG_CALL slot=%u phase=%u handle=%08llx type=%u command=%u caller=%016llx result=%08x\n",
-                slot,phase,(unsigned long long)e->handle,e->request_type,
-                e->command,(unsigned long long)e->caller,e->result);
+            row(f,"IPC_WATCHDOG_CALL slot=%u phase=%u service=%s handle=%08llx type=%u command=%u caller=%016llx kernel=%08x cmif=%08x\n",
+                slot,phase,e->service,(unsigned long long)e->handle,
+                e->request_type,e->command,(unsigned long long)e->caller,
+                e->result,__atomic_load_n(&e->service_result,__ATOMIC_ACQUIRE));
         }
         previous_trace_end=ended;
         previous_trace_begin=started;
