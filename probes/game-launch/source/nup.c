@@ -177,32 +177,6 @@ typedef struct {
 } NupMount;
 static NupMount mounted;
 
-/* Fast NUP raw-entry sequential read-ahead. The NUP is read-only and all
- * archive reads are issued by one host service thread. Keep two 1 MiB windows
- * so interleaved asset streams can reuse data without another SD seek.
- * No speculative read is made until actual sequential access is observed. */
-#define NX2_RAW_WINDOW_BYTES (1024U*1024U)
-#define NX2_RAW_WINDOW_COUNT 2
-typedef struct {
-  uint32_t file;
-  uint64_t offset, stamp;
-  size_t length;
-  unsigned char *bytes;
-} Nx2RawWindow;
-static Nx2RawWindow raw_windows[NX2_RAW_WINDOW_COUNT];
-static uint32_t raw_prev_file=UINT32_MAX;
-static uint64_t raw_prev_end, raw_clock;
-static uint64_t raw_cache_hits,raw_prefetch_reads,raw_direct_reads;
-static uint64_t raw_prefetch_bytes;
-void nx2_nup_raw_stats(uint64_t out[4]) {
-  if(!out)return;
-  out[0]=__atomic_load_n(&raw_cache_hits,__ATOMIC_RELAXED);
-  out[1]=__atomic_load_n(&raw_prefetch_reads,__ATOMIC_RELAXED);
-  out[2]=__atomic_load_n(&raw_direct_reads,__ATOMIC_RELAXED);
-  out[3]=__atomic_load_n(&raw_prefetch_bytes,__ATOMIC_RELAXED);
-}
-
-
 /* Standalone Zstandard decoder, vendored from its dual BSD/GPL source. */
 extern size_t ZSTD_decompress(void *,size_t,const void *,size_t);
 extern unsigned ZSTD_isError(size_t);
@@ -290,14 +264,6 @@ static uint32_t lookup_file(const char *path) {
   return UINT32_MAX;
 }
 void nx2_nup_close(void) {
-  for(unsigned j=0;j<NX2_RAW_WINDOW_COUNT;j++){
-    free(raw_windows[j].bytes);
-    memset(&raw_windows[j],0,sizeof(raw_windows[j]));
-    raw_windows[j].file=UINT32_MAX;
-  }
-  raw_prev_file=UINT32_MAX;
-  raw_prev_end=raw_clock=raw_cache_hits=raw_prefetch_reads=0;
-  raw_direct_reads=raw_prefetch_bytes=0;
   if(mounted.f)fclose(mounted.f);
   free(mounted.toc);
   for(unsigned j=0;j<2;j++){
@@ -459,68 +425,6 @@ int nx2_nup_file_info(const char *path,uint64_t *size,unsigned *codec){
 static int nup_seek_file(FILE *f,uint64_t offset) {
   if(offset>INT64_MAX)return 0;
   return nup_seek(f,(int64_t)offset,SEEK_SET)==0;
-}
-
-/* A hit copies already-verified bytes from the immutable archive. Misses
- * preserve the original seek/read path, including its bounds/error behavior.
- * Prefetch is attempted only when the previous raw request ended exactly
- * where this one begins; nonsequential and large reads stay direct. */
-static int read_raw(uint32_t file,uint64_t base,uint64_t total,
-                    uint64_t offset,void *dest,size_t length) {
-  int sequential=(raw_prev_file==file && raw_prev_end==offset);
-  raw_prev_file=file;
-  raw_prev_end=offset+length;
-  for(unsigned k=0;k<NX2_RAW_WINDOW_COUNT;k++){
-    Nx2RawWindow *w=&raw_windows[k];
-    if(w->bytes && w->file==file && offset>=w->offset &&
-       offset-w->offset<=w->length &&
-       length<=w->length-(size_t)(offset-w->offset)){
-      memcpy(dest,w->bytes+(size_t)(offset-w->offset),length);
-      w->stamp=++raw_clock;
-      __atomic_fetch_add(&raw_cache_hits,1,__ATOMIC_RELAXED);
-      return 1;
-    }
-  }
-  /* A 1 MiB read ahead costs SD bandwidth if the access pattern is random.
-   * Require a sequential pair and avoid speculative reads for >512 KiB
-   * requests, which already amortize the seek overhead well. */
-  if(sequential && length<=NX2_RAW_WINDOW_BYTES/2 &&
-     total-offset>length){
-    unsigned slot=0;
-    for(unsigned k=0;k<NX2_RAW_WINDOW_COUNT;k++)
-      if(!raw_windows[k].bytes){slot=k;break;}
-      else if(raw_windows[k].stamp<raw_windows[slot].stamp)slot=k;
-    Nx2RawWindow *w=&raw_windows[slot];
-    if(!w->bytes)w->bytes=malloc(NX2_RAW_WINDOW_BYTES);
-    if(w->bytes){
-      /* Invalidate before reuse: a short SD read must never leave corrupted
-       * cached bytes reachable under the previous file/window identity. */
-      w->file=UINT32_MAX;
-      w->length=0;
-      uint64_t remaining=total-offset;
-      size_t prefetch=(size_t)(remaining>NX2_RAW_WINDOW_BYTES?
-                               NX2_RAW_WINDOW_BYTES:remaining);
-      if(base<=UINT64_MAX-offset &&
-         nup_seek_file(mounted.f,base+offset) &&
-         fread(w->bytes,1,prefetch,mounted.f)==prefetch){
-        w->file=file;
-        w->offset=offset;
-        w->length=prefetch;
-        w->stamp=++raw_clock;
-        memcpy(dest,w->bytes,length);
-        __atomic_fetch_add(&raw_prefetch_reads,1,__ATOMIC_RELAXED);
-        __atomic_fetch_add(&raw_prefetch_bytes,prefetch,__ATOMIC_RELAXED);
-        return 1;
-      }
-      /* Opportunistic reads must never turn a valid direct read into a
-       * permanent failure. Rewind and retry the exact original request. */
-      clearerr(mounted.f);
-    }
-  }
-  __atomic_fetch_add(&raw_direct_reads,1,__ATOMIC_RELAXED);
-  return base<=UINT64_MAX-offset &&
-         nup_seek_file(mounted.f,base+offset) &&
-         fread(dest,1,length,mounted.f)==length;
 }
 
 static int large_begin(NupLargeStream *s,uint32_t file,
@@ -713,7 +617,8 @@ int nx2_nup_read(const char *path,uint64_t offset,void *dest,size_t length){
   }
   if(!length){read_error="OK";return 1;}
   if(e[64]==0) {
-    int ok=read_raw(i,at,size,offset,dest,length);
+    int ok=nup_seek_file(mounted.f,at+offset) &&
+           fread(dest,1,length,mounted.f)==length;
     read_error=ok?"OK":"Raw NUP seek/read failed";
     return ok;
   }
