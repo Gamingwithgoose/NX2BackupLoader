@@ -678,12 +678,17 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   for (unsigned i = 0; i < NX2_RPC_SLOTS; i++) {
     Nx2Request *r = &l->requests[i];
     if (__atomic_load_n(&r->state, __ATOMIC_ACQUIRE) == 2) {
+      __atomic_store_n(&h->rpc_active_op,r->op,__ATOMIC_RELAXED);
+      __atomic_store_n(&h->rpc_started_tick,armGetSystemTick(),__ATOMIC_RELAXED);
+      __atomic_store_n(&h->rpc_active_slot,i+1,__ATOMIC_RELEASE);
       r->result = serve(h, l, r);
       /* Do not issue SD writes for every RomFS read and host RPC.
        * Publish the result immediately; existing RPC_TRAIL breadcrumbs,
        * private save operation results and backend failure logs remain.
        * Previous per-operation fprintf() stalled both Yoshi variants. */
       __atomic_store_n(&r->state, 3, __ATOMIC_RELEASE);
+      __atomic_fetch_add(&h->rpc_completed_count,1,__ATOMIC_RELAXED);
+      __atomic_store_n(&h->rpc_active_slot,0,__ATOMIC_RELEASE);
       __asm__ volatile("sev" ::: "memory");
       served++;
     }
