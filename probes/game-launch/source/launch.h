@@ -56,6 +56,8 @@ typedef struct {
  * A bounded ring is diagnostic only; never changes IPC routing/results. */
 #define NX2_IPC_TRACE_SLOTS 32
 #define NX2_GRAPHICS_TRACE_SLOTS 32
+#define NX2_NVN_STAGE_COUNT 5
+/* NVN stages: 0 submit, 1 flush, 2 finish, 3 window acquire, 4 queue acquire. */
 typedef struct {
  uint64_t handle,caller;
  uint32_t request_type,command,result,phase;
@@ -81,6 +83,9 @@ typedef struct {
  uint32_t nvn_device_entered,nvn_device_returned,nvn_device_result;
  uint32_t nvn_queue_entered,nvn_queue_returned,nvn_queue_result;
  uint32_t nvn_window_entered,nvn_window_returned,nvn_window_result;
+ uint32_t nvn_stage_entered[NX2_NVN_STAGE_COUNT];
+ uint32_t nvn_stage_returned[NX2_NVN_STAGE_COUNT];
+ uint32_t nvn_stage_result[NX2_NVN_STAGE_COUNT];
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
  Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
  uint32_t graphics_ipc_next;
