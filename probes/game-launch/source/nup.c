@@ -377,6 +377,16 @@ void *nx2_nup_package_npdm(size_t *length) {
   }
   free(meta);return NULL;
 }
+static const char *read_error="No archive read attempted";
+const char *nx2_nup_read_error(void){return read_error;}
+int nx2_nup_entry_detail(const char *path,uint64_t *stored,uint64_t *offset){
+  uint32_t i=lookup_file(path);
+  if(i==UINT32_MAX)return 0;
+  const unsigned char *e=mounted.files+(size_t)i*80;
+  if(stored)*stored=rd64(e+24);
+  if(offset)*offset=rd64(e+16);
+  return 1;
+}
 int nx2_nup_file_info(const char *path,uint64_t *size,unsigned *codec){
   uint32_t i=lookup_file(path);
   if(i==UINT32_MAX)return 0;
@@ -393,6 +403,7 @@ static int read_compressed(const unsigned char *e,uint32_t file,
                            uint64_t offset,void *dest,size_t length) {
   uint64_t total=rd64(e+8),at=rd64(e+16),packed=rd64(e+24);
   if(total<=16*1024*1024 && packed<=32*1024*1024) {
+    read_error="Zstandard small-entry allocation/read failure";
     if(mounted.cached_file!=file) {
       free(mounted.cached_bytes);
       mounted.cached_bytes=NULL;mounted.cached_file=UINT32_MAX;
@@ -403,10 +414,16 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       }
       size_t n=ZSTD_decompress(out,(size_t)total,raw,(size_t)packed);
       free(raw);
-      if(ZSTD_isError(n)||n!=total){free(out);return 0;}
+      if(ZSTD_isError(n)||n!=total){
+        read_error=ZSTD_isError(n)?"Zstandard decompression returned an error":
+                                    "Zstandard output size differs from TOC";
+        free(out);return 0;
+      }
       unsigned char hash[32];
       sha256(out,(size_t)total,hash);
-      if(memcmp(hash,e+32,32)){free(out);return 0;}
+      if(memcmp(hash,e+32,32)){
+        read_error="Zstandard entry SHA-256 mismatch";free(out);return 0;
+      }
       mounted.cached_bytes=out;
       mounted.cached_size=(size_t)total;
       mounted.cached_file=file;
@@ -416,6 +433,7 @@ static int read_compressed(const unsigned char *e,uint32_t file,
   }
   /* Large frames are decompressed in small pieces. Nothing is extracted
    * permanently and we never allocate the entire large game asset. */
+  read_error="Zstandard large-entry seek/decode failed";
   if(!nup_seek_file(mounted.f,at))return 0;
   ZSTD_DStream *stream=ZSTD_createDStream();
   unsigned char *input=malloc(128*1024),*output=malloc(128*1024);
@@ -453,37 +471,50 @@ static int read_compressed(const unsigned char *e,uint32_t file,
     if(!z.pos && in.pos==in.size && consumed==packed)break;
   }
   ok=remaining==0;
+  if(ok)read_error="OK";
   ZSTD_freeDStream(stream);
   free(input);free(output);
   return ok;
 }
 int nx2_nup_read(const char *path,uint64_t offset,void *dest,size_t length){
   uint32_t i=lookup_file(path);
-  if(i==UINT32_MAX || (!dest&&length))return 0;
+  if(i==UINT32_MAX || (!dest&&length)){
+    read_error="NUP path not present or destination invalid";return 0;
+  }
   const unsigned char *e=mounted.files+(size_t)i*80;
   uint64_t size=rd64(e+8),at=rd64(e+16);
-  if(offset>size||length>size-offset)return 0;
-  if(!length)return 1;
-  if(e[64]==0) {
-    return nup_seek_file(mounted.f,at+offset) &&
-           fread(dest,1,length,mounted.f)==length;
+  if(offset>size||length>size-offset){
+    read_error="NUP read exceeds entry bounds";return 0;
   }
-  return read_compressed(e,i,offset,dest,length);
+  if(!length){read_error="OK";return 1;}
+  if(e[64]==0) {
+    int ok=nup_seek_file(mounted.f,at+offset) &&
+           fread(dest,1,length,mounted.f)==length;
+    read_error=ok?"OK":"Raw NUP seek/read failed";
+    return ok;
+  }
+  int ok=read_compressed(e,i,offset,dest,length);
+  if(ok)read_error="OK";
+  return ok;
 }
 void *nx2_nup_read_all(const char *path,size_t limit,size_t *length){
   uint64_t size=0;
   if(length)*length=0;
-  if(!nx2_nup_file_info(path,&size,NULL)||!size||size>limit)return NULL;
+  if(!nx2_nup_file_info(path,&size,NULL)||!size||size>limit){
+    read_error="NUP entry absent, empty, or exceeds size limit";return NULL;
+  }
   void *p=malloc((size_t)size);
-  if(!p)return NULL;
+  if(!p){read_error="NUP output allocation failed";return NULL;}
   if(!nx2_nup_read(path,0,p,(size_t)size)){free(p);return NULL;}
   uint32_t i=lookup_file(path);
   unsigned char hash[32];
   sha256(p,(size_t)size,hash);
   if(i==UINT32_MAX ||
      memcmp(hash,mounted.files+(size_t)i*80+32,32)){
+    read_error="NUP full-file SHA-256 mismatch";
     free(p);return NULL;
   }
+  read_error="OK";
   if(length)*length=(size_t)size;
   return p;
 }
