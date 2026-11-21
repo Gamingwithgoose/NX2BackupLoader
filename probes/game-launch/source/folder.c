@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #define STAT _stat64
@@ -322,6 +325,149 @@ static uint32_t name_hash(uint32_t parent, const char *s) {
   }
   return h;
 }
+
+/* The .part file stores completed directories, not copied game content.
+ * Each record is checksummed, so an interrupted write can be ignored. */
+typedef struct {
+  char magic[8];
+  uint64_t root_hash;
+  int64_t timestamp;
+} PartHeader;
+typedef struct {
+  uint32_t bytes;
+  uint32_t checksum;
+} PartRecord;
+static uint32_t part_hash(const void *v, size_t n) {
+  const unsigned char *p = v;
+  uint32_t h = 2166136261u;
+  for (size_t i=0; i<n; i++) h=(h^p[i])*16777619u;
+  return h;
+}
+static uint64_t part_root_hash(const char *s) {
+  uint64_t h=UINT64_C(14695981039346656037);
+  while (*s) h=(h^(unsigned char)*s++)*UINT64_C(1099511628211);
+  return h;
+}
+static int part_path(const char *root, char out[160]) {
+  int n=snprintf(out,160,
+    "sdmc:/switch/BackupLoaderMKW/cache/%016llx.part",
+    (unsigned long long)part_root_hash(root));
+  return n>0 && n<160;
+}
+static void part_dirs(void) {
+  mkdir("sdmc:/switch",0777);
+  mkdir("sdmc:/switch/BackupLoaderMKW",0777);
+  mkdir("sdmc:/switch/BackupLoaderMKW/cache",0777);
+}
+static int part_add_record(Tree *t, const unsigned char *p, uint32_t len) {
+  if (len<6) return 0;
+  uint16_t dl; memcpy(&dl,p,2);p+=2;len-=2;
+  if (dl>=1024 || dl>len-4) return 0;
+  char dir[1024];memcpy(dir,p,dl);dir[dl]=0;p+=dl;len-=dl;
+  uint32_t count;memcpy(&count,p,4);p+=4;len-=4;
+  if (count>524288) return 0;
+  uint32_t id=t->nd;
+  for(uint32_t j=0;j<t->nd;j++)
+    if (!strcmp(t->dirs[j].path,dir)) {id=j;break;}
+  if(id==t->nd) return 0;
+  for(uint32_t i=0;i<count;i++) {
+    if(len<11) return 0;
+    unsigned type=*p++;len--;
+    uint16_t nl;memcpy(&nl,p,2);p+=2;len-=2;
+    uint64_t size;memcpy(&size,p,8);p+=8;len-=8;
+    if(!nl || nl>=1024 || nl>len || (type!=1&&type!=2)) return 0;
+    char rel[1024];memcpy(rel,p,nl);rel[nl]=0;p+=nl;len-=nl;
+    size_t dl2=strlen(dir);
+    if((dl2 && (strncmp(rel,dir,dl2)||rel[dl2]!='/')) ||
+       strchr(rel,':') || strchr(rel,'\\')) return 0;
+    if(type==1) {
+      if(!add(&t->dirs,&t->nd,&t->dc,rel,0)) return 0;
+    } else if(!add(&t->files,&t->nf,&t->fc,rel,size)) return 0;
+  }
+  if(len) return 0;
+  t->dirs[id].hash=1;
+  return 1;
+}
+static FILE *part_open(Tree *t, const char *root) {
+  char name[160];
+  if(!part_path(root,name)) return NULL;
+  struct STAT st;
+  if(STAT(root,&st)) return NULL;
+  PartHeader wanted={{'N','X','2','P','A','R','T','1'},
+                     part_root_hash(root),(int64_t)st.st_mtime};
+  part_dirs();
+  FILE *f=fopen(name,"rb+");
+  if(f) {
+    PartHeader h;
+    if(fread(&h,1,sizeof(h),f)==sizeof(h) &&
+       !memcmp(&h,&wanted,sizeof(h))) {
+      long valid=ftell(f);
+      for(;;) {
+        PartRecord rec;
+        if(fread(&rec,1,sizeof(rec),f)!=sizeof(rec)) break;
+        if(!rec.bytes || rec.bytes>16*1024*1024) break;
+        unsigned char *p=malloc(rec.bytes);
+        if(!p) break;
+        int ok=fread(p,1,rec.bytes,f)==rec.bytes &&
+               part_hash(p,rec.bytes)==rec.checksum &&
+               part_add_record(t,p,rec.bytes);
+        free(p);
+        if(!ok) break;
+        valid=ftell(f);
+      }
+#ifndef _WIN32
+      if(ftruncate(fileno(f),valid)) {fclose(f);return NULL;}
+#endif
+      fseek(f,valid,SEEK_SET);
+      if(progress_callback && t->nf) progress_callback(t->nf,progress_context);
+      return f;
+    }
+    fclose(f);
+  }
+  f=fopen(name,"wb+");
+  if(!f) return NULL;
+  if(fwrite(&wanted,1,sizeof(wanted),f)!=sizeof(wanted) || fflush(f)) {
+    fclose(f);return NULL;
+  }
+  return f;
+}
+static int part_write(FILE *f, const Tree *t, const char *dir,
+                      uint32_t file_from, uint32_t dir_from) {
+  if(!f) return 1; /* Indexing still works when checkpoint storage is absent. */
+  size_t dl=strlen(dir);
+  if(dl>UINT16_MAX) return 0;
+  size_t bytes=2+dl+4;
+  for(uint32_t i=file_from;i<t->nf;i++) bytes+=11+strlen(t->files[i].path);
+  for(uint32_t i=dir_from;i<t->nd;i++) bytes+=11+strlen(t->dirs[i].path);
+  if(bytes>16*1024*1024) return 0;
+  unsigned char *p=malloc(bytes);
+  if(!p) return 0;
+  unsigned char *at=p;
+  uint16_t d=(uint16_t)dl;memcpy(at,&d,2);at+=2;
+  memcpy(at,dir,dl);at+=dl;
+  uint32_t count=(t->nf-file_from)+(t->nd-dir_from);
+  memcpy(at,&count,4);at+=4;
+  for(unsigned kind=0;kind<2;kind++) {
+    uint32_t first=kind?dir_from:file_from;
+    uint32_t end=kind?t->nd:t->nf;
+    for(uint32_t i=first;i<end;i++) {
+      const Entry *e=kind?&t->dirs[i]:&t->files[i];
+      size_t n=strlen(e->path);
+      uint16_t l=(uint16_t)n;
+      *at++=kind?1:2;
+      memcpy(at,&l,2);at+=2;
+      uint64_t size=kind?0:e->size;
+      memcpy(at,&size,8);at+=8;
+      memcpy(at,e->path,n);at+=n;
+    }
+  }
+  PartRecord rec={(uint32_t)bytes,part_hash(p,bytes)};
+  int ok=fwrite(&rec,1,sizeof(rec),f)==sizeof(rec) &&
+         fwrite(p,1,bytes,f)==bytes && !fflush(f);
+  free(p);
+  return ok;
+}
+
 void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
   Tree t = {.root = root};
   Entry **index = NULL;
@@ -329,9 +475,23 @@ void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
   uint32_t *dh = NULL, *fh = NULL;
   *out_size = 0;
   snprintf(error, 160, "Could not scan or allocate the RomFS directory index");
-  if (!add(&t.dirs, &t.nd, &t.dc, "", 0) || !list(root, tree_entry, &t) ||
-      !t.nf)
-    goto done;
+  if (!add(&t.dirs,&t.nd,&t.dc,"",0)) goto done;
+  FILE *part=part_open(&t,root);
+  int scan_ok=1;
+  for (uint32_t d=0;d<t.nd;d++) {
+    if(t.dirs[d].hash) continue;
+    char dir[2400], rel[1024];
+    snprintf(rel,sizeof(rel),"%s",t.dirs[d].path);
+    snprintf(t.relative,sizeof(t.relative),"%s",rel);
+    if(!*rel) snprintf(dir,sizeof(dir),"%s",root);
+    else if(!child(dir,sizeof(dir),root,rel)) {scan_ok=0;break;}
+    uint32_t file_from=t.nf,dir_from=t.nd;
+    if(!list(dir,tree_entry,&t)) {scan_ok=0;break;}
+    if(!part_write(part,&t,rel,file_from,dir_from)) {scan_ok=0;break;}
+    t.dirs[d].hash=1;
+  }
+  if(part) fclose(part);
+  if(!scan_ok || !t.nf) goto done;
   qsort(t.files, t.nf, sizeof(Entry), entry_compare);
   qsort(t.dirs, t.nd, sizeof(Entry), dir_compare);
   index = malloc((size_t)t.nd * sizeof(*index));
