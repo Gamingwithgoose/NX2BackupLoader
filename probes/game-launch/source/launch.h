@@ -48,6 +48,11 @@ typedef struct {
  uint32_t (*original_device_initialize)(void *,const void *);
  uint32_t (*original_queue_initialize)(void *,const void *);
  uint32_t (*original_window_initialize)(void *,const void *);
+ void (*original_queue_submit)(void *,int,const uint64_t *);
+ void (*original_queue_flush)(void *);
+ void (*original_queue_finish)(void *);
+ uint32_t (*original_window_acquire)(void *,void *,int *);
+ uint32_t (*original_queue_acquire)(void *,void *,int *);
 } Nx2LaunchApi;
 typedef struct {
  uint64_t begin,end;uint32_t type,permission;
