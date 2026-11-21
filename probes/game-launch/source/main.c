@@ -407,6 +407,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   u64 trace_sample = began;
   u64 crash_sample = began;
+  u32 previous_crash_ipc_next = UINT32_MAX;
   u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX, previous_trace_begin = UINT32_MAX;
   u32 previous_graphics_ipc = UINT32_MAX;
   u32 last_graphics_bootstrap=UINT32_MAX,last_graphics_getproc=UINT32_MAX,
@@ -489,8 +490,13 @@ static void run(const Nx2Game *game, int rebuild_index) {
     /* Maintain an independently flushed process-end breadcrumb. A final
      * snapshot with no exception record means only that the app disappeared
      * without invoking the libounce handler; it is not a kernel diagnosis. */
+    /* Capture short-lived exits before 15 seconds or first presentation,
+     * without paying the 100-ms SD logging cost throughout gameplay. */
+    uint64_t since_start=armTicksToNs(armGetSystemTick()-began);
+    uint64_t crash_interval=(since_start<15000000000ULL && !frames)
+                          ?100000000ULL:500000000ULL;
     int captured_snapshot=0;
-    if(crash && armTicksToNs(armGetSystemTick()-crash_sample)>=500000000ULL){
+    if(crash && armTicksToNs(armGetSystemTick()-crash_sample)>=crash_interval){
       captured_snapshot=1;
       crash_sample=armGetSystemTick();
       unsigned pending=0;
@@ -520,6 +526,40 @@ static void run(const Nx2Game *game, int rebuild_index) {
           __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE));
+    }
+    /* Include recent IPC requests in the independent crash report even for
+     * untagged services such as SSL, CSRNG and NSD. No user buffers are
+     * captured; only protocol metadata, caller and return status. */
+    if(crash && captured_snapshot){
+      uint32_t next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
+      if(next!=previous_crash_ipc_next){
+        uint32_t count=next<8?next:8;
+        for(uint32_t back=count;back;back--){
+          uint32_t slot=(next-back)%NX2_IPC_TRACE_SLOTS;
+          Nx2IpcBreadcrumb *e=&l->ipc_breadcrumbs[slot];
+          uint32_t phase=__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE);
+          if(!phase)continue;
+          Nx2IpcBreadcrumb v=*e;
+          if(__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE)!=phase)continue;
+          v.service[8]=0;
+          int module=-1;
+          uint64_t offset=0;
+          for(unsigned k=0;k<images->count;k++){
+            const Nx2Module *m=&images->modules[k];
+            uint64_t base=(uintptr_t)m->guest;
+            uint64_t length=m->total>=4096?m->total-4096:0;
+            if(v.caller>=base && v.caller-base<length){
+              module=(int)k;offset=v.caller-base;break;
+            }
+          }
+          row(crash,"IPC_CRASH_TAIL slot=%u phase=%u owner=%s handle=%08llx type=%u command=%u kernel=%08x cmif=%08x caller=%016llx module=%d offset=%llx\n",
+            slot,phase,v.service,(unsigned long long)v.handle,
+            v.request_type,v.command,v.result,v.service_result,
+            (unsigned long long)v.caller,module,
+            (unsigned long long)offset);
+        }
+        previous_crash_ipc_next=next;
+      }
     }
     /* Guest-to-host RPC callsites are recorded before IPC, independently of
      * filesystem logging. Keep a short tail in the separate crash file;
