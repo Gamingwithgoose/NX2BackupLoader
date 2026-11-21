@@ -358,6 +358,12 @@ static void run(const Nx2Game *game, int rebuild_index) {
                          "ROMFS_INDEX_BUILT files=%u bytes=%llu virtual_bytes=%llu\n",
       view.count, (unsigned long long)map_bytes,
       (unsigned long long)view.total);
+  row(f,"CONTENT_INDEX_READY source=%s files=%u map_bytes=%llu virtual_bytes=%llu\n",
+      game->is_nup?"nup":"folder",view.count,
+      (unsigned long long)map_bytes,(unsigned long long)view.total);
+  if(crash)row(crash,"CONTENT_INDEX_READY source=%s files=%u map_bytes=%llu virtual_bytes=%llu\n",
+      game->is_nup?"nup":"folder",view.count,
+      (unsigned long long)map_bytes,(unsigned long long)view.total);
   launch_phase="PREPARE_MODULES";
   Nx2Launch *l = calloc(1, sizeof(*l));
   Nx2Host *host = calloc(1, sizeof(*host));
@@ -375,6 +381,12 @@ static void run(const Nx2Game *game, int rebuild_index) {
                             "Game preparation failed; see BackupLoaderMKW-gameplay.log.");
     goto done;
   }
+  row(f,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
+      game->is_nup?"nup":"folder",(unsigned long long)game->id,
+      images->count,(unsigned long long)l->heap_capacity);
+  if(crash)row(crash,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
+      game->is_nup?"nup":"folder",(unsigned long long)game->id,
+      images->count,(unsigned long long)l->heap_capacity);
   launch_phase="GUEST_EXECUTE";
   row(f,"DIAGNOSTIC_PROFILE version=2 guest_fs_callsite=1 save_gate=1 exit_observer=existing CPU_exception_observer=libounce\n");
   if(crash)row(crash,"GUEST_EXECUTION_BEGIN phase=%s\n",launch_phase);
@@ -785,15 +797,24 @@ int main(int argc, char **argv) {
     if (catalog.count && (down & HidNpadButton_A)) {
       const Nx2Game *game=&catalog.items[selected];
       if (game->is_nup == 2) {
-        /* Invalid NUP selections never entered run(), so they previously
-         * returned to the menu without creating any launch log. */
+        /* A catalog rejection is still a launch attempt. Give it the same
+         * independent diagnostic file as every normal folder/NUP run. */
         FILE *rejected=fopen("sdmc:/BackupLoaderMKW-nup.log","w");
+        FILE *crash_rejected=fopen("sdmc:/BackupLoaderMKW-crash.log","w");
         if(rejected){
           row(rejected,"BackupLoaderMKW experimental 0.14\n"
+             "REPORT_FORMAT version=3 source=nup crash_path=sdmc:/BackupLoaderMKW-crash.log\n"
              "NUP_CATALOG_REFUSED name=%s path=%s title=%016llx reason=%s\n",
              game->name,game->root,
              (unsigned long long)game->id,game->nup_status);
           fclose(rejected);
+        }
+        if(crash_rejected){
+          row(crash_rejected,"NX2_CRASH_DIAGNOSTIC version=2 game=%s guest=%016llx host=0400c3f00006e000\n"
+            "REPORT_FORMAT version=3 source=nup primary_path=sdmc:/BackupLoaderMKW-nup.log\n"
+            "PRELAUNCH_STOP phase=CATALOG_VALIDATION reason=%s\n",
+            game->name,(unsigned long long)game->id,game->nup_status);
+          fclose(crash_rejected);
         }
         snprintf(outcome,sizeof(outcome),"NUP not ready: %.95s",game->nup_status);
       } else
