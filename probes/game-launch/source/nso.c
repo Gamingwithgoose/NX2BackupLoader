@@ -22,6 +22,7 @@ static uint64_t page(uint64_t n){return (n+4095)&~4095ULL;}
 /* Common input-size boundary for both NUP and folder executable modules.
  * Do not use a lower title-specific cap than the 512 MiB mapped image boundary. */
 #define NX2_NSO_INPUT_LIMIT (UINT64_C(512)*1024*1024)
+#define NX2_NSO_MAPPED_LIMIT (UINT64_C(512)*1024*1024)
 static int lz4(void *output,size_t capacity,const unsigned char *in,size_t size){
     unsigned char *out=output;size_t a=0,b=0;
     while(a<size){
@@ -89,13 +90,38 @@ int nx2_prepare_nso(const char *path,const char *expected,Nx2Sha256 hash,void **
     for(unsigned i=0;i<3;i++){
         offset[i]=read32(raw+16+16*i);addr[i]=read32(raw+20+16*i);size[i]=read32(raw+24+16*i);
         packed[i]=(flags&(1U<<i))?read32(raw+0x60+4*i):size[i];
-        if(size[i]>256*1024*1024||offset[i]>(uint64_t)length||packed[i]>(uint64_t)length-offset[i]||(size[i]&&offset[i]<256))FAIL("NSO segment outside file/limit");
+        /* Validate each source extent independently. The previous shared
+         * 256 MiB per-segment cap rejected potentially valid modules even
+         * when their complete mapped image fit inside our 512 MiB limit.
+         * Never skip file bounds, allocation bounds, or arithmetic checks. */
+        if(size[i]>NX2_NSO_MAPPED_LIMIT){
+            snprintf(error,160,
+                     "NSO segment %u decoded=%u exceeds mapped limit=%llu",
+                     i,size[i],(unsigned long long)NX2_NSO_MAPPED_LIMIT);
+            goto finish;
+        }
+        if(offset[i]>(uint64_t)length||
+           packed[i]>(uint64_t)length-offset[i]||
+           (size[i]&&offset[i]<256)){
+            snprintf(error,160,
+                     "NSO segment %u invalid extent off=%u packed=%u decoded=%u input=%llu flags=%08x",
+                     i,offset[i],packed[i],size[i],
+                     (unsigned long long)length,flags);
+            goto finish;
+        }
         if(i&&(uint64_t)addr[i-1]+size[i-1]>addr[i])FAIL("NSO segments overlap");
     }
     if(addr[0]||!size[0]||!size[1]||!size[2]||(addr[1]&4095)||(addr[2]&4095))FAIL("unsupported NSO segment alignment/layout");
     uint64_t total=4096+(uint64_t)addr[2]+page((uint64_t)size[2]+read32(raw+0x3c));
     uint64_t file_bytes=4096+(uint64_t)addr[2]+page(size[2]),bss=total-file_bytes;
-    if(total>512*1024*1024||total<file_bytes)FAIL("NSO mapped size outside limit");
+    if(total>NX2_NSO_MAPPED_LIMIT||total<file_bytes){
+        snprintf(error,160,
+                 "NSO mapped image=%llu exceeds limit=%llu or file=%llu",
+                 (unsigned long long)total,
+                 (unsigned long long)NX2_NSO_MAPPED_LIMIT,
+                 (unsigned long long)file_bytes);
+        goto finish;
+    }
     out=nx2_pages((size_t)total);if(!out)FAIL("NSO mapped allocation failed");memset(out,0,(size_t)total);
     for(unsigned i=0;i<3;i++){
         void *destination=out+4096+addr[i];
