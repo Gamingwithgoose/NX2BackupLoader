@@ -349,7 +349,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     stop(f, "Game worker could not start");
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   u64 trace_sample = began;
-  u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX;
+  u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX, previous_trace_begin = UINT32_MAX;
   for (;;) {
     check_fault(f, images);
     nx2_host_poll(host, l);
@@ -375,7 +375,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
       uint32_t next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
       uint32_t ended=__atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE);
       uint32_t started=__atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE);
-      if(ended!=previous_trace_end){
+      if(ended!=previous_trace_end || started!=previous_trace_begin){
         row(f,"IPC_WATCHDOG started=%u ended=%u in_flight_estimate=%u next=%u frames=%llu\n",
             started,ended,started>=ended?started-ended:0,next,
             (unsigned long long)frames);
@@ -390,6 +390,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
                 e->command,(unsigned long long)e->caller,e->result);
         }
         previous_trace_end=ended;
+        previous_trace_begin=started;
       }
     }
     /* A post-save checkpoint is independent of guest RPC progress;
