@@ -60,6 +60,35 @@ int main(void){
               obj==0xe0000001U,"domain response object extraction");
  fail+=expect(nx2_ipc_reply_result(p,sizeof(p),4,&rc)&&rc==0,
               "domain response CMIF result extraction");
+ /* HIPC manager Control 1: CopyFromCurrentDomain, with one object ID
+  * after the SFCI header. This must survive exported reader handles. */
+ memset(p,0,sizeof(p));
+ put32(p,5);put32(p+4,9);
+ put32(p+16,0x49434653U);put32(p+24,1);
+ put32(p+32,0x12345678U);
+ uint32_t id=0;
+ fail+=expect(nx2_ipc_control_copy_domain_object(p,sizeof(p),&id)&&
+              id==0x12345678U,"copy-from-domain object ID");
+ fail+=expect(!nx2_ipc_control_copy_domain_object(p,34,&id),
+              "reject truncated copy-from-domain input");
+ put32(p+24,2);
+ fail+=expect(!nx2_ipc_control_copy_domain_object(p,sizeof(p),&id),
+              "clone command is not a domain-copy command");
+ /* An HIPC response may return copied handles before the moved session
+  * handle; only the MOVED handle is the newly cloned session. */
+ memset(p,0,sizeof(p));
+ put32(p,0);put32(p+4,0x80000008U);
+ put32(p+8,(1U<<1)|(1U<<5)); /* one copy then one move */
+ put32(p+12,0x77U);put32(p+16,0x1234U);
+ put32(p+32,0x4f434653U);
+ uint32_t moved=0;
+ fail+=expect(nx2_ipc_reply_first_moved_handle(p,sizeof(p),&moved)&&
+              moved==0x1234U,"returned moved session, not copied handle");
+ fail+=expect(!nx2_ipc_reply_first_moved_handle(p,19,&moved),
+              "reject truncated moved-handle reply");
+ put32(p+8,1U<<1); /* copies only */
+ fail+=expect(!nx2_ipc_reply_first_moved_handle(p,sizeof(p),&moved),
+              "reject copy-only reply");
  printf("FSP native CMIF fixture: %s\n",fail?"FAILED":"PASS");
  return fail?1:0;
 }
