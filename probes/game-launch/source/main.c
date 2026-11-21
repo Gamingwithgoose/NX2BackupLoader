@@ -155,10 +155,18 @@ static int prepare_phase(FILE *f, const char *root, Nx2Images *images,
   }
   return 1;
 }
+static int scan_cancelled;
+static int scan_cancel(void *unused) {
+  (void)unused;
+  padUpdate(&pad);
+  if (padGetButtonsDown(&pad) & HidNpadButton_B)
+    scan_cancelled = 1;
+  return scan_cancelled;
+}
 static void scan_progress(uint32_t files, void *unused) {
   (void)unused;
   char message[160];
-  snprintf(message, sizeof(message), "Indexing game files... %u found", files);
+  snprintf(message, sizeof(message), "Indexing game files... %u found\nPress B to cancel", files);
   screen(message);
 }
 static void run(const Nx2Game *game, int rebuild_index) {
@@ -212,9 +220,19 @@ static void run(const Nx2Game *game, int rebuild_index) {
   } else {
     row(f, "ROMFS_SCAN_BEGIN root=%s\n", rom);
     screen("Indexing the selected game folder...\nFirst launch may take several minutes.");
+    scan_cancelled = 0;
+    nx2_folder_cancel(scan_cancel, NULL);
     nx2_folder_progress(scan_progress, NULL);
     map = nx2_folder_rom(rom, &map_bytes, error);
     nx2_folder_progress(NULL, NULL);
+    nx2_folder_cancel(NULL, NULL);
+    if (scan_cancelled) {
+      row(f, "ROMFS_SCAN_CANCELLED\n");
+      free(map);
+      fclose(f);
+      snprintf(outcome, sizeof(outcome), "Indexing cancelled. Press A to restart.");
+      return;
+    }
     if (map) {
       if (nx2_cache_save(rom, map, map_bytes))
         row(f, "ROMFS_CACHE_SAVED bytes=%llu\n",
