@@ -54,7 +54,29 @@ static uint32_t storage_write(void *self,int64_t off,const void *p,uint64_t n){(
 static uint32_t storage_flush(void *self){(void)self;return 0;}
 static uint32_t storage_resize(void *self,int64_t n){(void)self;(void)n;return NX2_FS_UNSUPPORTED;}
 static uint32_t storage_size(void *self,int64_t *n){(void)self;if(!n)return NX2_INVALID;*n=(int64_t)nx2_launch->rom.total;return 0;}
-static uint32_t storage_range(void *self,void *out,uint64_t outsize,uint32_t op,int64_t off,int64_t size,const void *in,uint64_t insize){(void)self;(void)off;(void)size;(void)in;(void)insize;if(op==3&&out&&outsize<=256){zero(out,outsize);return 0;}if(op==2||op==4)return 0;return NX2_FS_UNSUPPORTED;}
+/* IStorage::OperateRange: validate requested virtual range before claiming
+ * support. This is a read-only RomFS image, not a writable backing store.
+ * QueryRange returns the standard 0x40-byte range-information structure;
+ * InvalidateCache is a valid no-op because all reads are revalidated by the
+ * backing reader. Do not silently succeed on unknown operation IDs. */
+static uint32_t storage_range(void *self,void *out,uint64_t outsize,
+                             uint32_t op,int64_t off,int64_t size,
+                             const void *in,uint64_t insize){
+ (void)self;
+ if(off<0||size<0||(uint64_t)off>nx2_launch->rom.total||
+    (uint64_t)size>nx2_launch->rom.total-(uint64_t)off)
+   return NX2_INVALID;
+ if(op==2){ /* InvalidateCache */
+   if(outsize||insize)return NX2_INVALID;
+   return 0;
+ }
+ if(op==3){ /* QueryRange: FsRangeInfo is exactly 64 bytes */
+   if(!out||outsize!=0x40||in||insize)return NX2_INVALID;
+   zero(out,0x40);
+   return 0;
+ }
+ return NX2_FS_UNSUPPORTED;
+}
 static Nx2Object *object(uintptr_t vt,uint64_t handle,uint64_t mode){for(unsigned i=0;i<NX2_OBJECTS;i++){uint64_t expected=0;if(__atomic_compare_exchange_n(&nx2_launch->objects[i].active,&expected,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)){Nx2Object *o=&nx2_launch->objects[i];o->vtable=vt;o->handle=handle;o->mode=mode;return o;}}return 0;}
 static void release_file(void *p){Nx2Object *o=p;if(o->active){nx2_rpc(RPC_SAVE_CLOSE,o->handle,0,0,0,0,0,0,0);__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);}}
 static void release_dir(void *p){Nx2Object *o=p;if(o->active){nx2_rpc(RPC_DIR_CLOSE,o->handle,0,0,0,0,0,0,0);__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);}}
