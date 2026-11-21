@@ -351,6 +351,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
   u64 trace_sample = began;
   u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX, previous_trace_begin = UINT32_MAX;
   u32 previous_graphics_ipc = UINT32_MAX;
+  u32 last_graphics_bootstrap=UINT32_MAX,last_graphics_getproc=UINT32_MAX,
+      last_graphics_present=UINT32_MAX;
   for (;;) {
     check_fault(f, images);
     nx2_host_poll(host, l);
@@ -366,6 +368,23 @@ static void run(const Nx2Game *game, int rebuild_index) {
       row(f, "GRAPHICS_PRESENT_RETURNED calls=%llu\n",
           (unsigned long long)frames);
       previous_frames = frames;
+    }
+    /* Lightweight graphics progress sampling independently of the slower
+     * heartbeat: if this process terminates abruptly, the last flushed
+     * entry still identifies which NVN phase it had reached. */
+    uint32_t bcount=__atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE);
+    uint32_t gcount=__atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE);
+    uint32_t pcount=__atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE);
+    if(bcount!=last_graphics_bootstrap ||
+       gcount/256!=last_graphics_getproc/256 ||
+       pcount!=last_graphics_present){
+      row(f,"GRAPHICS_PROGRESS bootstrap=%u getproc=%u present_lookups=%u present_entered=%u present_returned=%u\n",
+          bcount,gcount,
+          __atomic_load_n(&l->nvn_present_lookups,__ATOMIC_ACQUIRE),
+          pcount,__atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE));
+      last_graphics_bootstrap=bcount;
+      last_graphics_getproc=gcount;
+      last_graphics_present=pcount;
     }
     /* Capture recent guest SVCs from shared memory without generating
      * any guest RPCs. This survives a guest thread stuck inside the SVC.
