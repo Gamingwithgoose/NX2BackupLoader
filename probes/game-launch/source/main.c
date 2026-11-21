@@ -365,7 +365,11 @@ static void run(const Nx2Game *game, int rebuild_index) {
           (unsigned long long)frames);
       previous_frames = frames;
     }
-    if (armTicksToNs(armGetSystemTick() - heartbeat) >= 5000000000ULL) {
+    /* A post-save checkpoint is independent of guest RPC progress;
+     * use shorter heartbeats only after the save mount succeeds. */
+    uint32_t late=__atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE);
+    if (armTicksToNs(armGetSystemTick() - heartbeat) >=
+        (late?1000000000ULL:5000000000ULL)) {
       heartbeat = armGetSystemTick();
       row(f,
           "LAUNCH_HEARTBEAT elapsed_seconds=%llu main_entered=%llu "
@@ -393,10 +397,10 @@ static void run(const Nx2Game *game, int rebuild_index) {
             row(f,"RPC_PENDING slot=%u state=%u unpublished=1\n",slot,state);
         }
       }
-      row(f,"RPC_HEARTBEAT_SUMMARY pending=%u host_abort=%u guest_abort=%u stage=%u\n",
+      row(f,"RPC_HEARTBEAT_SUMMARY pending=%u host_abort=%u guest_abort=%u stage=%u late_trace=%u\n",
           pending,host->abort,
           __atomic_load_n(&l->abort_requested,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->stage,__ATOMIC_ACQUIRE));
+          __atomic_load_n(&l->stage,__ATOMIC_ACQUIRE),late);
     }
     if (!__atomic_load_n(&l->main_entered, __ATOMIC_ACQUIRE) &&
         armTicksToNs(armGetSystemTick() - began) > 300000000000ULL)
