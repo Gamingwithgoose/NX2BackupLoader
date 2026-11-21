@@ -111,7 +111,7 @@ static uint32_t create_file(void *s,const void *p,int64_t size,int option){
  char temp[NX2_PATH_MAX];const char *name=routed_path(s,p,temp);
  return name?nx2_rpc(RPC_SAVE_CREATE,size,(uint32_t)option,0,0,0,name,0,0):NX2_INVALID;
 }
-#define PATH_FN(name,operation) static uint32_t name(void *s,const void *p){char temp[NX2_PATH_MAX];const char *name=routed_path(s,p,temp);return name?nx2_rpc(operation,0,0,0,0,0,name,0,0):NX2_INVALID;}
+#define PATH_FN(fn,operation) static uint32_t fn(void *s,const void *p){char temp[NX2_PATH_MAX];const char *routed=routed_path(s,p,temp);return routed?nx2_rpc(operation,0,0,0,0,0,routed,0,0):NX2_INVALID;}
 PATH_FN(delete_file,RPC_SAVE_DELETE) PATH_FN(mkdir_save,RPC_SAVE_MKDIR) PATH_FN(rmdir_save,RPC_SAVE_RMDIR) PATH_FN(rmtree_save,RPC_SAVE_RMTREE) PATH_FN(clean_save,RPC_SAVE_CLEAN)
 static uint32_t rename_file(void *s,const void *a,const void *b){
  char aa[NX2_PATH_MAX],bb[NX2_PATH_MAX];
