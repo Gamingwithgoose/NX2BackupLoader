@@ -701,7 +701,7 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
            (size_t)(offset-h->read_ahead_offset),(size_t)bytes);
     __atomic_fetch_add(&h->calls,1,__ATOMIC_RELAXED);
     __atomic_fetch_add(&h->bytes,bytes,__ATOMIC_RELAXED);
-    ++h->read_ahead_hits;
+    __atomic_fetch_add(&h->read_ahead_hits,1,__ATOMIC_RELAXED);
     result=0;
   }else{
     int sequential=h->read_ahead_previous &&
@@ -732,7 +732,7 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
         h->read_ahead_offset=offset;
         h->read_ahead_length=amount;
         h->read_ahead_valid=1;
-        ++h->read_ahead_fills;
+        __atomic_fetch_add(&h->read_ahead_fills,1,__ATOMIC_RELAXED);
         /* Counters remain logical bytes returned to the guest. */
         __atomic_fetch_sub(&h->bytes,amount-bytes,__ATOMIC_RELAXED);
       }else h->read_ahead_valid=0;
