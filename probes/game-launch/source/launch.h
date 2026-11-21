@@ -12,7 +12,7 @@
 #define NX2_NOT_FOUND 0x202U
 #define NX2_LIMIT 0x2f6a02U
 
-enum {RPC_ROM_READ=1,RPC_SAVE_CREATE,RPC_SAVE_DELETE,RPC_SAVE_MKDIR,RPC_SAVE_RMDIR,RPC_SAVE_RMTREE,RPC_SAVE_CLEAN,RPC_SAVE_RENAME_FILE,RPC_SAVE_RENAME_DIR,RPC_SAVE_TYPE,RPC_SAVE_FREE,RPC_SAVE_TOTAL,RPC_SAVE_OPEN,RPC_SAVE_READ,RPC_SAVE_WRITE,RPC_SAVE_FLUSH,RPC_SAVE_RESIZE,RPC_SAVE_SIZE,RPC_SAVE_CLOSE,RPC_DIR_OPEN,RPC_DIR_READ,RPC_DIR_COUNT,RPC_DIR_CLOSE,RPC_COMMIT,RPC_LOG,RPC_ABORT,RPC_MAIN_ENTERED,RPC_ROM_MOUNT,RPC_SAVE_MOUNT,RPC_IPC,RPC_SAVE_TIMESTAMP,RPC_BREAK,RPC_PHYSICAL_MEMORY};
+enum {RPC_ROM_READ=1,RPC_SAVE_CREATE,RPC_SAVE_DELETE,RPC_SAVE_MKDIR,RPC_SAVE_RMDIR,RPC_SAVE_RMTREE,RPC_SAVE_CLEAN,RPC_SAVE_RENAME_FILE,RPC_SAVE_RENAME_DIR,RPC_SAVE_TYPE,RPC_SAVE_FREE,RPC_SAVE_TOTAL,RPC_SAVE_OPEN,RPC_SAVE_READ,RPC_SAVE_WRITE,RPC_SAVE_FLUSH,RPC_SAVE_RESIZE,RPC_SAVE_SIZE,RPC_SAVE_CLOSE,RPC_DIR_OPEN,RPC_DIR_READ,RPC_DIR_COUNT,RPC_DIR_CLOSE,RPC_COMMIT,RPC_LOG,RPC_ABORT,RPC_MAIN_ENTERED,RPC_ROM_MOUNT,RPC_SAVE_MOUNT,RPC_IPC,RPC_SAVE_TIMESTAMP,RPC_BREAK,RPC_PHYSICAL_MEMORY,RPC_CACHE_CREATE,RPC_CACHE_CHECK};
 typedef struct {
  uint32_t state,op,result,reserved;
  uint64_t a,b,c,d,answer;
@@ -140,6 +140,13 @@ uint32_t nx2_mount_rom_index(const char *,int,void *,uint64_t);
 uint32_t nx2_query_rom_app(uint64_t *,uint64_t);
 uint32_t nx2_query_rom_index(uint64_t *,int);
 uint32_t nx2_mount_save(const char *);
+/* Per-title cache storage is backed by isolated SD directories, not by
+ * the host application's native cache quotas. No fake success. */
+uint32_t nx2_create_cache_storage(int,int64_t,int64_t);
+uint32_t nx2_mount_cache_storage(const char *);
+uint32_t nx2_mount_cache_storage_index(const char *,int);
+uint32_t nx2_mount_cache_storage_app(const char *,uint64_t);
+uint32_t nx2_mount_cache_storage_app_index(const char *,uint64_t,int);
 /* Kirby's native ldr:ro session cannot be assumed to belong to the guest. */
 uint32_t nx2_ro_initialize_compat(void);
 uint32_t nx2_ensure_save(uint64_t *);
