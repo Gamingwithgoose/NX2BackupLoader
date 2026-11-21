@@ -25,20 +25,20 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
       (type==5 || type==6 || type==7 || type==16 ||
        type==21 || type==22)){
      uint64_t kernel_value=(!rc)?*out:0;
-     /* The kernel reports the *host* process, including the reserved
-      * launcher heap. A guest's UsedNonSystemMemorySize must not charge
-      * the launcher-owned retained heap against the guest's own memory
-      * budget. Only translate this accounting query; real GetInfo totals,
-      * heap allocation, and physical memory remain kernel-governed.
-      * Refuse to subtract unless all of the launcher-owned heap fits in
-      * the reported usage. This is generic for any guest, not a game
-      * ID/version-specific assertion bypass. */
-     if(!rc && type==22 && nx2_process_heap_status==NX2_HEAP_READY &&
+     /* Only the retained host heap prefix is excluded from the
+      * guest's non-system accounting. Guest NSO backing is mapped in
+      * separate RO memory and is NOT part of this prefix; it remains
+      * counted in UsedNonSystemMemorySize. Subtract from both total and
+      * used (types 21 and 22) so the apparent free budget is unchanged.
+      * Native heap and physical allocation checks continue to use
+      * unmodified kernel values. Never underflow the reported usage. */
+     if(!rc && (type==21 || type==22) &&
+        nx2_process_heap_status==NX2_HEAP_READY &&
         nx2_process_heap.host_bytes &&
         kernel_value>=nx2_process_heap.host_bytes){
        *out=kernel_value-nx2_process_heap.host_bytes;
        nx2_rpc(RPC_LOG,kernel_value,*out,nx2_process_heap.host_bytes,type,0,
-               "GUEST_MEMORY_ACCOUNTING_SUBTRACT_HOST",0,0);
+               "GUEST_MEMORY_ACCOUNTING_EXCLUDE_HOST",0,0);
      }
      static uint32_t budget_query_count=0;
      uint32_t ordinal=__atomic_fetch_add(&budget_query_count,1,__ATOMIC_RELAXED);
@@ -109,24 +109,41 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
            "NATIVE_HEAP_BOUNDS_REFUSED",0,0);
    return 0xd001;
  }
- uint64_t increase=size>retain?size-retain:0;
- if(increase>available || available-increase<NX2_NATIVE_PHYSICAL_FLOOR) {
-   nx2_rpc(RPC_LOG,size,retain,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
-           "NATIVE_HEAP_BUDGET_REFUSED",0,0);
+ /* The guest's requested heap starts AFTER the retained launcher
+  * prefix. The kernel's contiguous heap must cover both, so request
+  * retain+guest_size from the kernel but only return [cut,cut+size)
+  * to the guest. The original base must never be handed to the game. */
+ if(size>UINT64_MAX-retain || retain+size>original_end-base) {
+   nx2_rpc(RPC_LOG,size,retain,original_end-base,0,0,
+           "GUEST_HEAP_RANGE_REFUSED",0,0);
    return 0xd001;
  }
+ uint64_t kernel_size=retain+size;
+ uint64_t increase=size;
+ if(increase>available || available-increase<NX2_NATIVE_PHYSICAL_FLOOR) {
+   nx2_rpc(RPC_LOG,size,kernel_size,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
+           "GUEST_HEAP_BUDGET_REFUSED",0,0);
+   return 0xd001;
+ }
+ nx2_rpc(RPC_LOG,size,kernel_size,cut,available,0,
+         "GUEST_HEAP_ISOLATED_REQUEST",0,0);
  void *returned=NULL;
- rc=svcSetHeapSize(&returned,size);
- nx2_rpc(RPC_LOG,size,retain,available,rc,0,
-         "NATIVE_HEAP_SET_RESULT",0,0);
+ rc=svcSetHeapSize(&returned,kernel_size);
+ nx2_rpc(RPC_LOG,size,kernel_size,available,rc,0,
+         "GUEST_HEAP_SET_RESULT",0,0);
  if(R_FAILED(rc))return rc;
  if((uintptr_t)returned!=base) {
    nx2_rpc(RPC_ABORT,(uintptr_t)returned,base,size,0,0,
            "Native heap base changed unexpectedly",0,0);
    for(;;)__asm__ volatile("wfe");
  }
- *out=returned;
+ /* kernel_size includes the retained prefix; the guest's heap starts
+  * exactly at the first free page after the launcher partition. */
+ *out=(void *)(uintptr_t)cut;
+ l->heap_base=cut;
  __atomic_store_n(&l->heap_size,size,__ATOMIC_RELEASE);
+ nx2_rpc(RPC_LOG,cut,size,kernel_size,0,0,
+         "GUEST_HEAP_ISOLATED_READY",0,0);
  return 0;
 }
 uint32_t nx2_rtld_query(void *memory,uint32_t *page,uint64_t address){Nx2Launch *l=nx2_launch;uint64_t begin=0,end=UINT64_C(0x8000000000);uint32_t type=0,perm=0;for(uint32_t i=0;i<l->region_count;i++){Nx2Region *r=&l->regions[i];if(address>=r->begin&&address<r->end){begin=r->begin;end=r->end;type=r->type;perm=r->permission;break;}if(r->end<=address&&r->end>begin)begin=r->end;if(r->begin>address&&r->begin<end)end=r->begin;}if(!memory)return 0xdc01;if(address>=UINT64_C(0x8000000000)){begin=UINT64_C(0x8000000000);end=0;type=0x10;perm=0;}uint64_t *q=memory;uint32_t *w=memory;q[0]=begin;q[1]=end-begin;w[4]=type;w[5]=0;w[6]=perm;w[7]=w[8]=w[9]=0;if(page)*page=0;return 0;}
