@@ -348,7 +348,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
   if (!start_worker(f, l, &worker, 1))
     stop(f, "Game worker could not start");
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
-  u32 previous_stage = UINT32_MAX;
+  u64 trace_sample = began;
+  u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX;
   for (;;) {
     check_fault(f, images);
     nx2_host_poll(host, l);
@@ -364,6 +365,32 @@ static void run(const Nx2Game *game, int rebuild_index) {
       row(f, "GRAPHICS_PRESENT_RETURNED calls=%llu\n",
           (unsigned long long)frames);
       previous_frames = frames;
+    }
+    /* Capture recent guest SVCs from shared memory without generating
+     * any guest RPCs. This survives a guest thread stuck inside the SVC.
+     * A short interval is used only after private-save startup. */
+    if(__atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE) &&
+       armTicksToNs(armGetSystemTick()-trace_sample)>=250000000ULL){
+      trace_sample=armGetSystemTick();
+      uint32_t next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
+      uint32_t ended=__atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE);
+      uint32_t started=__atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE);
+      if(ended!=previous_trace_end){
+        row(f,"IPC_WATCHDOG started=%u ended=%u in_flight_estimate=%u next=%u frames=%llu\n",
+            started,ended,started>=ended?started-ended:0,next,
+            (unsigned long long)frames);
+        uint32_t count=next<8?next:8;
+        for(uint32_t back=count;back;back--){
+          uint32_t slot=(next-back)%NX2_IPC_TRACE_SLOTS;
+          Nx2IpcBreadcrumb *e=&l->ipc_breadcrumbs[slot];
+          uint32_t phase=__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE);
+          if(phase)
+            row(f,"IPC_WATCHDOG_CALL slot=%u phase=%u handle=%08llx type=%u command=%u caller=%016llx result=%08x\n",
+                slot,phase,(unsigned long long)e->handle,e->request_type,
+                e->command,(unsigned long long)e->caller,e->result);
+        }
+        previous_trace_end=ended;
+      }
     }
     /* A post-save checkpoint is independent of guest RPC progress;
      * use shorter heartbeats only after the save mount succeeds. */
