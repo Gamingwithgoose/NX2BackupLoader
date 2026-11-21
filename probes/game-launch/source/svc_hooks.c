@@ -225,7 +225,7 @@ static void trace_reply_handles(const unsigned char *p,uint64_t n,
  }
 }
 static void response_tags(const unsigned char *p,uint64_t n,uint32_t kind){if(n<12||!(word(p+4)&0x80000000))return;uint32_t s=word(p+8),copy=(s>>1)&15,move=(s>>5)&15;uint64_t off=12+((s&1)?8:0);if(off+4*(copy+move)>n)return;for(uint32_t i=0;i<copy+move;i++)set_tag(word(p+off+4*i),kind);}
-static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external){
+static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uintptr_t caller){
  unsigned char *p=buffer;uint32_t kind=tag(h);
  Nx2IpcDecision d=nx2_ipc_decide(p,n,kind);
  uint32_t cmd=d.command,has=d.valid,control=d.control,want_fsp=d.want_fsp;
@@ -245,8 +245,22 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external){
            "Blocked unapproved native FSP request",0,0);
    for(;;)__asm__ volatile("wfe");
  }
+ /* Only trace bounded known-service non-Close operations. Raw request
+  * type 2 is HIPC Close, where ConnectionClosed can be expected. */
+ static uint32_t detailed_calls=0;
+ uint32_t ordinal=request_type!=2 && (owner[0]||kind)?
+   __atomic_fetch_add(&detailed_calls,1,__ATOMIC_RELAXED):UINT32_MAX;
+ int detailed=ordinal<512;
+ if(detailed){
+   nx2_rpc(RPC_LOG,h,((uint64_t)request_type<<32)|cmd,caller,
+           ((uint64_t)has<<32)|kind,0,"IPC_SESSION_CALL_BEGIN",owner,0);
+ }
  if(kind)nx2_rpc(RPC_IPC,h,cmd,UINT64_MAX,kind,0,"IPC_BEGIN",service,0);
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
+ if(detailed){
+   nx2_rpc(RPC_LOG,h,rc,caller,((uint64_t)request_type<<32)|cmd,0,
+           "IPC_SESSION_CALL_END",owner,0);
+ }
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
  if(kind&&reply_decoded)
@@ -264,7 +278,11 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external){
      else if(owner[0])trace_reply_handles(p,scan,h,owner);
    }
  }
- if(rc){
+ if(rc && request_type==2 && rc==0xF601){
+   nx2_rpc(RPC_LOG,h,rc,caller,kind,0,
+           "IPC_CLOSE_CONNECTION_CLOSED",owner,0);
+ }
+ if(rc && !(request_type==2 && rc==0xF601)){
    nx2_rpc(RPC_LOG,((uint64_t)hdr0<<32)|hdr1,
            ((uint64_t)special<<32)|request_type,
            ((uint64_t)cmd<<32)|(has?1U:0U)|(control?2U:0U),
@@ -278,8 +296,13 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external){
                      (kind==2?"FSP request":"IPC"),0,0);
  return rc;
 }
-uint32_t nx2_sync(uint32_t h){void *tlr;__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));return filter_sync(tlr,256,h,0);}
-uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){return filter_sync(p,n,h,1);}
+uint32_t nx2_sync(uint32_t h){
+ void *tlr;__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));
+ return filter_sync(tlr,256,h,0,(uintptr_t)__builtin_return_address(0));
+}
+uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){
+ return filter_sync(p,n,h,1,(uintptr_t)__builtin_return_address(0));
+}
 uint32_t nx2_close_handle(uint32_t h){
  uint32_t rc=nx2_raw_close(h);
  if(!rc){set_tag(h,0);trace_forget(h);}
