@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "host.h"
+#include "nup.h"
 #include "path_guard.h"
 #include <stdarg.h>
 #include <stdlib.h>
@@ -73,7 +74,18 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       return NX2_INVALID;
     unsigned i = (unsigned)r->a;
     const char *relative = nx2_rom_path(&l->rom, i);
-    if (!relative || !nx2_save_path(p, sizeof(p), h->rom_root, relative))
+    if (!relative) return NX2_INVALID;
+    if(nx2_nup_active()) {
+      if(snprintf(p,sizeof(p),"romfs/%s",relative)>=(int)sizeof(p))
+        return NX2_INVALID;
+      if(!nx2_nup_read(p,r->b,r->buffer,(size_t)r->c))
+        return NX2_INVALID;
+      h->bytes+=r->c;
+      if(h->calls<64) logline(h,"NUP_ASSET_READ file=%s offset=%llu bytes=%llu\n",
+                relative,(unsigned long long)r->b,(unsigned long long)r->c);
+      return 0;
+    }
+    if (!nx2_save_path(p, sizeof(p), h->rom_root, relative))
       return NX2_INVALID;
     unsigned slot = 16;
     for (unsigned n = 0; n < 16; n++)
