@@ -16,3 +16,7 @@ const char *nx2_nup_probe_error(void);
 
 /* Extract NPDM TLV type 0 from selected package metadata, if present. */
 void *nx2_nup_package_npdm(size_t *length);
+
+/* Error produced by the last archive entry read or checksum verification. */
+const char *nx2_nup_read_error(void);
+int nx2_nup_entry_detail(const char *path, uint64_t *stored, uint64_t *offset);
