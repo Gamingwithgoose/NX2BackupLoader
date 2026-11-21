@@ -51,6 +51,70 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   }
   return 1;
 }
+/* Guest save archives are logical objects, not merely directories. The
+ * launcher's root directory exists before gameplay for path confinement.
+ * A metadata marker OUTSIDE that root indicates a provisioned archive and
+ * is never visible as a guest save file. Existing legacy saves (before this
+ * marker existed) remain valid if they contain ordinary game content. */
+static int archive_marker_path(Nx2Host *h,char *out,size_t cap){
+  uint64_t hash=UINT64_C(14695981039346656037);
+  for(const unsigned char *p=(const unsigned char*)h->save_root;*p;p++){
+    hash^=*p;
+    hash*=UINT64_C(1099511628211);
+  }
+  int n=snprintf(out,cap,
+      "/switch/BackupLoaderMKW/.nx2-archive-%016llx",
+      (unsigned long long)hash);
+  return n>0&&(size_t)n<cap;
+}
+static Result archive_exists(Nx2Host *h,uint64_t *exists){
+  if(!exists)return NX2_INVALID;
+  *exists=0;
+  char marker[120];
+  if(!archive_marker_path(h,marker,sizeof(marker)))
+    return NX2_INVALID;
+  FsDirEntryType type=0;
+  Result rc=fsFsGetEntryType(h->sd,marker,&type);
+  if(R_SUCCEEDED(rc)){
+    if(type!=FsDirEntryType_File)return NX2_INVALID;
+    *exists=1;
+    return 0;
+  }
+  /* Legacy saves predate the archive marker. Check for real game content
+   * instead of treating the automatically created mount root as a save. */
+  FsDir dir;
+  rc=fsFsOpenDirectory(h->sd,h->save_root,
+                        FsDirOpenMode_ReadFiles|FsDirOpenMode_ReadDirs,&dir);
+  if(R_FAILED(rc))return rc;
+  FsDirectoryEntry entry;
+  s64 n=0;
+  for(unsigned i=0;i<1024;i++){
+    rc=fsDirRead(&dir,&n,1,&entry);
+    if(R_FAILED(rc)||n==0)break;
+    if(!strcmp(entry.name,"cache-storage")||
+       !strncmp(entry.name,"vsave-",6)||
+       !strncmp(entry.name,".nx2-",5))continue;
+    *exists=1;
+    break;
+  }
+  fsDirClose(&dir);
+  return rc;
+}
+static Result archive_provision(Nx2Host *h){
+  char marker[120];
+  if(!archive_marker_path(h,marker,sizeof(marker)))
+    return NX2_INVALID;
+  FsDirEntryType type=0;
+  Result rc=fsFsGetEntryType(h->sd,marker,&type);
+  if(R_SUCCEEDED(rc))
+    return type==FsDirEntryType_File?0:NX2_INVALID;
+  /* CreateFile is atomic in the SD filesystem; if the marker has already
+   * appeared due to another save hook, revalidate it and return success. */
+  rc=fsFsCreateFile(h->sd,marker,0,0);
+  if(R_SUCCEEDED(rc))return 0;
+  Result after=fsFsGetEntryType(h->sd,marker,&type);
+  return R_SUCCEEDED(after)&&type==FsDirEntryType_File?0:rc;
+}
 static uint64_t token(Nx2Host *h, unsigned i) {
   if (!++h->handles[i].generation)
     h->handles[i].generation++;
@@ -162,6 +226,20 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       return NX2_INVALID;
   }
   switch (r->op) {
+  case RPC_SAVE_ARCHIVE_EXISTS: {
+    uint64_t exists=0;
+    rc=archive_exists(h,&exists);
+    if(R_SUCCEEDED(rc))r->answer=exists;
+    logline(h,"GUEST_SAVE_ARCHIVE_EXISTS result=%08x exists=%llu root=%s\n",
+            rc,(unsigned long long)exists,h->save_root);
+    break;
+  }
+  case RPC_SAVE_ARCHIVE_CREATE: {
+    rc=archive_provision(h);
+    logline(h,"GUEST_SAVE_ARCHIVE_CREATE result=%08x root=%s\n",
+            rc,h->save_root);
+    break;
+  }
   case RPC_VFS_PREPARE_ROOT: {
     /* Never accept a native path or arbitrary directory from the guest.
      * Only a single generated per-profile namespace under the active title.
