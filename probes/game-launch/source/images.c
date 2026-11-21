@@ -70,7 +70,8 @@ static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
       module, cursor - m->file_size[0], m->address[1] - m->file_size[0], count);
   return 1;
 }
-static int bind(FILE *f, Nx2Module *sdk, Nx2Launch *l) {
+static int bind(FILE *f, Nx2Images *all, Nx2Launch *l) {
+  Nx2Module *sdk=&all->modules[all->count-1];
   static const struct {
     const char *name;
     size_t field;
@@ -108,9 +109,28 @@ static int bind(FILE *f, Nx2Module *sdk, Nx2Launch *l) {
     uintptr_t address = 0;
     int rc = api[i].data ? nx2_module_address(sdk, api[i].name, &address)
                          : nx2_module_function(sdk, api[i].name, &address);
+    if (rc==NX2_MISSING_SYMBOL) {
+      /* A compatible SDK function can be exported from an additional
+       * NSO. Resolve by symbol, never by game ID or filename. */
+      for (unsigned module=0;module+1<all->count;module++) {
+        int alternate=api[i].data?
+          nx2_module_address(&all->modules[module],api[i].name,&address):
+          nx2_module_function(&all->modules[module],api[i].name,&address);
+        if (alternate==NX2_OK) {
+          row(f,"API_BIND_EXPORT_FALLBACK name=%s module=%u\n",
+              api[i].name,module);
+          rc=NX2_OK;
+          break;
+        }
+        if (alternate!=NX2_MISSING_SYMBOL) {
+          rc=alternate;
+          break;
+        }
+      }
+    }
     if (rc) {
-      row(f, "API_BIND_FAILED name=%s status=%s\n", api[i].name,
-          nx2_module_error(rc));
+      row(f, "API_BIND_FAILED name=%s status=%s searched_modules=%u\n",
+          api[i].name,nx2_module_error(rc),all->count);
       return 0;
     }
     memcpy((unsigned char *)&l->api + api[i].field, &address, sizeof(address));
@@ -202,7 +222,7 @@ int nx2_images_load(FILE *f, const char *root, Nx2Images *all, Nx2Launch *l,
       }
     }
   }
-  if (!bind(f, &all->modules[module_count - 1], l))
+  if (!bind(f, all, l))
     goto fail;
   if (game) {
     for (unsigned i = 0; i < all->deferred_count; i++) {
