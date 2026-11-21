@@ -113,17 +113,6 @@ static int write_reply(void *buffer,uint64_t size,int domain,
  if(count)put32(at+16+out_size,object_id);
  return 1;
 }
-int nx2_guest_fsp_unsupported(void *buffer,uint64_t size,Nx2IpcDecision d){
- if(!d.valid||d.control||d.close_kind)return 0;
- /* Snapshot the request context token before replacing its CMIF header. */
- uint32_t token=0;
- HipcParsedRequest q=hipcParseRequest(buffer);
- const unsigned char *start=cmifGetAlignedDataStart(q.data.data_words,buffer);
- const unsigned char *hdr=start+(d.domain?16:0);
- if(hdr+16<=(const unsigned char*)buffer+size)
-  token=read32((d.domain?start:hdr)+12);
- return write_reply(buffer,size,d.domain,NX2_FS_UNSUPPORTED,0,0,0,token);
-}
 /* An nn::sf auto-buffer is encoded as a PAIR of descriptors: one X-static
  * and one A-buffer, with the unused side explicitly set to NULL/zero.
  * They are the same logical argument index, not two consecutive paths.
@@ -165,6 +154,40 @@ static int native_domain_payload(const void *buffer,uint64_t size,
  *out_bytes=end-(start+32);
  *out_token=read32(p+start+12);
  return 1;
+}
+/* The validated decoder above is also used for unsupported methods.
+ * Never call hipcParseRequest a second time against a malformed TLS image.
+ * Unsupported operations receive an actual guest error, not fake success. */
+int nx2_guest_fsp_unsupported(void *buffer,uint64_t size,Nx2IpcDecision d){
+ if(!buffer||size<48||!d.valid||d.control||d.close_kind)return 0;
+ uint32_t token=0;
+ if(d.domain){
+  const unsigned char *header=0,*payload=0;
+  uint64_t avail=0;
+  if(!native_domain_payload(buffer,size,d,&header,&payload,&avail,&token))
+   return 0;
+ }else{
+  /* A non-domain error needs only a bounded CMIF request header.
+   * Its HIPC control and descriptor placement was already checked by
+   * nx2_ipc_decide. Avoid a raw libnx pointer-based reparse. */
+  const unsigned char *p=buffer;
+  uint32_t a=read32(p),h=read32(p+4);
+  uint64_t off=8;
+  if(h&0x80000000U){
+   uint32_t extra=read32(p+8);
+   off=12+((extra&1U)?8U:0U)+
+       4U*(((extra>>1)&15U)+((extra>>5)&15U));
+  }
+  off+=8U*((a>>16)&15U)+12U*(((a>>20)&15U)+
+        ((a>>24)&15U)+((a>>28)&15U));
+  uint64_t count=4U*(h&1023U);
+  uint64_t aligned=(off+15U)&~UINT64_C(15);
+  if(off>size||count>size-off||aligned>off+count||
+     off+count-aligned<16||read32(p+aligned)!=0x49434653U)
+    return 0;
+  token=read32(p+aligned+12);
+ }
+ return write_reply(buffer,size,d.domain,NX2_FS_UNSUPPORTED,0,0,0,token);
 }
 static int path_argument(const HipcParsedRequest *req,unsigned index,
                          char out[NX2_PATH_MAX]){
@@ -399,8 +422,17 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  const unsigned char *head=0,*in=0;
  uint64_t avail=0;
  uint32_t token=0;
- if(!native_domain_payload(buffer,size,d,&head,&in,&avail,&token))
-   return 0;
+ if(!native_domain_payload(buffer,size,d,&head,&in,&avail,&token)){
+  /* Known save-open methods must NOT escape to the native host service.
+   * Return a syntactically valid error response even when the guest
+   * request has incorrect length/layout; no extra pointer reparse. */
+  nx2_rpc(RPC_LOG,session,d.object_id,d.command,NX2_INVALID,0,
+          "GUEST_FSP_ROOT_DECODE_REJECTED",0,0);
+  return write_reply(buffer,size,1,NX2_INVALID,0,0,0,0);
+ }
+ if(!obj.kind)
+  nx2_rpc(RPC_LOG,session,d.object_id,d.command,avail,0,
+          "GUEST_FSP_ROOT_DECODE_OK",0,0);
  uint32_t rc=NX2_FS_UNSUPPORTED,new_id=0;
  uint32_t out_size=0;unsigned char out[64]={0};
  if(!obj.kind){
