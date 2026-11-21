@@ -477,11 +477,24 @@ static void run(const Nx2Game *game, int rebuild_index) {
   u32 last_nvn_dev_done=UINT32_MAX,last_nvn_queue_done=UINT32_MAX,
       last_nvn_window_done=UINT32_MAX;
   uint32_t last_save_gate_phase=UINT32_MAX;
+  uint32_t last_fsp_route_stage=UINT32_MAX;
   uint32_t last_nvn_stage[NX2_NVN_STAGE_COUNT]={0};
   uint32_t last_nvn_stage_done[NX2_NVN_STAGE_COUNT]={0};
   for (;;) {
     check_fault(f, crash, images);
     nx2_host_poll(host, l);
+    /* Detect whether native save opening produced a usable virtual domain
+     * object without making the guest block on any diagnostic RPC. */
+    uint32_t fs_stage=__atomic_load_n(&l->fsp_route_stage,__ATOMIC_ACQUIRE);
+    if(fs_stage!=last_fsp_route_stage){
+      row(f,"GUEST_FSP_ROUTE_STATE stage=%u cmd=%u object=%08x result=%08x child=%08x\n",
+          fs_stage,
+          __atomic_load_n(&l->fsp_route_command,__ATOMIC_RELAXED),
+          __atomic_load_n(&l->fsp_route_object,__ATOMIC_RELAXED),
+          __atomic_load_n(&l->fsp_route_result,__ATOMIC_RELAXED),
+          __atomic_load_n(&l->fsp_route_child,__ATOMIC_RELAXED));
+      last_fsp_route_stage=fs_stage;
+    }
     drain_ipc_events(f,l,&ipc_event_cursor,&ipc_event_dropped,ipc_full_text);
     if(armTicksToNs(armGetSystemTick()-ipc_event_flush)>=250000000ULL){
       ipc_event_flush=armGetSystemTick();
@@ -571,6 +584,12 @@ static void run(const Nx2Game *game, int rebuild_index) {
       for(unsigned i=0;i<NX2_RPC_SLOTS;i++)
         if(__atomic_load_n(&l->requests[i].state,__ATOMIC_ACQUIRE))
           pending++;
+      row(crash,"GUEST_FSP_ROUTE_SNAPSHOT stage=%u cmd=%u object=%08x result=%08x child=%08x\n",
+          __atomic_load_n(&l->fsp_route_stage,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->fsp_route_command,__ATOMIC_RELAXED),
+          __atomic_load_n(&l->fsp_route_object,__ATOMIC_RELAXED),
+          __atomic_load_n(&l->fsp_route_result,__ATOMIC_RELAXED),
+          __atomic_load_n(&l->fsp_route_child,__ATOMIC_RELAXED));
       row(crash,"HOST_SNAPSHOT elapsed_ms=%llu stage=%u fault_state=%u guest_main=%llu rpc=%llu rom_bytes=%llu pending=%u guest_abort=%u host_abort=%u frames=%llu nvn_bootstrap=%u getproc=%u queues=%u/%u window=%u/%u submit=%u/%u finish=%u/%u acquire=%u/%u present=%u/%u ipc=%u/%u\n",
           (unsigned long long)(armTicksToNs(crash_sample-began)/1000000ULL),
           stage,__atomic_load_n(&nx2_fault.state,__ATOMIC_ACQUIRE),
