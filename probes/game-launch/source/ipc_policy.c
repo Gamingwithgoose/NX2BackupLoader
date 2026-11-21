@@ -18,7 +18,21 @@ Nx2IpcDecision nx2_ipc_decide(const void *buffer,uint64_t size,uint32_t kind){
  if(kind==1&&!d.control&&d.command==1&&cmif+24<=end)d.want_fsp=name(p+cmif+16);
  return d;
 }
-int nx2_ipc_fsp_allowed(Nx2IpcDecision d){return d.valid&&((d.control&&d.command<=4)||(!d.control&&(d.command==1||d.command==1005)));}
+/* FSP service access is selected by IPC interface/operation, never by
+ * game ID. Commands 1/1005 are existing supported paths; 62 opens a
+ * read-only cache save-data information reader. Its returned child is
+ * tracked as a distinct read-only object, not an unrestricted FSP proxy. */
+int nx2_ipc_fsp_allowed(Nx2IpcDecision d){
+ return d.valid&&((d.control&&d.command<=4)||
+                  (!d.control&&(d.command==1||d.command==1005||
+                                d.command==62)));
+}
+/* ISaveDataInfoReader supports a read-only enumeration call at command 0.
+ * Reject other calls on this interface instead of giving it proxy access. */
+int nx2_ipc_save_reader_allowed(Nx2IpcDecision d){
+ return d.valid&&((d.control&&d.command<=4)||
+                  (!d.control&&d.command==0));
+}
 
 static int data_area(const unsigned char *p,uint64_t size,uint64_t *start,uint64_t *end){
  if(!p||size<8)return 0;
