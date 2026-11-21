@@ -95,7 +95,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external){
 uint32_t nx2_sync(uint32_t h){void *tlr;__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));return filter_sync(tlr,256,h,0);}
 uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){return filter_sync(p,n,h,1);}
 uint32_t nx2_close_handle(uint32_t h){uint32_t rc=nx2_raw_close(h);if(!rc)set_tag(h,0);return rc;}
-void nx2_break(uint32_t reason,uint64_t address,uint64_t size){nx2_rpc(RPC_BREAK,reason,address,size,0,0,"Native SDK Break",0,0);for(;;)__asm__ volatile("wfe");}
+void nx2_break(uint32_t reason,uint64_t address,uint64_t size){uintptr_t caller=(uintptr_t)__builtin_return_address(0);nx2_rpc(RPC_BREAK,reason,address,size,caller,0,"Native SDK Break",0,0);for(;;)__asm__ volatile("wfe");}
 void nx2_debug(const char *text,uint64_t n){char buf[NX2_PATH_MAX];if(n>=sizeof(buf))n=sizeof(buf)-1;for(uint64_t i=0;i<n;i++)buf[i]=text[i];buf[n]=0;nx2_rpc(RPC_LOG,0,0,0,0,0,buf,0,0);}
 
 uint32_t nx2_async(uint32_t *out,void *p,uint64_t n,uint32_t h){if(tag(h)){nx2_rpc(RPC_ABORT,h,0,0,0,0,"Refused asynchronous SM/FSP operation",0,0);for(;;)__asm__ volatile("wfe");}return nx2_raw_async(out,p,n,h);}
