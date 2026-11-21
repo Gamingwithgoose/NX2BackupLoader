@@ -52,6 +52,7 @@ typedef struct {
 /* Guest IPC SVC breadcrumbs: written without RPC, read by host watchdog.
  * A bounded ring is diagnostic only; never changes IPC routing/results. */
 #define NX2_IPC_TRACE_SLOTS 32
+#define NX2_GRAPHICS_TRACE_SLOTS 32
 typedef struct {
  uint64_t handle,caller;
  uint32_t request_type,command,result,phase;
@@ -76,6 +77,8 @@ typedef struct {
  uint32_t nvn_present_entered,nvn_present_returned;
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
  Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
+ uint32_t graphics_ipc_next;
+ Nx2IpcBreadcrumb graphics_ipc[NX2_GRAPHICS_TRACE_SLOTS];
  Nx2Region regions[39];uint32_t region_count;
  uint32_t preflight,preflight_result;
  uint64_t cache_size;
