@@ -16,6 +16,11 @@
 #include <switch.h>
 #include <switch2/memory/heap.h>
 static PadState pad;
+/* The crash report is durable at snapshot boundaries, not after every line.
+ * Separate, bursty fflush() calls previously competed with game SD reads. */
+static FILE *nx2_deferred_crash_file;
+static unsigned nx2_defer_crash_flush;
+static char nx2_crash_buffer[32768];
 static uint32_t selected_resource;
 static char selected_save[256];
 static char outcome[192] = "Mario Kart World override required.";
@@ -24,7 +29,8 @@ static void row(FILE *f, const char *fmt, ...) {
   va_start(a, fmt);
   vfprintf(f, fmt, a);
   va_end(a);
-  fflush(f);
+  if(f!=nx2_deferred_crash_file || !nx2_defer_crash_flush)
+    fflush(f);
 }
 /* All guest IPC requests and replies remain in the preallocated RAM ring.
  * Only important events are written to the SD by default. This avoids
@@ -73,6 +79,8 @@ static void screen(const char *message) {
 }
 static void __attribute__((noreturn)) stop(FILE *f, const char *why) {
   row(f, "STOP_PROCESS reason=%s\n", why);
+  if(nx2_deferred_crash_file)
+    fflush(nx2_deferred_crash_file);
   fclose(f);
   svcExitProcess();
 }
@@ -193,6 +201,8 @@ static void check_fault(FILE *f, FILE *crash, const Nx2Images *images) {
   if (crash) {
     row(crash,"CRASH_CAPTURED_CPU_EXCEPTION exception_handler=libounce\n");
     write_fault_report(crash,images);
+    /* A CPU fault is more important than batching; persist it now. */
+    fflush(crash);
   }
   write_fault_report(f,images);
   stop(f, "CPU fault captured; faulted thread remains parked; process exiting");
@@ -282,6 +292,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
    * the game cannot flush its own shutdown record. It is overwritten per run.
    * This cannot capture kernel/GPU faults that never reach the CPU handler. */
   FILE *crash = fopen("sdmc:/BackupLoaderMKW-crash.log","w");
+  if(crash)
+    setvbuf(crash,nx2_crash_buffer,_IOFBF,sizeof(nx2_crash_buffer));
   if (crash)
     row(crash,"NX2_CRASH_DIAGNOSTIC version=2 game=%s guest=%016llx host=0400c3f00006e000\n"
               "CAPTURE_MODE libounce_cpu_exception_plus_host_snapshot_and_prelaunch\n"
@@ -532,6 +544,14 @@ static void run(const Nx2Game *game, int rebuild_index) {
   uint32_t last_fsp_route_stage=UINT32_MAX;
   uint32_t last_nvn_stage[NX2_NVN_STAGE_COUNT]={0};
   uint32_t last_nvn_stage_done[NX2_NVN_STAGE_COUNT]={0};
+  /* Preserve flushed prelaunch evidence. Once guest execution begins,
+   * batch independent crash-report writes and flush each complete sample.
+   * Reduces SD sync I/O without weakening the CPU exception fast path. */
+  if(crash){
+    fflush(crash);
+    nx2_deferred_crash_file=crash;
+    nx2_defer_crash_flush=1;
+  }
   for (;;) {
     check_fault(f, crash, images);
     /* The dedicated storage worker services guest RPCs; never block this
@@ -806,6 +826,10 @@ static void run(const Nx2Game *game, int rebuild_index) {
           (unsigned long long)__atomic_load_n(&l->save_gate_caller,__ATOMIC_ACQUIRE));
       last_save_gate_phase=save_phase;
     }
+    /* One filesystem flush per completed crash sample, not one per entry.
+     * A sudden kernel kill can still truncate the current sample; the
+     * previous completed sample is flushed and remains usable. */
+    if(crash && captured_snapshot) fflush(crash);
     /* Capture recent guest SVCs from shared memory without generating
      * any guest RPCs. This survives a guest thread stuck inside the SVC.
      * A short interval is used only after private-save startup. */
