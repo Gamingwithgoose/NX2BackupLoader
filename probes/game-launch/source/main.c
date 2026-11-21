@@ -685,16 +685,6 @@ static void run(const Nx2Game *game, int rebuild_index) {
                                               __ATOMIC_ACQUIRE),
           (unsigned long long)host->calls, (unsigned long long)host->bytes,
           (unsigned long long)frames);
-      if(nx2_nup_active()){
-        uint64_t raw_stats[4]={0};
-        nx2_nup_raw_stats(raw_stats);
-        row(f,"NUP_RAW_READ_AHEAD hits=%llu prefetch_reads=%llu "
-              "direct_reads=%llu prefetch_bytes=%llu\n",
-            (unsigned long long)raw_stats[0],
-            (unsigned long long)raw_stats[1],
-            (unsigned long long)raw_stats[2],
-            (unsigned long long)raw_stats[3]);
-      }
       unsigned pending=0;
       for(unsigned slot=0;slot<NX2_RPC_SLOTS;slot++){
         Nx2Request *request=&l->requests[slot];
