@@ -207,6 +207,30 @@ static uint32_t domain_cap_kind(uint32_t h,uint32_t object){
  trace_unlock();
  return kind;
 }
+/* HIPC CloneCurrentObject / CloneCurrentObjectEx preserves domain
+ * objects on a cloned FSP session. Retain verified reader permissions
+ * without widening the new handle to a general FSP capability. */
+static unsigned domain_cap_clone_handle(uint32_t source,uint32_t clone){
+ if(!source||!clone||source==clone)return 0;
+ unsigned copied=0;
+ trace_lock();
+ for(unsigned i=0;i<128;i++){
+  if(domain_caps[i].handle!=source||domain_caps[i].kind!=3)continue;
+  uint32_t object=domain_caps[i].object;
+  unsigned free_slot=128,already=0;
+  for(unsigned j=0;j<128;j++){
+   if(domain_caps[j].handle==clone &&
+      domain_caps[j].object==object){already=1;break;}
+   if(free_slot==128&&!domain_caps[j].handle)free_slot=j;
+  }
+  if(!already&&free_slot<128){
+   domain_caps[free_slot]=(Nx2DomainCapability){clone,object,3};
+   copied++;
+  }
+ }
+ trace_unlock();
+ return copied;
+}
 static void domain_cap_forget_handle(uint32_t h){
  trace_lock();
  for(unsigned i=0;i<128;i++)if(domain_caps[i].handle==h)
@@ -400,6 +424,14 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            "Malformed read-only FSP iterator request",0,0);
    for(;;)__asm__ volatile("wfe");
  }
+ /* HIPC Control 1 exports a domain object as a standalone handle.
+  * Preserve its verified reader kind before native IPC overwrites TLS. */
+ uint32_t copied_reader=0;
+ if(kind==2&&control&&cmd==1){
+  uint32_t copied_object=0;
+  if(nx2_ipc_control_copy_domain_object(p,n,&copied_object))
+   copied_reader=domain_cap_kind(h,copied_object)==3;
+ }
  /* Avoid two synchronous host RPCs around every game IPC SVC.
   * Record the pre/post state in shared memory instead, including the
   * calls made after save mounting. The host snapshots this ring. */
@@ -498,8 +530,20 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
                "FSP_READER_NON_DOMAIN_OR_UNVERIFIED_RESPONSE",owner,0);
      }
    }
-   else if(kind&&control&&(cmd==1||cmd==2||cmd==4))
-     response_tags(p,scan,kind);
+   else if(kind&&control&&(cmd==1||cmd==2||cmd==4)){
+     /* CopyFromCurrentDomain must keep a reader handle read-only. */
+     response_tags(p,scan,(kind==2&&cmd==1&&copied_reader)?3:kind);
+     /* Session clones inherit only previously validated reader objects. */
+     if(kind==2&&(cmd==2||cmd==4)&&reply_decoded&&!service_result){
+       uint32_t clone=0;
+       if(nx2_ipc_reply_first_moved_handle(p,n,&clone)){
+         unsigned count=domain_cap_clone_handle(h,clone);
+         if(count)
+           nx2_rpc(RPC_LOG,h,clone,count,cmd,0,
+                   "FSP_READER_DOMAIN_CAPABILITIES_CLONED",owner,0);
+       }
+     }
+   }
    /* An SM GetService response identifies the new session's owner.
     * Also trace returned child handles from any already classified
     * session, without changing access-control tags. */
