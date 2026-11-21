@@ -107,6 +107,55 @@ static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game) {
   }
   return 1;
 }
+/* Separate the filesystem host from the diagnostic main loop.
+ * Guest RPC slots stay serialized through ONE service thread, preserving
+ * filesystem handle/cache ownership while allowing independent watchdog
+ * snapshots during slow SD/NUP reads. */
+typedef struct {
+  Nx2Host *host;
+  Nx2Launch *launch;
+  uint64_t last_poll_tick;
+  uint32_t running;
+} Nx2StorageService;
+static Nx2StorageService nx2_storage_service;
+static void storage_service_entry(void *opaque){
+  Nx2StorageService *svc=(Nx2StorageService*)opaque;
+  __atomic_store_n(&svc->running,1,__ATOMIC_RELEASE);
+  for(;;){
+    __atomic_store_n(&svc->last_poll_tick,armGetSystemTick(),__ATOMIC_RELEASE);
+    int completed=nx2_host_poll(svc->host,svc->launch);
+    __atomic_store_n(&svc->last_poll_tick,armGetSystemTick(),__ATOMIC_RELEASE);
+    if(!completed)svcSleepThread(100000);
+  }
+}
+static int start_storage_service(FILE *f,Nx2Host *host,Nx2Launch *launch,
+                                 Thread *thread){
+  uint64_t allowed=0;
+  uint32_t self=svcGetCurrentProcessorNumber();
+  int core=-1;
+  Result rc=svcGetInfo(&allowed,InfoType_CoreMask,CUR_PROCESS_HANDLE,0);
+  if(R_SUCCEEDED(rc)){
+    for(int k=5;k>=0;k--)
+      if(k!=(int)self && (allowed&(UINT64_C(1)<<k))){core=k;break;}
+  }
+  if(core<0){
+    row(f,"STORAGE_WORKER refused=no_available_core\n");
+    return 0;
+  }
+  nx2_storage_service.host=host;
+  nx2_storage_service.launch=launch;
+  nx2_storage_service.last_poll_tick=armGetSystemTick();
+  nx2_storage_service.running=0;
+  /* Slightly higher priority than guest (0x2c). */
+  rc=threadCreate(thread,storage_service_entry,&nx2_storage_service,
+                  NULL,0x80000,0x2b,core);
+  row(f,"STORAGE_WORKER_CREATE core=%d priority=43 result=%08x\n",core,rc);
+  if(R_FAILED(rc))return 0;
+  rc=threadStart(thread);
+  row(f,"STORAGE_WORKER_START handle=%08x result=%08x\n",thread->handle,rc);
+  if(R_FAILED(rc)){threadClose(thread);return 0;}
+  return 1;
+}
 static void write_fault_report(FILE *f, const Nx2Images *images) {
   const ThreadExceptionDump *d = &nx2_fault.dump;
   extern void _start(void);
@@ -448,6 +497,9 @@ static void run(const Nx2Game *game, int rebuild_index) {
     stop(f, "Could not release launcher display");
   appletExit();
   row(f, "HOST_APPLET_PROXY_RELEASED\nGAMEPLAY_CUTOFF disabled\n");
+  Thread storage_worker;
+  if(!start_storage_service(f,host,l,&storage_worker))
+    stop(f,"Storage service worker could not start");
   Thread worker;
   if (!start_worker(f, l, &worker, 1))
     stop(f, "Game worker could not start");
@@ -482,7 +534,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
   uint32_t last_nvn_stage_done[NX2_NVN_STAGE_COUNT]={0};
   for (;;) {
     check_fault(f, crash, images);
-    nx2_host_poll(host, l);
+    /* The dedicated storage worker services guest RPCs; never block this
+     * main/watchdog thread in an SD/NUP read. */
     /* Detect whether native save opening produced a usable virtual domain
      * object without making the guest block on any diagnostic RPC. */
     uint32_t fs_stage=__atomic_load_n(&l->fsp_route_stage,__ATOMIC_ACQUIRE);
@@ -584,6 +637,18 @@ static void run(const Nx2Game *game, int rebuild_index) {
       for(unsigned i=0;i<NX2_RPC_SLOTS;i++)
         if(__atomic_load_n(&l->requests[i].state,__ATOMIC_ACQUIRE))
           pending++;
+      {
+        uint32_t io_slot=__atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE);
+        uint64_t io_started=__atomic_load_n(&host->rpc_started_tick,__ATOMIC_RELAXED);
+        uint64_t now_tick=armGetSystemTick();
+        uint64_t io_age_ms=io_slot && now_tick>=io_started
+            ?armTicksToNs(now_tick-io_started)/1000000ULL:0;
+        row(crash,"STORAGE_SERVICE_SNAPSHOT active_slot=%u op=%u age_ms=%llu completed=%llu thread_running=%u\n",
+            io_slot,__atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED),
+            (unsigned long long)io_age_ms,
+            (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_RELAXED),
+            __atomic_load_n(&nx2_storage_service.running,__ATOMIC_ACQUIRE));
+      }
       row(crash,"GUEST_FSP_ROUTE_SNAPSHOT stage=%u cmd=%u object=%08x result=%08x child=%08x\n",
           __atomic_load_n(&l->fsp_route_stage,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->fsp_route_command,__ATOMIC_RELAXED),
@@ -776,6 +841,18 @@ static void run(const Nx2Game *game, int rebuild_index) {
     if (armTicksToNs(armGetSystemTick() - heartbeat) >=
         (late?1000000000ULL:5000000000ULL)) {
       heartbeat = armGetSystemTick();
+      {
+        uint64_t io_last=__atomic_load_n(&nx2_storage_service.last_poll_tick,__ATOMIC_ACQUIRE);
+        uint64_t io_now=armGetSystemTick();
+        uint32_t io_slot=__atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE);
+        uint64_t io_started=__atomic_load_n(&host->rpc_started_tick,__ATOMIC_RELAXED);
+        row(f,"STORAGE_SERVICE_HEARTBEAT running=%u active_slot=%u active_op=%u active_ms=%llu completed=%llu last_poll_ms=%llu\n",
+            __atomic_load_n(&nx2_storage_service.running,__ATOMIC_ACQUIRE),
+            io_slot,__atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED),
+            (unsigned long long)(io_slot&&io_now>=io_started?armTicksToNs(io_now-io_started)/1000000ULL:0),
+            (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_RELAXED),
+            (unsigned long long)(io_now>=io_last?armTicksToNs(io_now-io_last)/1000000ULL:0));
+      }
       row(f,"IPC_CAPTURE_SUMMARY observed_events=%u consumed_events=%u dropped=%u full_text=%u\n",
           __atomic_load_n(&l->ipc_event_next,__ATOMIC_ACQUIRE),
           ipc_event_cursor,ipc_event_dropped,(unsigned)ipc_full_text);
