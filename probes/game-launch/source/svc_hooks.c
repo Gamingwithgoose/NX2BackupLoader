@@ -260,6 +260,13 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    __atomic_store_n(&crumb->phase,0,__ATOMIC_RELAXED);
    crumb->handle=h;crumb->caller=caller;crumb->request_type=request_type;
    crumb->command=has?cmd:UINT32_MAX;crumb->result=UINT32_MAX;
+   crumb->service_result=UINT32_MAX;
+   const char *label=(kind==1 && service[0])?service:owner;
+   for(unsigned j=0;j<9;j++){
+     crumb->service[j]=label[j];
+     if(!label[j])break;
+   }
+   crumb->service[8]=0;
    __atomic_store_n(&crumb->phase,1,__ATOMIC_RELEASE);
    __atomic_fetch_add(&nx2_launch->ipc_trace_begins,1,__ATOMIC_RELAXED);
  }
@@ -272,6 +279,8 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  }
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
+ if(crumb && reply_decoded)
+   __atomic_store_n(&crumb->service_result,service_result,__ATOMIC_RELEASE);
  if(kind&&reply_decoded)
    nx2_rpc(RPC_LOG,service_result,cmd,h,kind,0,
            "SERVICE_REPLY_RESULT",service,0);
