@@ -72,14 +72,14 @@ static int type(const char *p, int dir) {
   struct STAT st;
   return !STAT(p, &st) && ((st.st_mode & S_IFMT) == (dir ? S_IFDIR : S_IFREG));
 }
-static uint32_t u32(const void *p) {
+static uint32_t read_le32(const void *p) {
   const unsigned char *s = p;
   return (uint32_t)s[0] | (uint32_t)s[1] << 8 | (uint32_t)s[2] << 16 |
          (uint32_t)s[3] << 24;
 }
-static uint64_t u64(const void *p) {
+static uint64_t read_le64(const void *p) {
   const unsigned char *s = p;
-  return u32(s) | (uint64_t)u32(s + 4) << 32;
+  return read_le32(s) | (uint64_t)read_le32(s + 4) << 32;
 }
 static void p32(void *p, uint32_t v) {
   unsigned char *s = p;
@@ -190,11 +190,11 @@ static int catalog_entry(void *v, const char *name) {
     if (f) {
       unsigned char h[128], aci[32];
       if (fread(h, 1, 128, f) == 128 && !memcmp(h, "META", 4)) {
-        game.resource = u32(h + 0x14);
-        uint32_t at = u32(h + 0x70);
+        game.resource = read_le32(h + 0x14);
+        uint32_t at = read_le32(h + 0x70);
         if (at >= 128 && at <= 0x100000 && !fseek(f, (long)at, SEEK_SET) &&
             fread(aci, 1, 32, f) == 32 && !memcmp(aci, "ACI0", 4))
-          game.id = u64(aci + 16);
+          game.id = read_le64(aci + 16);
       }
       fclose(f);
     }
