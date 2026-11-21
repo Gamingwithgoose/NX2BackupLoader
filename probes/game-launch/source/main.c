@@ -162,7 +162,7 @@ static int prepare_phase(FILE *f, const char *root, Nx2Images *images,
   l->arena_base = (uintptr_t)memalign(4096, l->arena_capacity);
   if (!l->arena_base)
     return 0;
-  if (!nx2_host_init(host, f, root, selected_save)) {
+  if (!nx2_host_init(host, f, root, selected_save,guest_id)) {
     free((void *)(uintptr_t)l->arena_base);
     l->arena_base = 0;
     return 0;
