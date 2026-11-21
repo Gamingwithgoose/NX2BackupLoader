@@ -3,6 +3,7 @@
 #include "folder.h"
 #include "heap_plan.h"
 #include "index_cache.h"
+#include "nup.h"
 #include "host.h"
 #include "images.h"
 #include "raw_svc.h"
@@ -176,7 +177,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     return;
   }
   row(f,
-      "NX2BackupLoader Folder Launcher 0.13\nSELECTED_GAME name=%s root=%s "
+      "BackupLoaderMKW experimental 0.14\nSELECTED_GAME name=%s root=%s "
       "program_id=%016llx\n",
       game->name, game->root, (unsigned long long)game->id);
   u64 title = 0;
@@ -195,12 +196,35 @@ static void run(const Nx2Game *game, int rebuild_index) {
     return;
   }
   selected_resource = game->resource;
+  if(game->is_nup) {
+    screen("Opening NUP game...");
+    if(!nx2_nup_open(game->root)) {
+      row(f,"NUP_OPEN_FAILED path=%s\n",game->root);
+      fclose(f);
+      snprintf(outcome,sizeof(outcome),"Could not open this NUP. Check the gameplay log.");
+      return;
+    }
+    size_t npdm_size=0;
+    unsigned char *npdm=nx2_nup_read_all("exefs/main.npdm",0x100000,&npdm_size);
+    if(!npdm || npdm_size<128 || memcmp(npdm,"META",4)) {
+      row(f,"NUP_NPDM_FAILED\n");
+      free(npdm);
+      nx2_nup_close();fclose(f);
+      snprintf(outcome,sizeof(outcome),"NUP main.npdm missing or invalid.");
+      return;
+    }
+    memcpy(&selected_resource,npdm+0x14,4);
+    free(npdm);
+    row(f,"NUP_OPEN_OK title=%016llx resource=%u\n",
+        (unsigned long long)game->id,selected_resource);
+  }
   u64 resource = 0;
   rc = svcGetInfo(&resource, 16, CUR_PROCESS_HANDLE, 0);
   row(f, "RESOURCE_CHECK result=%08x available=%llu requested=%u\n", rc,
       (unsigned long long)resource, selected_resource);
   if (R_FAILED(rc) || resource < selected_resource) {
     row(f, "REFUSED insufficient host system resources\n");
+    nx2_nup_close();
     fclose(f);
     snprintf(outcome, sizeof(outcome),
              "This backup requires more resources than MKW provides.");
@@ -209,6 +233,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   screen(rebuild_index ? "Rebuilding game index..." : "Loading game index...");
   char rom[1400], error[160];
   if (snprintf(rom, sizeof(rom), "%s/romfs", game->root) >= (int)sizeof(rom)) {
+    nx2_nup_close();
     fclose(f);
     return;
   }
@@ -229,6 +254,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     if (scan_cancelled) {
       row(f, "ROMFS_SCAN_CANCELLED\n");
       free(map);
+      nx2_nup_close();
       fclose(f);
       snprintf(outcome, sizeof(outcome), "Indexing cancelled. Press A to restart.");
       return;
@@ -243,6 +269,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   }
   if (!map) {
     row(f, "ROMFS_SCAN_FAILED reason=%s\n", error);
+    nx2_nup_close();
     fclose(f);
     snprintf(outcome, sizeof(outcome),
              "Could not index this folder. See BackupLoaderMKW-gameplay.log.");
@@ -252,6 +279,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   if (!nx2_rom_view(map, map_bytes, &view)) {
     row(f, "ROMFS_INDEX_INVALID\n");
     free(map);
+    nx2_nup_close();
     fclose(f);
     return;
   }
@@ -330,6 +358,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
 done:
   row(f, "REPORT_END game_entry_attempted=0\n");
   fclose(f);
+  nx2_nup_close();
   free(map);
   free(l);
   free(host);
@@ -345,7 +374,9 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
     for (size_t i = page; i < catalog->count && i < page + 15; i++)
       printf("%s %.66s\n", i == selected ? ">" : " ", catalog->items[i].name);
     printf("\n%u / %u\n", (unsigned)selected + 1, (unsigned)catalog->count);
-    if (catalog->items[selected].updates)
+    if (catalog->items[selected].is_nup)
+      printf("NUP base game (experimental direct launch).\n");
+    else if (catalog->items[selected].updates)
       printf("This selection loads base; updates are not merged.\n");
   }
   printf("\nUp/Down: select   A: launch   Hold B+A: rebuild index   X: refresh   +: exit\n\n%s\n",
@@ -390,10 +421,7 @@ int main(int argc, char **argv) {
       selected = move < 0 ? (selected ? selected - 1 : catalog.count - 1)
                           : (selected + 1) % catalog.count;
     if (catalog.count && (down & HidNpadButton_A)) {
-      if (catalog.items[selected].is_nup)
-        snprintf(outcome, sizeof(outcome), "NUP recognized. Archive-backed loading is not ready yet.");
-      else
-        run(&catalog.items[selected], (held & HidNpadButton_B) != 0);
+      run(&catalog.items[selected], (held & HidNpadButton_B) != 0);
     }
     draw(&catalog, selected);
     svcSleepThread(16666667);
