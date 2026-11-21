@@ -12,7 +12,7 @@ BackupLoaderMKW is an experimental **Switch 2** homebrew launcher for extracted 
 - Mario Kart World and its **title override** for launching Homebrew Menu (not Album mode).
 - Your own extracted game files and an SD card.
 
-**NUP files are NOT supported.** Do not put NUPs or encrypted containers in the games folder.
+**Experimental branch:** NUP files can now be recognized and listed, but cannot be launched yet. Do not expect playable NUP support in this build. Encrypted containers are unsupported.
 
 ## Put games on the SD card
 
@@ -41,10 +41,10 @@ Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs
 2. Fully close Mario Kart World.
 3. Start Homebrew Menu using **Mario Kart World's title override**.
 4. Start BackupLoaderMKW.
-5. Select a game using Up/Down or the left stick. Press **A** to launch, **X** to rescan, or **+** to exit the browser.
+5. Select an extracted game using Up/Down or the left stick. Press **A** to launch, **X** to refresh the list, or **+** to exit. Hold **B** while pressing **A** to rebuild an extracted game’s index.
 6. Use HOME / Close Software to stop playing.
 
-If the list is empty, confirm the game folders contain real exefs and romfs directories. Large backups may take several minutes to index.
+If the list is empty, confirm the game folders contain real exefs and romfs directories. Large backups may take several minutes to index the first time. Completed indexes are saved in SD:/switch/BackupLoaderMKW/cache/ so later launches can skip the file-by-file scan. The cache checks the top-level romfs folder timestamp; changes inside nested folders may require **B+A** to rebuild it. NUP files appear in the list if their header and table of contents pass initial checks, but selecting one only shows a development notice.
 
 ## Where saves go
 
@@ -68,7 +68,7 @@ If a backup crashes, copy this file **before launching something else**, because
 
 The loader discovers the selected backup's executable modules and files. It connects supported game SDK calls, lets the game's original startup code run, and handles supported game file and save requests through the SD card. Mario Kart World remains the system's host title, so the loader has MKW's memory allocation and permissions — not necessarily every resource other games require.
 
-It does not install game tickets, rewrite game ownership, or install backups to NAND. The app reads loose files from SD. Different titles have different services, graphics, and memory needs, so there is no promise that they will all launch or save correctly.
+It does not install game tickets, rewrite game ownership, or install backups to NAND. The working game launcher currently reads loose files from SD. Different titles have different services, graphics, and memory needs, so there is no promise that they will all launch or save correctly.
 
 ## Building yourself on Windows
 
@@ -86,6 +86,6 @@ Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro**. Copy 
 
 ## Current limitations
 
-Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUPs and other packaged/encrypted backups are unsupported. Updates are not merged. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
+Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUP discovery is experimental; direct NUP launch and other packaged/encrypted backups are unsupported. Updates are not merged. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
 
 **Early experimental release. Use at your own risk.**
