@@ -24,8 +24,40 @@ static Result mkdir_one(FsFileSystem *sd, const char *path) {
   Result q = fsFsGetEntryType(sd, path, &type);
   return R_SUCCEEDED(q) && type == FsDirEntryType_Dir ? 0 : rc;
 }
+/* Shared archive marker calculation keeps old metadata fully readable. */
+static int archive_marker_for_root(const char *root,char *out,size_t cap){
+ uint64_t hash=UINT64_C(14695981039346656037);
+ for(const unsigned char *p=(const unsigned char*)root;*p;p++){
+  hash^=*p;
+  hash*=UINT64_C(1099511628211);
+ }
+ int n=snprintf(out,cap,"/switch/BackupLoaderMKW/.nx2-archive-%016llx",
+                (unsigned long long)hash);
+ return n>0&&(size_t)n<cap;
+}
+/* Preserve a legacy save if it has a marker or ANY directory contents.
+ * A pre-created empty mount directory does not pin a title to its old
+ * display name. Ambiguous/unreadable legacy data is preserved. */
+static int legacy_archive_present(FsFileSystem *sd,const char *root){
+ FsDirEntryType type=0;
+ if(R_FAILED(fsFsGetEntryType(sd,root,&type))||
+    type!=FsDirEntryType_Dir)return 0;
+ char marker[120];
+ if(!archive_marker_for_root(root,marker,sizeof(marker)))return 1;
+ if(R_SUCCEEDED(fsFsGetEntryType(sd,marker,&type))&&
+    type==FsDirEntryType_File)return 1;
+ FsDir dir;
+ if(R_FAILED(fsFsOpenDirectory(sd,root,
+              FsDirOpenMode_ReadFiles|FsDirOpenMode_ReadDirs,&dir)))
+  return 1;
+ FsDirectoryEntry entry;
+ s64 count=0;
+ Result rc=fsDirRead(&dir,&count,1,&entry);
+ fsDirClose(&dir);
+ return R_FAILED(rc)||count>0;
+}
 int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
-                  const char *save_key) {
+                  const char *save_key,uint64_t guest_id) {
   memset(h, 0, sizeof(*h));
   h->report = report;
   h->sd = fsdevGetDeviceFileSystem("sdmc");
@@ -38,10 +70,21 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
       !strcmp(save_key, "..") || strchr(save_key, '/') ||
       strchr(save_key, '\\') || strchr(save_key, ':'))
     return 0;
-  int n = snprintf(h->save_root, sizeof(h->save_root),
-                   "/switch/BackupLoaderMKW/%s", save_key);
-  if (n < 0 || n >= (int)sizeof(h->save_root))
-    return 0;
+  char old_root[512];
+  int n=snprintf(old_root,sizeof(old_root),
+                 "/switch/BackupLoaderMKW/%s",save_key);
+  if(n<0||n>=(int)sizeof(old_root))return 0;
+  int legacy=(!guest_id)||legacy_archive_present(h->sd,old_root);
+  if(legacy)
+    n=snprintf(h->save_root,sizeof(h->save_root),"%s",old_root);
+  else
+    n=snprintf(h->save_root,sizeof(h->save_root),
+               "/switch/BackupLoaderMKW/title-%016llx",
+               (unsigned long long)guest_id);
+  if(n<0||n>=(int)sizeof(h->save_root))return 0;
+  logline(h,"SAVE_NAMESPACE strategy=%s guest=%016llx root=%s\n",
+          legacy?"existing_legacy":"canonical_program_id",
+          (unsigned long long)guest_id,h->save_root);
   const char *paths[] = {"/switch/BackupLoaderMKW", h->save_root};
   for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
     Result rc = mkdir_one(h->sd, paths[i]);
@@ -57,15 +100,7 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
  * is never visible as a guest save file. Existing legacy saves (before this
  * marker existed) remain valid if they contain ordinary game content. */
 static int archive_marker_path(Nx2Host *h,char *out,size_t cap){
-  uint64_t hash=UINT64_C(14695981039346656037);
-  for(const unsigned char *p=(const unsigned char*)h->save_root;*p;p++){
-    hash^=*p;
-    hash*=UINT64_C(1099511628211);
-  }
-  int n=snprintf(out,cap,
-      "/switch/BackupLoaderMKW/.nx2-archive-%016llx",
-      (unsigned long long)hash);
-  return n>0&&(size_t)n<cap;
+ return archive_marker_for_root(h->save_root,out,cap);
 }
 static Result archive_exists(Nx2Host *h,uint64_t *exists){
   if(!exists)return NX2_INVALID;
