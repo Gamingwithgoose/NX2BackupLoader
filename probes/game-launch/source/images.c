@@ -90,7 +90,7 @@ static int gate(FILE *f, Nx2Module *m, uint32_t *cursor, uint32_t offset,
   return ok;
 }
 static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
-                      unsigned role, int game) {
+                      unsigned role, int game, const Nx2Launch *launch) {
   if (!game)
     return 0;
   Nx2PatchSpec plan[NX2_RESOLVED_MAX];
@@ -119,8 +119,8 @@ static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
   }
   /* The comparison probe is OOT-image-specific and refuses to modify
    * unknown revisions rather than risking an incorrect instruction hook. */
-  if(role==1 && all && nx2_launch &&
-     nx2_launch->guest_program_id==UINT64_C(0x0400486024dec000)) {
+  if(role==1 && launch &&
+     launch->guest_program_id==UINT64_C(0x0400486024dec000)) {
     if(!install_oot_budget_probe(f,m,&cursor))return 0;
   }
   row(f, "THUNK_SPACE module=%u used=%u available=%u resolved_hooks=%u\n",
@@ -255,7 +255,7 @@ int nx2_images_load(FILE *f, const char *root, Nx2Images *all, Nx2Launch *l,
             cmp32, cmp64, conditional, w[4] & 15U);
       }
     }
-    if (!apply_plan(f, all, m, i, role, game))
+    if (!apply_plan(f, all, m, i, role, game, l))
       goto fail;
     armDCacheFlush(im->backing, im->image);
     const struct {
