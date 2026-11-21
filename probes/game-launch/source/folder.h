@@ -19,3 +19,6 @@ int nx2_folder_modules(const char *, char names[13][16], unsigned *);
 void *nx2_folder_rom(const char *, size_t *, char error[160]);
 
 void nx2_folder_progress(void (*)(uint32_t, void *), void *);
+
+/* Checked during directory scanning so B can cancel without closing the app. */
+void nx2_folder_cancel(int (*fn)(void *), void *ctx);
