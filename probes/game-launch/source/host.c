@@ -350,13 +350,42 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     if(sp && !(sp&7)){
       MemoryInfo stack;u32 page=0;
       Result q=svcQueryMemory(&stack,&page,sp);
-      logline(h,"SDK_BREAK_STACK sp=%016llx query=%08x type=%u perm=%u\n",
+      logline(h,"SDK_BREAK_STACK fp=%016llx query=%08x type=%u perm=%u\n",
               (unsigned long long)sp,q,
               R_SUCCEEDED(q)?stack.type:0,
               R_SUCCEEDED(q)?stack.perm:0);
       if(R_SUCCEEDED(q) && stack.addr<=sp &&
          stack.size<=UINT64_MAX-stack.addr &&
          sp<stack.addr+stack.size && (stack.perm&Perm_R)){
+        /* Follow the AArch64 [previous x29, saved x30] frame chain,
+         * instead of interpreting incidental stack values as callers.
+         * Only accept aligned, increasing links in the same mapped stack. */
+        uint64_t stack_end=stack.addr+stack.size;
+        uintptr_t frame=sp;
+        for(unsigned depth=0;depth<24;depth++){
+          if((frame&15) || frame<stack.addr ||
+             frame>stack_end || stack_end-frame<16)break;
+          const uint64_t *record=(const uint64_t *)(uintptr_t)frame;
+          uint64_t next=record[0],return_pc=record[1];
+          int found=0;
+          for(uint32_t j=0;j<l->region_count;j++){
+            const Nx2Region *m=&l->regions[j];
+            if(m->permission==5 && return_pc>=m->begin &&
+               return_pc<m->end){
+              logline(h,
+                "SDK_BREAK_FRAME depth=%u region=%u code_offset=%llx\n",
+                depth,j,(unsigned long long)(return_pc-m->begin));
+              found=1;
+              break;
+            }
+          }
+          if(!found)
+            logline(h,"SDK_BREAK_FRAME depth=%u return=%016llx (not guest code)\n",
+                    depth,(unsigned long long)return_pc);
+          if(next<=frame || next>stack_end || next-frame>1024*1024)
+            break;
+          frame=(uintptr_t)next;
+        }
         uint64_t accessible=(stack.addr+stack.size)-sp;
         if(accessible>2048)accessible=2048;
         const uint64_t *words=(const uint64_t *)sp;
