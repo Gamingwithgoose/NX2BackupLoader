@@ -45,7 +45,11 @@ int nx2_prepare_nso(const char *path,const char *expected,Nx2Sha256 hash,void **
         snprintf(internal,sizeof(internal),"exefs/%s",leaf+7);
         size_t n=0;
         raw=nx2_nup_read_all(internal,160*1024*1024,&n);
-        if(!raw)FAIL("NUP module read/decompression failed");
+        if(!raw) {
+            snprintf(error,160,"NUP %.20s: %.120s",
+                     leaf+7,nx2_nup_read_error());
+            goto finish;
+        }
         length=(int64_t)n;
     } else {
         f=fopen(path,"rb");
