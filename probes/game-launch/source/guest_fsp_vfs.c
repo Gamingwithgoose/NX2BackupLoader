@@ -121,7 +121,7 @@ int nx2_guest_fsp_unsupported(void *buffer,uint64_t size,Nx2IpcDecision d){
  const unsigned char *start=cmifGetAlignedDataStart(q.data.data_words,buffer);
  const unsigned char *hdr=start+(d.domain?16:0);
  if(hdr+16<=(const unsigned char*)buffer+size)
-  token=read32(hdr+12);
+  token=read32((d.domain?start:hdr)+12);
  return write_reply(buffer,size,d.domain,NX2_FS_UNSUPPORTED,0,0,0,token);
 }
 /* An nn::sf auto-buffer is encoded as a PAIR of descriptors: one X-static
@@ -234,7 +234,9 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
   case 7:op=RPC_SAVE_TYPE;break;
   case 8:op=RPC_SAVE_OPEN;break;
   case 9:op=RPC_DIR_OPEN;break;
-  case 10:return nx2_rpc(RPC_COMMIT,0,0,0,0,0,0,0,0);
+  case 10:
+   if(obj->read_only)return NX2_FS_UNSUPPORTED;
+   return nx2_rpc(RPC_COMMIT,0,0,0,0,0,0,0,0);
   case 11:op=RPC_SAVE_FREE;break;
   case 12:op=RPC_SAVE_TOTAL;break;
   case 13:op=RPC_SAVE_CLEAN;break;
@@ -363,7 +365,9 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  if(declared_end>end||in>declared_end||read32(head)!=0x49434653U)
   return 0;
  uint64_t avail=(uint64_t)(declared_end-in);
- uint32_t token=read32(head+12);
+ /* Domain requests carry their context token in the domain header.
+  * Non-domain CMIF uses the inner SFCI token. Echo the correct one. */
+ uint32_t token=read32(d.domain?cmif+12:head+12);
  uint32_t rc=NX2_FS_UNSUPPORTED,new_id=0;
  uint32_t out_size=0;unsigned char out[64]={0};
  if(!obj.kind){
