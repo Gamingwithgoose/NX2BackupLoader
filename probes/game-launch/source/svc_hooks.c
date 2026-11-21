@@ -169,7 +169,7 @@ uint32_t nx2_connect(uint32_t *out,const char *name){nx2_rpc(RPC_LOG,0x1f,0,0,0,
 static uint32_t word(const unsigned char *p){return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 /* Best-effort diagnostic ownership, deliberately separate from the SM/FSP
  * enforcement tags. A slot never authorizes an IPC request. */
-typedef struct {uint32_t handle;char service[9];} Nx2IpcTraceHandle;
+typedef struct {uint32_t handle;char service[9];uint8_t root_first_pending;} Nx2IpcTraceHandle;
 static Nx2IpcTraceHandle ipc_owners[256];
 static volatile uint32_t ipc_trace_lock;
 static void trace_lock(void){
@@ -219,7 +219,7 @@ static void domain_cap_forget_object(uint32_t h,uint32_t object){
      domain_caps[i]=(Nx2DomainCapability){0};
  trace_unlock();
 }
-static void trace_owner(uint32_t h,const char *name){
+static void trace_owner(uint32_t h,const char *name,int is_service_root){
  if(!h||!name||!name[0])return;
  trace_lock();
  unsigned slot=256;
@@ -228,11 +228,25 @@ static void trace_owner(uint32_t h,const char *name){
    if(slot==256&&!ipc_owners[i].handle)slot=i;
  }
  if(slot<256){
+   if(ipc_owners[slot].handle!=h)ipc_owners[slot].root_first_pending=0;
    ipc_owners[slot].handle=h;
    unsigned i=0;for(;i<8&&name[i];i++)ipc_owners[slot].service[i]=name[i];
    ipc_owners[slot].service[i]=0;
+   if(is_service_root)ipc_owners[slot].root_first_pending=1;
  }
  trace_unlock();
+}
+static int trace_claim_first_root(uint32_t h){
+ int found=0;
+ trace_lock();
+ for(unsigned i=0;i<256;i++){
+   if(ipc_owners[i].handle==h && ipc_owners[i].root_first_pending){
+     ipc_owners[i].root_first_pending=0;
+     found=1;break;
+   }
+ }
+ trace_unlock();
+ return found;
 }
 static void trace_name(uint32_t h,char out[9]){
  out[0]=0;
@@ -246,14 +260,15 @@ static void trace_name(uint32_t h,char out[9]){
 static void trace_forget(uint32_t h){
  trace_lock();
  for(unsigned i=0;i<256;i++)if(ipc_owners[i].handle==h){
-   ipc_owners[i].handle=0;ipc_owners[i].service[0]=0;break;
+   ipc_owners[i].handle=0;ipc_owners[i].service[0]=0;
+   ipc_owners[i].root_first_pending=0;break;
  }
  trace_unlock();
 }
 /* The HIPC special header contains copy and move handles. Read no more
  * than the provided request/reply buffer, and emit only handle IDs. */
 static void trace_reply_handles(const unsigned char *p,uint64_t n,
-                                uint32_t parent,const char *owner){
+                                uint32_t parent,const char *owner,int root){
  if(!p||n<12||!(word(p+4)&0x80000000U))return;
  uint32_t sh=word(p+8),copies=(sh>>1)&15U,moves=(sh>>5)&15U;
  uint64_t off=12+((sh&1U)?8U:0U);
@@ -261,7 +276,7 @@ static void trace_reply_handles(const unsigned char *p,uint64_t n,
  for(uint32_t i=0;i<copies+moves;i++){
    uint32_t child=word(p+off+4U*i);
    if(!child)continue;
-   trace_owner(child,owner);
+   trace_owner(child,owner,root);
    /* Handle ownership remains tracked after save mount, but successful
     * child acquisition needn't block its caller on a diagnostic RPC. */
    if(!__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE))
@@ -279,6 +294,13 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  char service[9]={0},owner[9]={0};
  if(kind==1)nx2_ipc_service_name(p,n,service);
  trace_name(h,owner);
+ /* A first request to a newly acquired SM service is a valuable
+  * last-operation marker if the process exits before any snapshot. */
+ int first_root_method=(kind==0 && request_type!=2 && owner[0] &&
+                        trace_claim_first_root(h));
+ if(first_root_method)
+   nx2_rpc(RPC_LOG,h,request_type,cmd,caller,0,
+           "SERVICE_ROOT_FIRST_IPC_BEGIN",owner,0);
  /* Snapshot before SVC: kernel may replace TLS request bytes with its
   * reply. No payload contents, guest pointers, or sensitive IDs logged. */
  const uint32_t hdr0=n>=4?word(p):0;
@@ -380,6 +402,9 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    domain_cap_forget_handle(h);
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
+ if(first_root_method)
+   nx2_rpc(RPC_LOG,h,rc,reply_decoded?service_result:UINT32_MAX,cmd,0,
+           "SERVICE_ROOT_FIRST_IPC_RESULT",owner,0);
  if(crumb && reply_decoded)
    __atomic_store_n(&crumb->service_result,service_result,__ATOMIC_RELEASE);
  if(graphics_crumb && reply_decoded)
@@ -413,8 +438,8 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
     * Also trace returned child handles from any already classified
     * session, without changing access-control tags. */
    if(reply_decoded && !service_result){
-     if(kind==1&&service[0])trace_reply_handles(p,scan,h,service);
-     else if(owner[0])trace_reply_handles(p,scan,h,owner);
+     if(kind==1&&service[0])trace_reply_handles(p,scan,h,service,1);
+     else if(owner[0])trace_reply_handles(p,scan,h,owner,0);
    }
  }
  if(rc && request_type==2 && rc==0xF601){
