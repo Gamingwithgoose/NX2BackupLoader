@@ -353,6 +353,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
   u32 previous_graphics_ipc = UINT32_MAX;
   u32 last_graphics_bootstrap=UINT32_MAX,last_graphics_getproc=UINT32_MAX,
       last_graphics_present=UINT32_MAX;
+  u32 last_nvn_device=UINT32_MAX,last_nvn_queue=UINT32_MAX,
+      last_nvn_window=UINT32_MAX;
   for (;;) {
     check_fault(f, images);
     nx2_host_poll(host, l);
@@ -385,6 +387,20 @@ static void run(const Nx2Game *game, int rebuild_index) {
       last_graphics_bootstrap=bcount;
       last_graphics_getproc=gcount;
       last_graphics_present=pcount;
+    }
+    uint32_t dev=__atomic_load_n(&l->nvn_device_entered,__ATOMIC_ACQUIRE);
+    uint32_t que=__atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE);
+    uint32_t win=__atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE);
+    uint32_t devdone=__atomic_load_n(&l->nvn_device_returned,__ATOMIC_ACQUIRE);
+    uint32_t quedone=__atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE);
+    uint32_t windone=__atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE);
+    if(dev!=last_nvn_device||que!=last_nvn_queue||win!=last_nvn_window||
+       dev!=devdone||que!=quedone||win!=windone){
+      row(f,"NVN_INIT_PROGRESS device=%u/%u result=%08x queue=%u/%u result=%08x window=%u/%u result=%08x\n",
+          dev,devdone,__atomic_load_n(&l->nvn_device_result,__ATOMIC_ACQUIRE),
+          que,quedone,__atomic_load_n(&l->nvn_queue_result,__ATOMIC_ACQUIRE),
+          win,windone,__atomic_load_n(&l->nvn_window_result,__ATOMIC_ACQUIRE));
+      last_nvn_device=dev;last_nvn_queue=que;last_nvn_window=win;
     }
     /* Capture recent guest SVCs from shared memory without generating
      * any guest RPCs. This survives a guest thread stuck inside the SVC.
@@ -456,6 +472,16 @@ static void run(const Nx2Game *game, int rebuild_index) {
           __atomic_load_n(&l->nvn_present_lookups,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE));
+      row(f,"NVN_INIT device=%u/%u result=%08x queue=%u/%u result=%08x window=%u/%u result=%08x\n",
+          __atomic_load_n(&l->nvn_device_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_device_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_device_result,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_result,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_result,__ATOMIC_ACQUIRE));
       /* Compare against emulator's documented NVDRV commands (0 Open,
        * 3 Initialize) and VI layer/display commands (1010, 2020, 2030,
        * 5202) without emulating their replies or changing the native SVC. */
