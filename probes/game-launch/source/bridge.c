@@ -150,9 +150,61 @@ static uint32_t window_init_gate(void *obj,const void *builder){
  __atomic_fetch_add(&nx2_launch->nvn_window_returned,1,__ATOMIC_RELEASE);
  return rc;
 }
+/* Post-initialization NVN instrumentation. These wrappers always forward to
+ * the genuine driver; no synchronous logging, allocation, or RPC is performed.
+ * The exact integer/pointer signatures preserve the guest ABI. */
+static void queue_submit_gate(void *queue,int count,const uint64_t *handles){
+ __atomic_fetch_add(&nx2_launch->nvn_stage_entered[0],1,__ATOMIC_RELAXED);
+ nx2_launch->api.original_queue_submit(queue,count,handles);
+ __atomic_fetch_add(&nx2_launch->nvn_stage_returned[0],1,__ATOMIC_RELEASE);
+}
+static void queue_flush_gate(void *queue){
+ __atomic_fetch_add(&nx2_launch->nvn_stage_entered[1],1,__ATOMIC_RELAXED);
+ nx2_launch->api.original_queue_flush(queue);
+ __atomic_fetch_add(&nx2_launch->nvn_stage_returned[1],1,__ATOMIC_RELEASE);
+}
+static void queue_finish_gate(void *queue){
+ __atomic_fetch_add(&nx2_launch->nvn_stage_entered[2],1,__ATOMIC_RELAXED);
+ nx2_launch->api.original_queue_finish(queue);
+ __atomic_fetch_add(&nx2_launch->nvn_stage_returned[2],1,__ATOMIC_RELEASE);
+}
+static uint32_t window_acquire_gate(void *window,void *sync,int *index){
+ __atomic_fetch_add(&nx2_launch->nvn_stage_entered[3],1,__ATOMIC_RELAXED);
+ uint32_t rc=nx2_launch->api.original_window_acquire(window,sync,index);
+ __atomic_store_n(&nx2_launch->nvn_stage_result[3],rc,__ATOMIC_RELEASE);
+ __atomic_fetch_add(&nx2_launch->nvn_stage_returned[3],1,__ATOMIC_RELEASE);
+ return rc;
+}
+static uint32_t queue_acquire_gate(void *queue,void *window,int *index){
+ __atomic_fetch_add(&nx2_launch->nvn_stage_entered[4],1,__ATOMIC_RELAXED);
+ uint32_t rc=nx2_launch->api.original_queue_acquire(queue,window,index);
+ __atomic_store_n(&nx2_launch->nvn_stage_result[4],rc,__ATOMIC_RELEASE);
+ __atomic_fetch_add(&nx2_launch->nvn_stage_returned[4],1,__ATOMIC_RELEASE);
+ return rc;
+}
 static uintptr_t getproc_gate(void *device,const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_getproc(device,name);
+ if(result&&equal(name,"nvnQueueSubmitCommands")){
+   __atomic_store_n(&nx2_launch->api.original_queue_submit,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)queue_submit_gate;
+ }
+ if(result&&equal(name,"nvnQueueFlush")){
+   __atomic_store_n(&nx2_launch->api.original_queue_flush,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)queue_flush_gate;
+ }
+ if(result&&equal(name,"nvnQueueFinish")){
+   __atomic_store_n(&nx2_launch->api.original_queue_finish,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)queue_finish_gate;
+ }
+ if(result&&equal(name,"nvnWindowAcquireTexture")){
+   __atomic_store_n(&nx2_launch->api.original_window_acquire,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)window_acquire_gate;
+ }
+ if(result&&equal(name,"nvnQueueAcquireTexture")){
+   __atomic_store_n(&nx2_launch->api.original_queue_acquire,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)queue_acquire_gate;
+ }
  if(result&&equal(name,"nvnDeviceInitialize")){
    __atomic_store_n(&nx2_launch->api.original_device_initialize,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)device_init_gate;
