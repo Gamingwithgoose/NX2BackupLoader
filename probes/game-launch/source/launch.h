@@ -68,6 +68,8 @@ typedef struct {
  * A bounded ring is diagnostic only; never changes IPC routing/results. */
 #define NX2_IPC_TRACE_SLOTS 32
 #define NX2_GRAPHICS_TRACE_SLOTS 32
+/* Experimental all-service IPC metadata trace; 0 bytes of guest payload. */
+#define NX2_IPC_EVENT_SLOTS 4096U
 #define NX2_NVN_STAGE_COUNT 5
 /* NVN stages: 0 submit, 1 flush, 2 finish, 3 window acquire, 4 queue acquire. */
 typedef struct {
@@ -76,6 +78,14 @@ typedef struct {
  uint32_t service_result;
  char service[9];
 } Nx2IpcBreadcrumb;
+typedef struct {
+ uint64_t caller,tick;
+ uint32_t sequence; /* monotonic index+1, published last */
+ uint32_t call_id,phase,handle,kind,request_type;
+ uint32_t command,object_id,flags,hdr0,hdr1,special;
+ uint32_t kernel_result,cmif_result;
+ char service[9];
+} Nx2IpcEvent;
 typedef struct {
  Nx2RomView rom;
  Nx2LaunchApi api;
@@ -109,6 +119,8 @@ typedef struct {
  uint32_t nvn_stage_result[NX2_NVN_STAGE_COUNT];
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
  Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
+ uint32_t ipc_call_next,ipc_event_next;
+ Nx2IpcEvent ipc_events[NX2_IPC_EVENT_SLOTS];
  uint32_t graphics_ipc_next;
  Nx2IpcBreadcrumb graphics_ipc[NX2_GRAPHICS_TRACE_SLOTS];
  Nx2Region regions[39];uint32_t region_count;
