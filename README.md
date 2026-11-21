@@ -94,4 +94,4 @@ Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NU
 
 Use the experimental-nup-support branch, run build.bat, and keep the old working NRO as a backup. Test an extracted game first: start indexing, press B after a few progress updates, then select it again. You should see the previous completed directories recovered and the file count jump forward. After a successful scan, the next launch should load the saved index. Then select a valid NUP base-game archive and press A. It should attempt the same native launch path without extracting the archive. The SD root gameplay log records NUP_OPEN_OK, NUP_ROMFS_INDEX_BUILT, module preparation and any launch failure. Copy the log before another test replaces it.
 
-Direct NUP support uses a standalone Zstandard decoder derived from the dual-licensed Zstandard project (Yann Collet/Facebook). See the copyright notices in source/zstd_decoder.c. No games or Nintendo executables are included.
+Direct NUP support reuses the Zstandard decoder already bundled with this project (see vendor/NOTICE and vendor/COPYING). No games or Nintendo executables are included.
