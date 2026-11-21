@@ -4,7 +4,29 @@
 #include "raw_svc.h"
 #include "vm_memory.h"
 #include <switch.h>
-uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t sub){Nx2Launch *l=nx2_launch;if(__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE))return nx2_raw_info(out,type,handle,sub);if(handle==0xffff8001U&&!sub){switch(type){case 4:*out=l->heap_base;return 0;case 5:case 6:case 21:*out=l->heap_capacity;return 0;case 7:case 22:*out=__atomic_load_n(&l->heap_size,__ATOMIC_ACQUIRE);return 0;}}return nx2_raw_info(out,type,handle,sub);}
+uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t sub){
+ Nx2Launch *l=nx2_launch;
+ /* The guest is executing inside MKW's process, but its own program ID
+  * must remain the selected title's ID. Only intercept the current-process
+  * identity query; retain real kernel results for all memory accounting. */
+ if(out && l && handle==CUR_PROCESS_HANDLE && sub==0 &&
+    type==InfoType_ProgramId && l->guest_program_id){
+   *out=l->guest_program_id;
+   nx2_rpc(RPC_LOG,l->guest_program_id,0,0,0,0,
+           "GUEST_PROGRAM_ID",0,0);
+   return 0;
+ }
+ if(__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE))
+   return nx2_raw_info(out,type,handle,sub);
+ if(handle==CUR_PROCESS_HANDLE&&!sub){
+  switch(type){
+   case 4:*out=l->heap_base;return 0;
+   case 5:case 6:case 21:*out=l->heap_capacity;return 0;
+   case 7:case 22:*out=__atomic_load_n(&l->heap_size,__ATOMIC_ACQUIRE);return 0;
+  }
+ }
+ return nx2_raw_info(out,type,handle,sub);
+}
 /* Native SDK heap requests must go through the actual kernel, not a
  * fake arena pointer. Preserve the host allocator's committed prefix,
  * stay in the game's original reserved heap span, and keep physical
