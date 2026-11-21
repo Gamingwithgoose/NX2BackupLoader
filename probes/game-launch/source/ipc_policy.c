@@ -86,6 +86,41 @@ int nx2_ipc_reply_result(const void *buffer,uint64_t size,uint32_t request_type,
  *out=word(p+at+8);return 1;
 }
 
+
+/* HIPC control 1 (CopyFromCurrentDomain) converts a domain object to a
+ * separate session handle. Preserve its interface kind after this operation.
+ * Decode only the 4-byte object ID in a bounded control SFCI request. */
+int nx2_ipc_control_copy_domain_object(const void *buffer,uint64_t size,
+                                       uint32_t *out){
+  if(!out)return 0;
+  Nx2IpcDecision d=nx2_ipc_decide(buffer,size,2);
+  if(!d.valid||!d.control||d.domain||d.command!=1)return 0;
+  const unsigned char *p=buffer;uint64_t at=0,end=0;
+  if(!data_area(p,size,&at,&end))return 0;
+  at=(at+15)&~UINT64_C(15);
+  if(at>end||end-at<20||word(p+at)!=0x49434653)return 0;
+  uint32_t object=word(p+at+16);
+  if(!object)return 0;
+  *out=object;
+  return 1;
+}
+/* A cloned session is returned as a MOVED HIPC handle, not a copied
+ * handle. Do not confuse its ID with a domain object ID or accept a
+ * stale value past the actual buffer boundary. */
+int nx2_ipc_reply_first_moved_handle(const void *buffer,uint64_t size,
+                                     uint32_t *out){
+  const unsigned char *p=buffer;
+  if(!p||!out||size<12||(word(p+4)&0x80000000U)==0)return 0;
+  uint32_t sh=word(p+8);
+  uint32_t copies=(sh>>1)&15U,moves=(sh>>5)&15U;
+  uint64_t off=12U+((sh&1U)?8U:0U)+(uint64_t)copies*4U;
+  if(!moves||off>size||(uint64_t)moves*4U>size-off)return 0;
+  uint32_t handle=word(p+off);
+  if(!handle)return 0;
+  *out=handle;
+  return 1;
+}
+
 /* A zero-payload domain response that creates a child object places its
  * first object ID immediately after the 16-byte SFCO response header.
  * Read only if the HIPC data bounds, response magic and object count
