@@ -82,15 +82,20 @@ static int absolute_entry(unsigned char *text,uint32_t original_size,
   if(!original){patch_reason="absolute_fallback_requires_original";return 0;}
   if(original_size-at<16){patch_reason="prologue_shorter_than_16";return 0;}
   if(padded-*cursor<32){patch_reason="insufficient_executable_trampoline_padding";return 0;}
+  uint32_t off=*cursor;
   uint32_t saved[4];
   for(unsigned i=0;i<4;i++){
-    saved[i]=word(text+at+4*i);
-    if(pc_relative(saved[i])) {
-      patch_reason="pc_relative_instruction_in_16_byte_prologue";
+    uint32_t ins=word(text+at+4*i);
+    /* A branch into this overwritten 16-byte prologue would require
+     * rewriting its internal control-flow edges. Refuse it until handled. */
+    if((ins&0x7c000000)==0x14000000) {
+      patch_reason="branch_in_16_byte_prologue";return 0;
+    }
+    if(!relocate_one(ins,at+4*i,off+4*i,&saved[i])) {
+      patch_reason="unsupported_pc_relative_16_byte_prologue";
       return 0;
     }
   }
-  uint32_t off=*cursor;
   int64_t pages=(int64_t)((at+16)>>12)-(int64_t)((off+16)>>12);
   if(pages<-(1LL<<20)||pages>=(1LL<<20)){
     patch_reason="trampoline_return_adrp_out_of_range";return 0;
