@@ -252,7 +252,14 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
   * Record the pre/post state in shared memory instead, including the
   * calls made after save mounting. The host snapshots this ring. */
  const uint32_t late=__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE);
- Nx2IpcBreadcrumb *crumb=0;
+ Nx2IpcBreadcrumb *crumb=0,*graphics_crumb=0;
+ const char *graphics_owner=(kind==1&&service[0])?service:owner;
+ const int graphics_service=
+   ((graphics_owner[0]=='v'&&graphics_owner[1]=='i'&&
+      (graphics_owner[2]==':'||graphics_owner[2]==0))||
+    (graphics_owner[0]=='n'&&graphics_owner[1]=='v'&&
+     graphics_owner[2]=='d'&&graphics_owner[3]=='r'&&
+     graphics_owner[4]=='v'));
  if(request_type!=2){
    uint32_t seq=__atomic_fetch_add(&nx2_launch->ipc_trace_next,1,
                                   __ATOMIC_RELAXED);
@@ -269,6 +276,21 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    crumb->service[8]=0;
    __atomic_store_n(&crumb->phase,1,__ATOMIC_RELEASE);
    __atomic_fetch_add(&nx2_launch->ipc_trace_begins,1,__ATOMIC_RELAXED);
+   if(graphics_service){
+     uint32_t gs=__atomic_fetch_add(&nx2_launch->graphics_ipc_next,1,__ATOMIC_RELAXED);
+     graphics_crumb=&nx2_launch->graphics_ipc[gs%NX2_GRAPHICS_TRACE_SLOTS];
+     __atomic_store_n(&graphics_crumb->phase,0,__ATOMIC_RELAXED);
+     graphics_crumb->handle=h;graphics_crumb->caller=caller;
+     graphics_crumb->request_type=request_type;
+     graphics_crumb->command=has?cmd:UINT32_MAX;
+     graphics_crumb->result=UINT32_MAX;graphics_crumb->service_result=UINT32_MAX;
+     for(unsigned j=0;j<9;j++){
+       graphics_crumb->service[j]=graphics_owner[j];
+       if(!graphics_owner[j])break;
+     }
+     graphics_crumb->service[8]=0;
+     __atomic_store_n(&graphics_crumb->phase,1,__ATOMIC_RELEASE);
+   }
  }
  if(kind && !late)nx2_rpc(RPC_IPC,h,cmd,UINT64_MAX,kind,0,"IPC_BEGIN",service,0);
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
@@ -277,10 +299,16 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    __atomic_store_n(&crumb->phase,2,__ATOMIC_RELEASE);
    __atomic_fetch_add(&nx2_launch->ipc_trace_ends,1,__ATOMIC_RELAXED);
  }
+ if(graphics_crumb){
+   graphics_crumb->result=rc;
+   __atomic_store_n(&graphics_crumb->phase,2,__ATOMIC_RELEASE);
+ }
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
  if(crumb && reply_decoded)
    __atomic_store_n(&crumb->service_result,service_result,__ATOMIC_RELEASE);
+ if(graphics_crumb && reply_decoded)
+   __atomic_store_n(&graphics_crumb->service_result,service_result,__ATOMIC_RELEASE);
  if(kind&&reply_decoded)
    nx2_rpc(RPC_LOG,service_result,cmd,h,kind,0,
            "SERVICE_REPLY_RESULT",service,0);
