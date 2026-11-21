@@ -119,14 +119,20 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     rc = fsFileRead(&h->cache[slot].file, r->b, r->buffer, r->c,
                     FsReadOption_None, &read);
     h->bytes += read;
-    if (!h->cache[slot].logged || R_FAILED(rc)) {
+    /* Startup may read hundreds of files in parallel. Every successful
+     * asset log is an SD-card flush on the host and a blocking guest RPC.
+     * Keep initial examples, periodic samples and every failure, but stop
+     * turning routine resource loading into synchronous log traffic. */
+    if (R_FAILED(rc) || read!=r->c ||
+        (!h->cache[slot].logged &&
+         (h->calls<96 || !(h->calls & 127)))) {
       logline(h,
               "ROM_ASSET_READ file=%s offset=%llu requested=%llu read=%llu "
               "result=%08x\n",
               relative, (unsigned long long)r->b, (unsigned long long)r->c,
               (unsigned long long)read, rc);
-      h->cache[slot].logged = 1;
     }
+    h->cache[slot].logged = 1;
     if (R_SUCCEEDED(rc) && read != r->c)
       rc = NX2_INVALID;
     return rc;
