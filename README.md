@@ -135,3 +135,20 @@ Both OOT sources now pass NPDM/NSO loading, construct the 186,587-entry RomFS in
 The native guest `GetInfo(InfoType_ProgramId, CUR_PROCESS_HANDLE, 0)` now returns the **selected game's** title ID, rather than Mario Kart World's host title ID. Only this one information type is virtualized for hooked game SVC requests; real kernel memory queries, physical-memory allocation and host process identity are unchanged. `GUEST_PROGRAM_ID` records each intercepted guest request. This is a plausible compatibility correction, **not yet verified as the cause of OOT's assertion**.
 
 If the SDK still breaks, `SDK_BREAK_STACK` and `SDK_BREAK_STACK_CODE` log bounded, mapped, executable-looking return addresses from the guest stack to locate the actual call chain. The handler remains fail-closed: no break suppression and no arbitrary retry. Both folder and NUP use the same code path. Hardware build/runtime testing remains outstanding.
+
+### NUP v1 random-access performance (Yoshi demo)
+
+The Yoshi NUP now passes `PREPARE subsdk0` and enters `nnMain`, confirming the large-module decompression correction worked. The captured run has `frames=0` at six seconds, while the extracted folder reaches graphics presentation and performs reads far into multi-gigabyte Unreal Engine .ucas assets.
+
+NUP v1 compresses each file as one Zstandard frame, with no per-file random-access seek table. Reading near the end of a compressed multi-gigabyte .ucas file forces the current native reader to decompress from its beginning on every read. This is a performance limitation of the container/read path, not an OOT-specific failure.
+
+The `tools/pack_nup_fast.py` wrapper uses the existing upstream NUP packer and its RAW fallback to store files larger than 16 MiB uncompressed. Smaller assets remain compressible. The resulting file remains standard NUP v1 and preserves direct offset-based access. This can increase archive size.
+
+Install the upstream `nup` Python package and `zstandard`, then run from the project checkout:
+
+```powershell
+py tools/pack_nup_fast.py YoshiAndTheMysteriousBook_Demo Yoshi-fast.nup --name "Yoshi and the Mysterious Book Demo"
+py -m nup.cli verify --fast Yoshi-fast.nup
+```
+
+Keep the previous NUP until the replacement archive is verified. This does not fix the separate SDK break observed in both OOT formats. Log files retain their existing overwrite-on-launch behavior.
