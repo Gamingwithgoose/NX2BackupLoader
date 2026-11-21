@@ -244,35 +244,24 @@ static int add(Entry **items, uint32_t *count, uint32_t *capacity,
                                  .file = UINT32_MAX};
   return 1;
 }
+/* Scan only the children of the current directory. The queue is walked
+ * separately so completed directories can be checkpointed and skipped. */
 static int tree_entry(void *v, const char *name) {
   Tree *t = v;
   if (cancel_callback && cancel_callback(cancel_context)) return 0;
-  if (!strcmp(name, ".listing"))
-    return 1;
-  if (strchr(name, ':') || strchr(name, '\\'))
-    return 0;
+  if (!strcmp(name, ".listing")) return 1;
+  if (strchr(name, ':') || strchr(name, '\\\\')) return 0;
   size_t old = strlen(t->relative);
   char rel[1024], full[2400];
-  int n =
-      snprintf(rel, sizeof(rel), "%s%s%s", t->relative, old ? "/" : "", name);
+  int n = snprintf(rel, sizeof(rel), "%s%s%s", t->relative,
+                   old ? "/" : "", name);
   if (n < 0 || (size_t)n >= sizeof(rel) ||
-      !child(full, sizeof(full), t->root, rel))
-    return 0;
+      !child(full, sizeof(full), t->root, rel)) return 0;
   struct STAT st;
-  if (STAT(full, &st))
-    return 0;
-  if ((st.st_mode & S_IFMT) == S_IFDIR) {
-    if (t->depth >= 64 || !add(&t->dirs, &t->nd, &t->dc, rel, 0))
-      return 0;
-    strcpy(t->relative, rel);
-    t->depth++;
-    int ok = list(full, tree_entry, t);
-    t->depth--;
-    t->relative[old] = 0;
-    return ok;
-  }
-  if ((st.st_mode & S_IFMT) != S_IFREG || st.st_size < 0)
-    return 0;
+  if (STAT(full, &st)) return 0;
+  if ((st.st_mode & S_IFMT) == S_IFDIR)
+    return add(&t->dirs, &t->nd, &t->dc, rel, 0);
+  if ((st.st_mode & S_IFMT) != S_IFREG || st.st_size < 0) return 0;
   int ok = add(&t->files, &t->nf, &t->fc, rel, (uint64_t)st.st_size);
   if (ok && progress_callback && !(t->nf % 1024))
     progress_callback(t->nf, progress_context);
