@@ -17,20 +17,19 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
    return 0;
  }
  if(__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE)){
-   /* Preserve real kernel accounting: do not fabricate memory budgets.
-    * Capture each guest-visible memory-info type once, alongside the
-    * partition retained for the host, to validate SDK Program-budget
-    * checks before attempting any compatibility override. */
+   /* Preserve the real kernel's memory accounting. A bounded trace of
+    * guest-visible queries also captures values after SetHeapSize, unlike
+    * the old first-per-type log. The host prints all four RPC fields. */
    uint32_t rc=nx2_raw_info(out,type,handle,sub);
    if(l && out && handle==CUR_PROCESS_HANDLE && !sub &&
       (type==5 || type==6 || type==7 || type==16 ||
        type==21 || type==22)){
-     static uint32_t seen=0;
-     uint32_t bit=(type==5)?1U:(type==6)?2U:(type==7)?4U:
-                  (type==16)?8U:(type==21)?16U:32U;
-     if(!(__atomic_fetch_or(&seen,bit,__ATOMIC_RELAXED)&bit))
-       nx2_rpc(RPC_LOG,*out,type,rc,nx2_process_heap.host_bytes,0,
-               "GUEST_MEMORY_INFO_FIRST_QUERY",0,0);
+     static uint32_t budget_query_count=0;
+     uint32_t ordinal=__atomic_fetch_add(&budget_query_count,1,__ATOMIC_RELAXED);
+     if(ordinal<256)
+       nx2_rpc(RPC_LOG,rc?0:*out,type,rc,
+               nx2_process_heap.host_bytes,0,
+               "GUEST_MEMORY_INFO_QUERY",0,0);
    }
    return rc;
  }
