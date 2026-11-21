@@ -241,7 +241,21 @@ uint32_t nx2_mount_cache_storage_app(const char *name,uint64_t app){
 uint32_t nx2_mount_cache_storage_app_index(const char *name,uint64_t app,int index){
  (void)app;return nx2_mount_cache_storage_index(name,index);
 }
-uint32_t nx2_ensure_save(uint64_t *required){if(required)*required=0;return 0;}
+/* Save archive existence is distinct from the host-created directory.
+ * The existing private SD backend stores one metadata marker per selected
+ * title. The marker is outside the guest-visible save subtree. */
+uint32_t nx2_provision_save(void){
+ return nx2_rpc(RPC_SAVE_ARCHIVE_CREATE,0,0,0,0,0,0,0,0);
+}
+uint32_t nx2_save_exists(void){
+ uint64_t exists=0;
+ uint32_t rc=nx2_rpc(RPC_SAVE_ARCHIVE_EXISTS,0,0,0,0,0,0,0,&exists);
+ return !rc && exists?1U:0U;
+}
+uint32_t nx2_ensure_save(uint64_t *required){
+ if(required)*required=0;
+ return nx2_provision_save();
+}
 uint32_t nx2_save_ok(void){return 0;}
 void nx2_main_gate(void){__atomic_store_n(&nx2_launch->main_entered,1,__ATOMIC_RELEASE);nx2_rpc(RPC_MAIN_ENTERED,0,0,0,0,0,0,0,0);nx2_launch->api.original_main();__atomic_store_n(&nx2_launch->guest_main_returned,1,__ATOMIC_RELEASE);nx2_rpc(RPC_ABORT,0,0,0,0,0,"nnMain returned",0,0);for(;;)wait();}
 static uint32_t preflight_fs_policy(uint32_t result){(void)result;return 2;}
