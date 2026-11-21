@@ -251,8 +251,9 @@ int nx2_nup_active(void) {return mounted.f!=NULL;}
 int nx2_nup_open(const char *path) {
   nx2_nup_close();
   probe_error="NUP mount not started";
-  uint64_t id=0,files=0;
-  if(!nx2_nup_probe(path,&id,&files))return 0;
+  /* One TOC read and checksum per launch. Catalog discovery already
+   * performed the full probe; repeat validation here against the data that
+   * this mount will actually use without rereading the TOC twice. */
   probe_error="NUP reopen failed";
   FILE *f=fopen(path,"rb");
   if(!f)return 0;
@@ -261,10 +262,23 @@ int nx2_nup_open(const char *path) {
   if(fread(h,1,128,f)!=128){fclose(f);return 0;}
   probe_error="NUP TOC too large or invalid";
   uint64_t count=rd64(h+0x10),nd=0,nf=0;
-  if(count>128*1024*1024 || count<48) {fclose(f);return 0;}
+  uint32_t declared=rd32(h+0x48);
+  if(memcmp(h,"NUP\1",4) || h[4]!=0x80 || h[5] ||
+     h[6]!=1 || h[7] || rd64(h+8)!=128 ||
+     !declared || declared>4096 || count>128*1024*1024 ||
+     count<48+(uint64_t)declared*64) {
+    fclose(f);return 0;
+  }
   probe_error="NUP TOC allocation or read failed";
   unsigned char *toc=malloc((size_t)count);
   if(!toc||fread(toc,1,(size_t)count,f)!=(size_t)count) {
+    free(toc);fclose(f);return 0;
+  }
+  unsigned char digest[32];
+  sha256(toc,(size_t)count,digest);
+  if(memcmp(digest,h+0x18,32)||memcmp(toc,"TOC\1",4) ||
+     rd32(toc+4)!=declared) {
+    probe_error="NUP TOC checksum or package count mismatch";
     free(toc);fclose(f);return 0;
   }
   uint32_t pc=rd32(toc+4);
