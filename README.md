@@ -127,3 +127,11 @@ Extracted OOT successfully enters `nnMain`, mounts RomFS, and reads three startu
 The 1,259-byte NPDM frame extracted from OOT's NUP independently decompresses with standard libzstd to 1,828 bytes beginning with `META`. The previous bundled decoder used `ZSTD_ZBIC_SUPPORT=1`, which selected Nintendo ZBIC frame magic and its altered FSE normalized-count decoder even for ordinary NUP Zstandard frames. The shared vendor decoder now selects standard Zstandard magic/FSE when reading NUP entries, and `nx2_zbic_decode` temporarily selects ZBIC for original NSO segments. This avoids including a second copy of the giant Zstandard translation unit and keeps both formats available. Neither a full Switch 2 hardware build nor runtime success has been verified; avoid assuming the NUP launches before testing.
 
 Game startup speed after `nnMain` is unchanged by this fix. The extracted OOT startup break requires its own investigation. Yoshi first-frame startup time is a separate useful baseline.
+
+### Shared OOT folder/NUP SDK startup break experiment
+
+Both OOT sources now pass NPDM/NSO loading, construct the 186,587-entry RomFS index, successfully request a native heap, enter `nnMain`, mount RomFS, and read the same three startup files. Both then stop on `svcBreak` from the same SDK break-wrapper address (region offset `0xBC03C`), with diagnostic value zero. NUP packaging is no longer the differentiating failure. This is a guest-startup compatibility problem, not evidence of an SD read stall.
+
+The native guest `GetInfo(InfoType_ProgramId, CUR_PROCESS_HANDLE, 0)` now returns the **selected game's** title ID, rather than Mario Kart World's host title ID. Only this one information type is virtualized for hooked game SVC requests; real kernel memory queries, physical-memory allocation and host process identity are unchanged. `GUEST_PROGRAM_ID` records each intercepted guest request. This is a plausible compatibility correction, **not yet verified as the cause of OOT's assertion**.
+
+If the SDK still breaks, `SDK_BREAK_STACK` and `SDK_BREAK_STACK_CODE` log bounded, mapped, executable-looking return addresses from the guest stack to locate the actual call chain. The handler remains fail-closed: no break suppression and no arbitrary retry. Both folder and NUP use the same code path. Hardware build/runtime testing remains outstanding.
