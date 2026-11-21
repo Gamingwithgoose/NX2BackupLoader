@@ -212,6 +212,13 @@ static void domain_cap_forget_handle(uint32_t h){
    domain_caps[i]=(Nx2DomainCapability){0};
  trace_unlock();
 }
+static void domain_cap_forget_object(uint32_t h,uint32_t object){
+ trace_lock();
+ for(unsigned i=0;i<128;i++)
+   if(domain_caps[i].handle==h && domain_caps[i].object==object)
+     domain_caps[i]=(Nx2DomainCapability){0};
+ trace_unlock();
+}
 static void trace_owner(uint32_t h,const char *name){
  if(!h||!name||!name[0])return;
  trace_lock();
@@ -284,11 +291,20 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  /* Apply service permissions to the target domain object, not just the
   * underlying session handle. Do not grant command 0 globally to FSP. */
  int reader_domain=(kind==2 && d.domain && domain_kind==3);
- if(reader_domain && nx2_ipc_save_reader_allowed(d))
+ int closing=d.valid && d.close_kind!=0;
+ if(reader_domain && !closing && nx2_ipc_save_reader_allowed(d))
    nx2_rpc(RPC_LOG,h,d.object_id,cmd,d.domain,0,
            "FSP_DOMAIN_READ_ONLY_REQUEST_ALLOWED",owner,0);
- if(kind==2 && !(reader_domain?nx2_ipc_save_reader_allowed(d):
-                            nx2_ipc_fsp_allowed(d))){
+ if((kind==2||kind==3) && closing)
+   nx2_rpc(RPC_LOG,h,d.object_id,d.close_kind,request_type,0,
+           "FSP_IPC_CLOSE_FORWARDED",owner,0);
+ if(kind==2 && !closing &&
+    !(reader_domain?nx2_ipc_save_reader_allowed(d):
+                    nx2_ipc_fsp_allowed(d))){
+   nx2_rpc(RPC_LOG,((uint64_t)hdr0<<32)|hdr1,
+           ((uint64_t)special<<32)|request_type,
+           ((uint64_t)d.domain<<32)|d.object_id,caller,0,
+           "FSP_BLOCKED_REQUEST_HEADER",owner,0);
    nx2_rpc(RPC_LOG,h,d.object_id,d.domain,cmd,0,
            "FSP_DOMAIN_REQUEST_BLOCKED",owner,0);
    __atomic_store_n(&nx2_launch->fsp_denied,1,__ATOMIC_RELEASE);
@@ -296,7 +312,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            "Blocked unapproved native FSP request",0,0);
    for(;;)__asm__ volatile("wfe");
  }
- if(kind==3&&!nx2_ipc_save_reader_allowed(d)){
+ if(kind==3&&!closing&&!nx2_ipc_save_reader_allowed(d)){
    nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
            "Blocked non-reader command on read-only FSP iterator",0,0);
    for(;;)__asm__ volatile("wfe");
@@ -356,6 +372,12 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    graphics_crumb->result=rc;
    __atomic_store_n(&graphics_crumb->phase,2,__ATOMIC_RELEASE);
  }
+ /* Close operations are management messages, not filesystem methods.
+  * Release the associated local capability after the kernel processes them. */
+ if(kind && d.close_kind==1 && !rc)
+   domain_cap_forget_object(h,d.object_id);
+ if(kind && d.close_kind==2 && (!rc||rc==0xF601))
+   domain_cap_forget_handle(h);
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
  if(crumb && reply_decoded)
