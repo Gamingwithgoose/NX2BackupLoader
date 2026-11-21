@@ -64,7 +64,7 @@ Launch logs depend on the selected format:
     SD:/BackupLoaderMKW-nup.log       (NUP archive)
     SD:/BackupLoaderMKW-crash.log     (separate crash diagnostic)
 
-Copy relevant logs **before launching another game**, because the next matching launch overwrites them. The separate crash diagnostic records periodic host state and, if captured, an application-local CPU exception. An abrupt system-initiated termination may leave only the last flushed snapshot; it is **not** a kernel or GPU crash report.
+Copy relevant logs **before launching another game**, because the next matching launch overwrites them. Folder and NUP launches use the same diagnostic schema and share the same SD-root crash file. The crash file now opens **before** the NUP archive/index/module preparation or corresponding folder preparation; early failures record `PRELAUNCH_STOP phase=...`, and rejected NUP catalog entries also create both a NUP log and a crash report. Normal launches emit `REPORT_FORMAT version=3 source=nup|folder`, `CONTENT_INDEX_READY`, and `MODULE_PREP_READY` on both formats, and continue the same shared guest snapshots once executing. The primary filename remains distinct by format to avoid confusing which content was launched. Copy **both** the selected primary log and `BackupLoaderMKW-crash.log` after each test. The separate crash diagnostic records periodic host state and, if captured, an application-local CPU exception. An abrupt system-initiated termination may leave only the last flushed snapshot; it is **not** a kernel or GPU crash report.
 
 For the complete project status, compatibility evidence, limitations, universal-fix roadmap and next-day handoff see [Findings.md](Findings.md) and [HANDOFF_2026-11-21.md](HANDOFF_2026-11-21.md).
 
