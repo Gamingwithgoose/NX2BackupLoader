@@ -22,3 +22,6 @@ void nx2_folder_progress(void (*)(uint32_t, void *), void *);
 
 /* Checked during directory scanning so B can cancel without closing the app. */
 void nx2_folder_cancel(int (*fn)(void *), void *ctx);
+
+/* Discard an interrupted scan when the user requests a fresh rebuild. */
+void nx2_folder_part_clear(const char *root);
