@@ -200,3 +200,34 @@ This batch workflow uses the existing `tools/pack_nup_fast.py` optimization: fil
 For safety the builder **does not overwrite** existing archives. To rebuild one, move or delete only its corresponding file in `nups/` and rerun the batch. The script performs a fast NUP structural verification after each pack. It does not delete or change extracted game input folders. Both input and output directories are ignored by Git.
 
 Copy desired archives from `nups/` to the SD card's `/games/` directory. This is a packaging/performance workaround for the current loader; loader-side random-access caching for existing compressed NUPs is still planned. It does not resolve OOT's SDK break shared between its extracted folder and existing NUP.
+
+
+## Native Arch Linux builders
+
+Windows build.bat and build-nup.bat remain unchanged. Arch users can run
+./build-arch.sh to produce the Switch 2 NRO or ./build-nup-arch.sh to pack
+all extracted/ subfolders into nups/ (skipping existing archives). Both
+scripts are executable in Git. For desktop double-click use build-arch.desktop
+or build-nup-arch.desktop on file managers supporting trusted .desktop
+launchers; some GNOME versions require marking the launcher trusted or
+choosing "Run as a Program" from the context menu.
+
+The NRO builder needs make, Python 3, devkitPro/devkitA64 and Switch 2
+ounce-devkit/libounce installed in DEVKITPRO (defaults to /opt/devkitpro),
+plus the supplied JPEG at assets/BackupLoaderMKW.jpg. Official instructions:
+https://github.com/ouncebrew/ounce-devkit. It compiles the existing Makefile
+and uses scripts/package-current-test.py to validate NRO0/MOD0/OUN0, embed
+the JPEG and create release/switch/BackupLoaderMKW/BackupLoaderMKW.nro
+without needing PowerShell. No Switch 1 fallback or automatic sudo installer.
+
+The NUP builder only needs Python 3 and Git with internet for initial
+dependency installation. It creates .venv-nup-arch locally so modern Arch
+PEP 668 restrictions are respected, installs the same upstream NUP packer
+and zstandard used by the Windows batch file, then calls tools/build_nups.py.
+Neither builder modifies the game compatibility runtime or game saves.
+
+If executable permissions were lost when downloading a ZIP, run:
+chmod +x build-arch.sh build-nup-arch.sh build-arch.desktop build-nup-arch.desktop
+If your file manager refuses to launch .desktop files, use the ./ commands
+in a terminal instead. Desktop launchers keep their terminal open to show
+errors and results.
