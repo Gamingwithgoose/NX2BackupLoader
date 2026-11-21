@@ -152,3 +152,37 @@ py -m nup.cli verify --fast Yoshi-fast.nup
 ```
 
 Keep the previous NUP until the replacement archive is verified. This does not fix the separate SDK break observed in both OOT formats. Log files retain their existing overwrite-on-launch behavior.
+
+## Batch NUP Builder (Windows)
+
+The project root contains two separate build scripts:
+
+- `build.bat` builds the Switch 2 launcher NRO.
+- `build-nup.bat` builds NUP archives for every immediate game folder in `extracted/`, placing each archive into `nups/`. This does not build or modify the launcher.
+
+Example layout:
+
+```text
+NX2BackupLoader/
+  build.bat
+  build-nup.bat
+  extracted/
+    Zelda OOT/
+      exefs/
+      romfs/
+    YoshiAndTheMysteriousBook_Demo/
+      base/
+        exefs/
+        romfs/
+  nups/
+    Zelda OOT.nup
+    YoshiAndTheMysteriousBook_Demo.nup
+```
+
+Double-click `build-nup.bat`. It needs Python 3 with the Windows `py` launcher. On the first run it installs the upstream `a55uka/nup` (`meow` branch) Python packer and the `zstandard` package if missing. Git and an internet connection are needed for that first-time installation. Subsequent builds use the installed packages.
+
+This batch workflow uses the existing `tools/pack_nup_fast.py` optimization: files larger than 16 MiB are stored in the standard NUP v1 raw codec so the loader can seek efficiently, while smaller files are Zstd-compressed where useful. The produced filenames have no `-fast` suffix. Generated NUPs may be larger than fully compressed equivalents.
+
+For safety the builder **does not overwrite** existing archives. To rebuild one, move or delete only its corresponding file in `nups/` and rerun the batch. The script performs a fast NUP structural verification after each pack. It does not delete or change extracted game input folders. Both input and output directories are ignored by Git.
+
+Copy desired archives from `nups/` to the SD card's `/games/` directory. This is a packaging/performance workaround for the current loader; loader-side random-access caching for existing compressed NUPs is still planned. It does not resolve OOT's SDK break shared between its extracted folder and existing NUP.
