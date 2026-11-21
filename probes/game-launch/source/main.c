@@ -216,9 +216,11 @@ static void run(const Nx2Game *game, int rebuild_index) {
     map = nx2_folder_rom(rom, &map_bytes, error);
     nx2_folder_progress(NULL, NULL);
     if (map) {
-      nx2_cache_save(rom, map, map_bytes);
-      row(f, "ROMFS_CACHE_SAVED bytes=%llu\n",
-          (unsigned long long)map_bytes);
+      if (nx2_cache_save(rom, map, map_bytes))
+        row(f, "ROMFS_CACHE_SAVED bytes=%llu\n",
+            (unsigned long long)map_bytes);
+      else
+        row(f, "ROMFS_CACHE_WRITE_FAILED\n");
     }
   }
   if (!map) {
