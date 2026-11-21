@@ -129,17 +129,18 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
       probe_error=probe_details;
       goto done;
     }
-    if (kind==0) {
+    if (kind==0 || (kind==1 && (flags&1))) {
       if(exefs==UINT32_MAX || romfs==UINT32_MAX) {
         snprintf(probe_details,sizeof(probe_details),
-          "Base pkg %u missing ExeFS/RomFS (exefs=%u romfs=%u)",i,exefs,romfs);
+          "Runnable pkg %u missing ExeFS/RomFS (exefs=%u romfs=%u)",i,exefs,romfs);
         probe_error=probe_details;
         goto done;
       }
       if(title_id)*title_id=id;
       if(files)*files=nfiles;
       ok=1;
-      probe_error="Ready for experimental launch";
+      probe_error=kind==0?"Ready for experimental launch":
+                           "Standalone update: experimental launch";
       break;
     }
     if(i==0) {
@@ -281,7 +282,7 @@ int nx2_nup_open(const char *path) {
   m.cached_file=UINT32_MAX;
   for(uint32_t i=0;i<pc;i++){
     const unsigned char *p=toc+48+(size_t)i*64;
-    if(p[24]==0){
+    if(p[24]==0 || (p[24]==1 && (p[25]&1))){
       m.exefs_dir=rd32(p+12);
       m.romfs_dir=rd32(p+16);
       break;
