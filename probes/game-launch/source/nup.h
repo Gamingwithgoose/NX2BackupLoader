@@ -13,3 +13,6 @@ void *nx2_nup_read_all(const char *path, size_t limit, size_t *length);
 typedef int (*Nx2NupVisit)(void *context,const char *path,int is_directory,uint64_t size);
 int nx2_nup_romfs_walk(Nx2NupVisit visitor, void *context);
 const char *nx2_nup_probe_error(void);
+
+/* Extract NPDM TLV type 0 from selected package metadata, if present. */
+void *nx2_nup_package_npdm(size_t *length);
