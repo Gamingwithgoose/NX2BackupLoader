@@ -355,6 +355,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
       last_graphics_present=UINT32_MAX;
   u32 last_nvn_device=UINT32_MAX,last_nvn_queue=UINT32_MAX,
       last_nvn_window=UINT32_MAX;
+  u32 last_nvn_dev_done=UINT32_MAX,last_nvn_queue_done=UINT32_MAX,
+      last_nvn_window_done=UINT32_MAX;
   for (;;) {
     check_fault(f, images);
     nx2_host_poll(host, l);
@@ -395,12 +397,15 @@ static void run(const Nx2Game *game, int rebuild_index) {
     uint32_t quedone=__atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE);
     uint32_t windone=__atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE);
     if(dev!=last_nvn_device||que!=last_nvn_queue||win!=last_nvn_window||
-       dev!=devdone||que!=quedone||win!=windone){
+       devdone!=last_nvn_dev_done||quedone!=last_nvn_queue_done||
+       windone!=last_nvn_window_done){
       row(f,"NVN_INIT_PROGRESS device=%u/%u result=%08x queue=%u/%u result=%08x window=%u/%u result=%08x\n",
           dev,devdone,__atomic_load_n(&l->nvn_device_result,__ATOMIC_ACQUIRE),
           que,quedone,__atomic_load_n(&l->nvn_queue_result,__ATOMIC_ACQUIRE),
           win,windone,__atomic_load_n(&l->nvn_window_result,__ATOMIC_ACQUIRE));
       last_nvn_device=dev;last_nvn_queue=que;last_nvn_window=win;
+      last_nvn_dev_done=devdone;last_nvn_queue_done=quedone;
+      last_nvn_window_done=windone;
     }
     /* Capture recent guest SVCs from shared memory without generating
      * any guest RPCs. This survives a guest thread stuck inside the SVC.
