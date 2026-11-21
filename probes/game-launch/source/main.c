@@ -28,7 +28,7 @@ static void row(FILE *f, const char *fmt, ...) {
 }
 static void screen(const char *message) {
   consoleClear();
-  printf("BackupLoaderMKW 0.13\n\n%s\n", message);
+  printf("BackupLoaderMKW 0.14\n\n%s\n", message);
   consoleUpdate(NULL);
 }
 static void __attribute__((noreturn)) stop(FILE *f, const char *why) {
@@ -243,8 +243,10 @@ static void run(const Nx2Game *game, int rebuild_index) {
     row(f, "ROMFS_CACHE_HIT root=%s bytes=%llu\n",
         rom, (unsigned long long)map_bytes);
   } else {
-    row(f, "ROMFS_SCAN_BEGIN root=%s\n", rom);
-    screen("Indexing the selected game folder...\nFirst launch may take several minutes.");
+    row(f, game->is_nup ? "NUP_INDEX_BEGIN root=%s\n" :
+                            "ROMFS_SCAN_BEGIN root=%s\n", rom);
+    screen(game->is_nup ? "Building RomFS map from NUP table..." :
+            "Indexing extracted game files...\nPress B to save progress and cancel.");
     scan_cancelled = 0;
     nx2_folder_cancel(scan_cancel, NULL);
     nx2_folder_progress(scan_progress, NULL);
@@ -259,7 +261,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
       snprintf(outcome, sizeof(outcome), "Indexing cancelled. Press A to restart.");
       return;
     }
-    if (map) {
+    if (map && !game->is_nup) {
       if (nx2_cache_save(rom, map, map_bytes))
         row(f, "ROMFS_CACHE_SAVED bytes=%llu\n",
             (unsigned long long)map_bytes);
@@ -283,7 +285,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
     fclose(f);
     return;
   }
-  row(f, "ROMFS_INDEX_BUILT files=%u bytes=%llu virtual_bytes=%llu\n",
+  row(f, game->is_nup ? "NUP_ROMFS_INDEX_BUILT files=%u bytes=%llu virtual_bytes=%llu\n" :
+                         "ROMFS_INDEX_BUILT files=%u bytes=%llu virtual_bytes=%llu\n",
       view.count, (unsigned long long)map_bytes,
       (unsigned long long)view.total);
   Nx2Launch *l = calloc(1, sizeof(*l));
@@ -368,7 +371,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
   consoleClear();
   printf("BackupLoaderMKW 0.13\n\n");
   if (!catalog->count)
-    printf("No extracted game folders found in /games.\n\n");
+    printf("No extracted games or NUP backups found in /games.\n\n");
   else {
     size_t page = (selected / 15) * 15;
     for (size_t i = page; i < catalog->count && i < page + 15; i++)
