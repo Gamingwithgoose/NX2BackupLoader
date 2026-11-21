@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "folder.h"
+#include "nup.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,7 +120,28 @@ static int catalog_entry(void *v, const char *name) {
     return 1;
   char folder[1200], path[1400], modules[13][16];
   unsigned count;
-  if (!child(folder, sizeof(folder), c->root, name) || !type(folder, 1))
+  if (!child(folder, sizeof(folder), c->root, name))
+    return 1;
+  size_t len = strlen(name);
+  if (type(folder, 0) && len > 4 &&
+      !strcmp(name + len - 4, ".nup")) {
+    uint64_t id = 0, files = 0;
+    if (!nx2_nup_probe(folder, &id, &files)) return 1;
+    Nx2Game archive = {0};
+    memcpy(archive.name, name, len - 4);
+    archive.name[len - 4] = 0;
+    strcpy(archive.root, folder);
+    archive.id = id;
+    archive.is_nup = 1;
+    if (c->out->count >= 4096) return 0;
+    void *items = realloc(c->out->items,
+                          (c->out->count + 1) * sizeof(archive));
+    if (!items) return 0;
+    c->out->items = items;
+    c->out->items[c->out->count++] = archive;
+    return 1;
+  }
+  if (!type(folder, 1))
     return 1;
   Nx2Game game = {0};
   strcpy(game.name, name);
