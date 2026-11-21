@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #pragma once
 #include <stdint.h>
-typedef struct {uint32_t command,valid,control,want_fsp,domain,object_id;} Nx2IpcDecision;
+/* close_kind: 0=method, 1=domain-object release, 2=HIPC session close. */
+typedef struct {uint32_t command,valid,control,want_fsp,domain,object_id,close_kind;} Nx2IpcDecision;
 Nx2IpcDecision nx2_ipc_decide(const void *,uint64_t,uint32_t);
 int nx2_ipc_fsp_allowed(Nx2IpcDecision);
 int nx2_ipc_save_reader_allowed(Nx2IpcDecision);
