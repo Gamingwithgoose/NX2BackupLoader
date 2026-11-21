@@ -8,7 +8,7 @@
 _Static_assert(sizeof(FsDirectoryEntry) == 0x310, "SDK directory ABI mismatch");
 _Static_assert(sizeof(FsTimeStampRaw) == 0x20, "SDK timestamp ABI mismatch");
 static void logline(Nx2Host *h, const char *fmt, ...) {
-  if (h->lines++ > 10000)
+  if (__atomic_fetch_add(&h->lines, 1, __ATOMIC_RELAXED) > 10000)
     return;
   va_list a;
   va_start(a, fmt);
@@ -67,7 +67,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   char p[1200], p2[1200];
   Result rc = 0;
   Nx2HostFile *f = 0;
-  h->calls++;
+  __atomic_fetch_add(&h->calls, 1, __ATOMIC_RELAXED);
   r->answer = 0;
   if (r->op == RPC_ROM_READ) {
     if (r->a >= l->rom.count || r->c > 0x10000000)
@@ -96,7 +96,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
                 nx2_nup_read_error());
         return NX2_INVALID;
       }
-      h->bytes+=r->c;
+      __atomic_fetch_add(&h->bytes, r->c, __ATOMIC_RELAXED);
       if(sampled)
         logline(h,"NUP_LARGE_READ_DONE file=%s offset=%llu bytes=%llu\n",
                 relative,(unsigned long long)r->b,(unsigned long long)r->c);
@@ -138,7 +138,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     u64 read = 0;
     rc = fsFileRead(&h->cache[slot].file, r->b, r->buffer, r->c,
                     FsReadOption_None, &read);
-    h->bytes += read;
+    __atomic_fetch_add(&h->bytes, read, __ATOMIC_RELAXED);
     /* Startup may read hundreds of files in parallel. Every successful
      * asset log is an SD-card flush on the host and a blocking guest RPC.
      * Keep initial examples, periodic samples and every failure, but stop
@@ -493,6 +493,13 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   for (unsigned i = 0; i < NX2_RPC_SLOTS; i++) {
     Nx2Request *r = &l->requests[i];
     if (__atomic_load_n(&r->state, __ATOMIC_ACQUIRE) == 2) {
+      if (h->reader_started && r->op == RPC_ROM_READ) {
+        /* Keep the host loop responsive while a compressed or RAW NUP
+         * entry is being read. The reader alone owns archive I/O. */
+        if (!__atomic_load_n(&h->reader_request, __ATOMIC_ACQUIRE))
+          __atomic_store_n(&h->reader_request, r, __ATOMIC_RELEASE);
+        continue;
+      }
       r->result = serve(h, l, r);
       __atomic_store_n(&r->state, 3, __ATOMIC_RELEASE);
       __asm__ volatile("sev" ::: "memory");
@@ -500,6 +507,24 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
     }
   }
   return served;
+}
+/* Independent of the guest's RTLD worker: preserves crash snapshots
+ * while expensive NUP asset requests are in flight. */
+void nx2_host_reader_thread(void *context) {
+  Nx2Host *h = context;
+  for (;;) {
+    Nx2Request *r = __atomic_load_n(&h->reader_request, __ATOMIC_ACQUIRE);
+    if (!r) {
+      svcSleepThread(100000);
+      continue;
+    }
+    uint32_t rc = serve(h, h->reader_launch, r);
+    r->result = rc;
+    __atomic_store_n(&r->state, 3, __ATOMIC_RELEASE);
+    __atomic_fetch_add(&h->reader_completed, 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&h->reader_request, NULL, __ATOMIC_RELEASE);
+    __asm__ volatile("sev" ::: "memory");
+  }
 }
 void nx2_host_close(Nx2Host *h) {
   for (unsigned i = 0; i < 128; i++) {
