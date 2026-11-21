@@ -249,14 +249,19 @@ void nx2_nup_close(void) {
 int nx2_nup_active(void) {return mounted.f!=NULL;}
 int nx2_nup_open(const char *path) {
   nx2_nup_close();
+  probe_error="NUP mount not started";
   uint64_t id=0,files=0;
   if(!nx2_nup_probe(path,&id,&files))return 0;
+  probe_error="NUP reopen failed";
   FILE *f=fopen(path,"rb");
   if(!f)return 0;
+  probe_error="NUP header read failed";
   unsigned char h[128];
   if(fread(h,1,128,f)!=128){fclose(f);return 0;}
+  probe_error="NUP TOC too large or invalid";
   uint64_t count=rd64(h+0x10),nd=0,nf=0;
   if(count>128*1024*1024 || count<48) {fclose(f);return 0;}
+  probe_error="NUP TOC allocation or read failed";
   unsigned char *toc=malloc((size_t)count);
   if(!toc||fread(toc,1,(size_t)count,f)!=(size_t)count) {
     free(toc);fclose(f);return 0;
@@ -266,6 +271,7 @@ int nx2_nup_open(const char *path) {
   uint64_t pool_off=rd64(toc+24),pool_len=rd64(toc+32);
   uint64_t dirs_start=48+(uint64_t)pc*64;
   uint64_t files_start=dirs_start+nd*24,children_start=files_start+nf*80;
+  probe_error="NUP TOC node or string-pool layout invalid";
   if(!nd||nd>262144||nf>262144||children_start>pool_off||
      pool_off>count||pool_len>count-pool_off||
      (pool_off-children_start)%4) {
@@ -288,7 +294,9 @@ int nx2_nup_open(const char *path) {
       break;
     }
   }
+  probe_error="NUP executable or RomFS root invalid";
   if(m.exefs_dir>=nd||m.romfs_dir>=nd)goto fail;
+  probe_error="NUP invalid directory child/metadata";
   /* Validate every directory edge and file extent before exposing paths. */
   for(uint64_t i=0;i<nd;i++){
     const unsigned char *d=m.dirs+i*24;
@@ -300,6 +308,7 @@ int nx2_nup_open(const char *path) {
       if(!safe_name(nm,len))goto fail;
     }
   }
+  probe_error="NUP invalid file name or compressed extent";
   for(uint64_t i=0;i<nf;i++){
     const unsigned char *e=m.files+i*80;
     uint32_t nl=0;
@@ -314,6 +323,7 @@ int nx2_nup_open(const char *path) {
        (codec==0 && stored!=size))goto fail;
   }
   mounted=m;
+  probe_error="NUP mounted successfully";
   return 1;
 fail:
   free(toc);
