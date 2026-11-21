@@ -220,8 +220,11 @@ static void trace_reply_handles(const unsigned char *p,uint64_t n,
    uint32_t child=word(p+off+4U*i);
    if(!child)continue;
    trace_owner(child,owner);
-   nx2_rpc(RPC_LOG,child,parent,i>=copies,sh,0,
-           "IPC_RETURNED_HANDLE",owner,0);
+   /* Handle ownership remains tracked after save mount, but successful
+    * child acquisition needn't block its caller on a diagnostic RPC. */
+   if(!__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE))
+     nx2_rpc(RPC_LOG,child,parent,i>=copies,sh,0,
+             "IPC_RETURNED_HANDLE",owner,0);
  }
 }
 static void response_tags(const unsigned char *p,uint64_t n,uint32_t kind){if(n<12||!(word(p+4)&0x80000000))return;uint32_t s=word(p+8),copy=(s>>1)&15,move=(s>>5)&15;uint64_t off=12+((s&1)?8:0);if(off+4*(copy+move)>n)return;for(uint32_t i=0;i<copy+move;i++)set_tag(word(p+off+4*i),kind);}
@@ -245,28 +248,27 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            "Blocked unapproved native FSP request",0,0);
    for(;;)__asm__ volatile("wfe");
  }
- /* Only trace bounded known-service non-Close operations. Raw request
-  * type 2 is HIPC Close, where ConnectionClosed can be expected. */
- static uint32_t early_detailed_calls=0,late_detailed_calls=0;
+ /* Avoid two synchronous host RPCs around every game IPC SVC.
+  * Record the pre/post state in shared memory instead, including the
+  * calls made after save mounting. The host snapshots this ring. */
  const uint32_t late=__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE);
- uint32_t ordinal=UINT32_MAX;
- if(request_type!=2 && (owner[0]||kind)){
-   ordinal=__atomic_fetch_add(late?&late_detailed_calls:&early_detailed_calls,
-                             1,__ATOMIC_RELAXED);
+ Nx2IpcBreadcrumb *crumb=0;
+ if(request_type!=2){
+   uint32_t seq=__atomic_fetch_add(&nx2_launch->ipc_trace_next,1,
+                                  __ATOMIC_RELAXED);
+   crumb=&nx2_launch->ipc_breadcrumbs[seq%NX2_IPC_TRACE_SLOTS];
+   __atomic_store_n(&crumb->phase,0,__ATOMIC_RELAXED);
+   crumb->handle=h;crumb->caller=caller;crumb->request_type=request_type;
+   crumb->command=has?cmd:UINT32_MAX;crumb->result=UINT32_MAX;
+   __atomic_store_n(&crumb->phase,1,__ATOMIC_RELEASE);
+   __atomic_fetch_add(&nx2_launch->ipc_trace_begins,1,__ATOMIC_RELAXED);
  }
- /* Preserve the useful early sample but reserve 1024 call pairs for
-  * the crucial post-save-mount phase. Never force a request result. */
- int detailed=ordinal<(late?1024U:48U);
- if(detailed){
-   nx2_rpc(RPC_LOG,h,((uint64_t)request_type<<32)|cmd,caller,
-           ((uint64_t)has<<32)|kind,0,
-           late?"IPC_LATE_CALL_BEGIN":"IPC_SESSION_CALL_BEGIN",owner,0);
- }
- if(kind)nx2_rpc(RPC_IPC,h,cmd,UINT64_MAX,kind,0,"IPC_BEGIN",service,0);
+ if(kind && !late)nx2_rpc(RPC_IPC,h,cmd,UINT64_MAX,kind,0,"IPC_BEGIN",service,0);
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
- if(detailed){
-   nx2_rpc(RPC_LOG,h,rc,caller,((uint64_t)request_type<<32)|cmd,0,
-           late?"IPC_LATE_CALL_END":"IPC_SESSION_CALL_END",owner,0);
+ if(crumb){
+   crumb->result=rc;
+   __atomic_store_n(&crumb->phase,2,__ATOMIC_RELEASE);
+   __atomic_fetch_add(&nx2_launch->ipc_trace_ends,1,__ATOMIC_RELAXED);
  }
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
@@ -298,7 +300,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    nx2_rpc(RPC_LOG,h,rc,kind,request_type,0,
            "IPC_FAILED_HANDLE_OWNER",owner,0);
  }
- if(kind||rc)nx2_rpc(RPC_IPC,h,cmd,rc,kind,0,
+ if((kind&&!late)||rc)nx2_rpc(RPC_IPC,h,cmd,rc,kind,0,
                      want_fsp?"fsp-srv service acquired":
                      (kind==2?"FSP request":"IPC"),0,0);
  return rc;
