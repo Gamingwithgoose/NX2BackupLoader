@@ -200,6 +200,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
         game->name,(unsigned long long)game->id);
 
   const char *launch_phase="START";
+  u64 launch_started=armGetSystemTick(), module_prepare_started=0;
   row(f,"REPORT_FORMAT version=3 source=%s crash_path=sdmc:/BackupLoaderMKW-crash.log\n",
       game->is_nup?"nup":"folder");
   if(crash)row(crash,"REPORT_FORMAT version=3 source=%s primary_path=%s\n",
@@ -364,7 +365,10 @@ static void run(const Nx2Game *game, int rebuild_index) {
   if(crash)row(crash,"CONTENT_INDEX_READY source=%s files=%u map_bytes=%llu virtual_bytes=%llu\n",
       game->is_nup?"nup":"folder",view.count,
       (unsigned long long)map_bytes,(unsigned long long)view.total);
+  row(f,"PRELAUNCH_TIMING phase=CONTENT_READY cumulative_ms=%llu\n",
+      (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
   launch_phase="PREPARE_MODULES";
+  module_prepare_started=armGetSystemTick();
   Nx2Launch *l = calloc(1, sizeof(*l));
   Nx2Host *host = calloc(1, sizeof(*host));
   Nx2Images *images = calloc(1, sizeof(*images));
@@ -384,6 +388,9 @@ static void run(const Nx2Game *game, int rebuild_index) {
   row(f,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
       game->is_nup?"nup":"folder",(unsigned long long)game->id,
       images->count,(unsigned long long)l->heap_capacity);
+  row(f,"PRELAUNCH_TIMING phase=MODULE_READY elapsed_ms=%llu cumulative_ms=%llu\n",
+      (unsigned long long)(armTicksToNs(armGetSystemTick()-module_prepare_started)/1000000ULL),
+      (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
   if(crash)row(crash,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
       game->is_nup?"nup":"folder",(unsigned long long)game->id,
       images->count,(unsigned long long)l->heap_capacity);
@@ -404,6 +411,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
   Thread worker;
   if (!start_worker(f, l, &worker, 1))
     stop(f, "Game worker could not start");
+  row(f,"PRELAUNCH_TIMING phase=GUEST_WORKER_STARTED cumulative_ms=%llu\n",
+      (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   u64 trace_sample = began;
   u64 crash_sample = began;
