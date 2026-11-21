@@ -159,6 +159,34 @@ int nx2_images_load(FILE *f, const char *root, Nx2Images *all, Nx2Launch *l,
     }
     Nx2Module *m = &all->modules[i];
     unsigned role = i == 0 ? 0 : i == 1 ? 1 : i + 1 == module_count ? 2 : 3;
+    /* OOT's SDK abort backtrace reaches main+0x10ADC3C. Before inserting
+     * any executable diagnostic hook, verify the alleged comparison at
+     * 0x10ADBC8 against this exact decompressed game image. This probe
+     * only reads bytes during preparation and cannot alter guest code.
+     * It is gated on the guest program ID, never on an NUP filename. */
+    if (game && role == 1 &&
+        l->guest_program_id == UINT64_C(0x0400486024dec000)) {
+      const uint32_t at = 0x10adbc8U;
+      if (m->file_size[0] < at + 20U) {
+        row(f, "OOT_BUDGET_SITE unavailable text_size=%u needed=%u\n",
+            m->file_size[0], at + 20U);
+      } else {
+        const unsigned char *p = m->guest + at - 12U;
+        uint32_t w[8];
+        for (unsigned n = 0; n < 8; n++)
+          w[n] = (uint32_t)p[n * 4] |
+                 ((uint32_t)p[n * 4 + 1] << 8) |
+                 ((uint32_t)p[n * 4 + 2] << 16) |
+                 ((uint32_t)p[n * 4 + 3] << 24);
+        row(f, "OOT_BUDGET_SITE offset=%08x words=%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x\n",
+            at, w[0],w[1],w[2],w[3],w[4],w[5],w[6],w[7]);
+        const unsigned cmp32 = w[3] == 0x6b08001fU;
+        const unsigned cmp64 = w[3] == 0xeb08001fU;
+        const unsigned conditional = (w[4] & 0xff000010U) == 0x54000000U;
+        row(f, "OOT_BUDGET_SITE_COMPARE cmp_w0_w8=%u cmp_x0_x8=%u next_is_bcond=%u next_condition=%u\n",
+            cmp32, cmp64, conditional, w[4] & 15U);
+      }
+    }
     if (!apply_plan(f, all, m, i, role, game))
       goto fail;
     armDCacheFlush(im->backing, im->image);
