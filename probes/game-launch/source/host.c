@@ -673,6 +673,80 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   }
   return rc;
 }
+/* Detect adjacent small reads of large assets, using ONE 1-MiB window
+ * across both the loose-folder and RAW NUP backend. A compressed NUP
+ * extent is intentionally excluded: a random access can require decoding
+ * the whole Zstandard frame. Never speculative-read random small assets. */
+static uint64_t rom_extent_length(const Nx2RomView *v,uint32_t file){
+  const unsigned char *p=v->entries+32*(size_t)file+8;
+  uint64_t n=0;
+  for(unsigned j=0;j<8;j++)n|=(uint64_t)p[j]<<(8*j);
+  return n;
+}
+static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
+  if(r->a>=l->rom.count || r->c>0x10000000U ||
+     !r->c || (!r->buffer&&r->c))
+    return serve(h,l,r);
+  const uint32_t file=(uint32_t)r->a;
+  const uint64_t offset=r->b, bytes=r->c;
+  const uint64_t length=rom_extent_length(&l->rom,file);
+  if(offset>length || bytes>length-offset)
+    return serve(h,l,r);
+  uint32_t result=NX2_INVALID;
+  if(h->read_ahead_valid && h->read_ahead_file==file &&
+     offset>=h->read_ahead_offset &&
+     offset-h->read_ahead_offset<=h->read_ahead_length &&
+     bytes<=h->read_ahead_length-(offset-h->read_ahead_offset)){
+    memcpy(r->buffer,h->read_ahead_data+
+           (size_t)(offset-h->read_ahead_offset),(size_t)bytes);
+    __atomic_fetch_add(&h->calls,1,__ATOMIC_RELAXED);
+    __atomic_fetch_add(&h->bytes,bytes,__ATOMIC_RELAXED);
+    ++h->read_ahead_hits;
+    result=0;
+  }else{
+    int sequential=h->read_ahead_previous &&
+        h->read_ahead_last_file==file &&
+        h->read_ahead_last_end==offset;
+    int prefetch=sequential && bytes>=0x10000 && bytes<=0x40000 &&
+        length>=0x1000000 && length-offset>=bytes*2;
+    if(prefetch && nx2_nup_active()){
+      char name[1200];unsigned codec=UINT32_MAX;uint64_t unpacked=0;
+      const char *relative=nx2_rom_path(&l->rom,file);
+      if(!relative ||
+         snprintf(name,sizeof(name),"romfs/%s",relative)>=(int)sizeof(name) ||
+         !nx2_nup_file_info(name,&unpacked,&codec) || codec!=0)
+        prefetch=0;
+    }
+    if(prefetch && !h->read_ahead_data)
+      h->read_ahead_data=malloc(0x100000);
+    if(prefetch && h->read_ahead_data){
+      const uint64_t amount=length-offset<0x100000
+                           ?length-offset:0x100000;
+      Nx2Request temp=*r;
+      temp.buffer=h->read_ahead_data;
+      temp.c=amount;
+      result=serve(h,l,&temp);
+      if(!result){
+        memcpy(r->buffer,h->read_ahead_data,(size_t)bytes);
+        h->read_ahead_file=file;
+        h->read_ahead_offset=offset;
+        h->read_ahead_length=amount;
+        h->read_ahead_valid=1;
+        ++h->read_ahead_fills;
+        /* Counters remain logical bytes returned to the guest. */
+        __atomic_fetch_sub(&h->bytes,amount-bytes,__ATOMIC_RELAXED);
+      }else h->read_ahead_valid=0;
+    }else{
+      result=serve(h,l,r);
+    }
+  }
+  if(!result){
+    h->read_ahead_last_file=file;
+    h->read_ahead_last_end=offset+bytes;
+    h->read_ahead_previous=1;
+  }else h->read_ahead_previous=0;
+  return result;
+}
 int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   int served = 0;
   for (unsigned i = 0; i < NX2_RPC_SLOTS; i++) {
@@ -681,7 +755,8 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
       __atomic_store_n(&h->rpc_active_op,r->op,__ATOMIC_RELAXED);
       __atomic_store_n(&h->rpc_started_tick,armGetSystemTick(),__ATOMIC_RELAXED);
       __atomic_store_n(&h->rpc_active_slot,i+1,__ATOMIC_RELEASE);
-      r->result = serve(h, l, r);
+      r->result = r->op==RPC_ROM_READ ?
+          serve_rom_cached(h,l,r) : serve(h,l,r);
       /* Do not issue SD writes for every RomFS read and host RPC.
        * Publish the result immediately; existing RPC_TRAIL breadcrumbs,
        * private save operation results and backend failure logs remain.
@@ -696,6 +771,8 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   return served;
 }
 void nx2_host_close(Nx2Host *h) {
+  free(h->read_ahead_data);
+  h->read_ahead_data=0;
   for (unsigned i = 0; i < 128; i++) {
     if (h->handles[i].kind == 1)
       fsFileClose(&h->handles[i].file);
