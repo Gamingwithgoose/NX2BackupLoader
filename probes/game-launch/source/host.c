@@ -313,9 +313,18 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
             (unsigned long long)r->a, (unsigned long long)r->b, (unsigned)r->c);
     break;
   case RPC_BREAK: {
-    logline(h, "SDK_BREAK reason=%llx address=%016llx bytes=%llu\n",
+    logline(h, "SDK_BREAK reason=%llx address=%016llx bytes=%llu caller=%016llx\n",
             (unsigned long long)r->a, (unsigned long long)r->b,
-            (unsigned long long)r->c);
+            (unsigned long long)r->c,(unsigned long long)r->d);
+    for(unsigned region=0;region<l->region_count;region++){
+      Nx2Region *m=&l->regions[region];
+      if(r->d>=m->begin && r->d<m->end){
+        logline(h,"SDK_BREAK_CALLER_REGION index=%u region_base=%016llx offset=%llx type=%u\n",
+                region,(unsigned long long)m->begin,
+                (unsigned long long)(r->d-m->begin),m->type);
+        break;
+      }
+    }
     if (r->c == 4 && r->b <= UINT64_MAX - 4) {
       MemoryInfo mi;
       u32 page = 0;
