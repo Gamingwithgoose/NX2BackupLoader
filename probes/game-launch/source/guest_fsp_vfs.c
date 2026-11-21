@@ -28,11 +28,15 @@ static void lock_vfs(void){
 }
 static void unlock_vfs(void){__atomic_store_n(&vfs_lock,0,__ATOMIC_RELEASE);}
 static VfsObject find_object(uint32_t session,uint32_t id){
+ (void)session;
  VfsObject v={0};
  lock_vfs();
  for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
-  if(vfs_objects[i].kind && vfs_objects[i].session==session &&
-     vfs_objects[i].object_id==id){v=vfs_objects[i];break;}
+  if(vfs_objects[i].kind && vfs_objects[i].object_id==id){
+   /* Cloned fsp-srv domain sessions reuse the same object IDs. Our
+    * generated IDs are process-global and never overlap kernel IDs. */
+   v=vfs_objects[i];break;
+  }
  unlock_vfs();
  return v;
 }
@@ -57,11 +61,11 @@ static uint32_t allocate_object(uint32_t session,uint32_t kind,
  return id;
 }
 static int forget_object(uint32_t session,uint32_t id,VfsObject *old){
+ (void)session;
  int found=0;
  lock_vfs();
  for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
-  if(vfs_objects[i].kind && vfs_objects[i].session==session &&
-     vfs_objects[i].object_id==id){
+  if(vfs_objects[i].kind && vfs_objects[i].object_id==id){
    if(old)*old=vfs_objects[i];
    vfs_objects[i]=(VfsObject){0};
    found=1;break;
