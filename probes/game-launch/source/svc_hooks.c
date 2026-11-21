@@ -28,31 +28,43 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
  if(R_FAILED(rc))return rc;
  rc=svcGetInfo(&used,7,CUR_PROCESS_HANDLE,0);
  if(R_FAILED(rc))return rc;
- MemoryInfo current;u32 page=0;
- rc=svcQueryMemory(&current,&page,base);
+ /* Query the end of the retained heap instead of assuming a QueryMemory
+  * result at the heap base covers the entire committed allocation. It need
+  * not: the host's mapped heap can be split into multiple VM regions. */
+ const uint64_t original_end=plan->original_begin+plan->original_bytes;
+ const uint64_t cut=plan->game_begin;
+ uint64_t retain=cut-base;
+ MemoryInfo end_region,tail;u32 page=0;
+ rc=svcQueryMemory(&end_region,&page,cut-1);
  if(R_FAILED(rc))return rc;
- uint64_t retain=plan->game_begin-base;
- uint64_t current_size=current.size;
+ rc=svcQueryMemory(&tail,&page,cut);
+ if(R_FAILED(rc))return rc;
  uint64_t available=total>=used?total-used:0;
- if(base!=current.addr || current.type!=MemType_Heap ||
-    plan->original_begin<base ||
-    plan->original_bytes>UINT64_MAX-plan->original_begin ||
-    plan->original_begin+plan->original_bytes<base ||
-    size<retain || size>plan->original_begin+plan->original_bytes-base ||
-    current_size<retain) {
-   nx2_rpc(RPC_LOG,size,retain,current_size,available,0,
+ uint64_t end_of_commit=end_region.addr+end_region.size;
+ nx2_rpc(RPC_LOG,size,retain,end_of_commit,available,0,
+         "NATIVE_HEAP_BOUNDS_INPUT",0,0);
+ nx2_rpc(RPC_LOG,cut,tail.addr,tail.type,tail.perm,0,
+         "NATIVE_HEAP_TAIL_INPUT",0,0);
+ if(plan->original_bytes>UINT64_MAX-plan->original_begin ||
+    plan->original_begin<base || cut<base || cut>original_end ||
+    original_end<base || size<retain || size>original_end-base ||
+    end_region.addr>cut-1 || end_region.size>UINT64_MAX-end_region.addr ||
+    end_of_commit!=cut || end_region.type!=MemType_Heap ||
+    (end_region.perm&Perm_Rw)!=Perm_Rw ||
+    tail.type!=MemType_Unmapped || tail.perm!=Perm_None) {
+   nx2_rpc(RPC_LOG,size,retain,end_of_commit,tail.type,0,
            "NATIVE_HEAP_BOUNDS_REFUSED",0,0);
    return 0xd001;
  }
- uint64_t increase=size>current_size?size-current_size:0;
+ uint64_t increase=size>retain?size-retain:0;
  if(increase>available || available-increase<NX2_NATIVE_PHYSICAL_FLOOR) {
-   nx2_rpc(RPC_LOG,size,current_size,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
+   nx2_rpc(RPC_LOG,size,retain,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
            "NATIVE_HEAP_BUDGET_REFUSED",0,0);
    return 0xd001;
  }
  void *returned=NULL;
  rc=svcSetHeapSize(&returned,size);
- nx2_rpc(RPC_LOG,size,current_size,available,rc,0,
+ nx2_rpc(RPC_LOG,size,retain,available,rc,0,
          "NATIVE_HEAP_SET_RESULT",0,0);
  if(R_FAILED(rc))return rc;
  if((uintptr_t)returned!=base) {
