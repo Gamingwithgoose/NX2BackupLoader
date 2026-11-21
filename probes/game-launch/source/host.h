@@ -20,17 +20,9 @@ typedef struct {
   } cache[16];
   uint64_t calls, bytes, save_bytes, lines;
   uint64_t nup_large_reads;
-  /* Kirby's NUP reads are served on a separate worker. The host watchdog
-   * must not stall inside synchronous archive I/O. Only one request is
-   * published at a time, preserving serialized NUP decoder state. */
-  Nx2Launch *reader_launch;
-  Nx2Request *reader_request;
-  uint32_t reader_started;
-  uint64_t reader_completed;
   int abort;
 } Nx2Host;
 int nx2_host_init(Nx2Host *, FILE *, const char *, const char *);
 int nx2_host_poll(Nx2Host *, Nx2Launch *);
-void nx2_host_reader_thread(void *);
 void nx2_host_close(Nx2Host *);
 int nx2_save_path(char *, size_t, const char *, const char *);
