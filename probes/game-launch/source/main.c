@@ -357,6 +357,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
       last_nvn_window=UINT32_MAX;
   u32 last_nvn_dev_done=UINT32_MAX,last_nvn_queue_done=UINT32_MAX,
       last_nvn_window_done=UINT32_MAX;
+  uint32_t last_nvn_stage[NX2_NVN_STAGE_COUNT]={0};
+  uint32_t last_nvn_stage_done[NX2_NVN_STAGE_COUNT]={0};
   for (;;) {
     check_fault(f, images);
     nx2_host_poll(host, l);
@@ -406,6 +408,24 @@ static void run(const Nx2Game *game, int rebuild_index) {
       last_nvn_device=dev;last_nvn_queue=que;last_nvn_window=win;
       last_nvn_dev_done=devdone;last_nvn_queue_done=quedone;
       last_nvn_window_done=windone;
+    }
+    /* Early milestones are logged outside heartbeat so abrupt exits can
+     * retain a last-known NVN stage; sample once on first entry/return,
+     * then on power-of-two growth to avoid flooding the SD card. */
+    for(unsigned n=0;n<NX2_NVN_STAGE_COUNT;n++){
+      uint32_t entered=__atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE);
+      uint32_t returned=__atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE);
+      if((entered!=last_nvn_stage[n]||returned!=last_nvn_stage_done[n]) &&
+         (last_nvn_stage[n]==0||last_nvn_stage_done[n]==0||
+          (entered && !(entered&(entered-1)))||
+          (returned && !(returned&(returned-1))))){
+        static const char *names[]={"submit","flush","finish","window_acquire","queue_acquire"};
+        row(f,"NVN_STAGE_PROGRESS name=%s entered=%u returned=%u latest_result=%08x\n",
+            names[n],entered,returned,
+            __atomic_load_n(&l->nvn_stage_result[n],__ATOMIC_ACQUIRE));
+      }
+      last_nvn_stage[n]=entered;
+      last_nvn_stage_done[n]=returned;
     }
     /* Capture recent guest SVCs from shared memory without generating
      * any guest RPCs. This survives a guest thread stuck inside the SVC.
@@ -487,6 +507,15 @@ static void run(const Nx2Game *game, int rebuild_index) {
           __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->nvn_window_result,__ATOMIC_ACQUIRE));
+      {
+        static const char *names[]={"submit","flush","finish","window_acquire","queue_acquire"};
+        for(unsigned n=0;n<NX2_NVN_STAGE_COUNT;n++)
+          row(f,"NVN_STAGE name=%s entered=%u returned=%u latest_result=%08x\n",
+              names[n],
+              __atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->nvn_stage_result[n],__ATOMIC_ACQUIRE));
+      }
       /* Compare against emulator's documented NVDRV commands (0 Open,
        * 3 Initialize) and VI layer/display commands (1010, 2020, 2030,
        * 5202) without emulating their replies or changing the native SVC. */
