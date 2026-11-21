@@ -117,6 +117,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external){
 uint32_t nx2_sync(uint32_t h){void *tlr;__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));return filter_sync(tlr,256,h,0);}
 uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){return filter_sync(p,n,h,1);}
 uint32_t nx2_close_handle(uint32_t h){uint32_t rc=nx2_raw_close(h);if(!rc)set_tag(h,0);return rc;}
+__attribute__((noinline,optimize("no-omit-frame-pointer")))
 void nx2_break(uint32_t reason,uint64_t address,uint64_t size){
  uintptr_t caller=(uintptr_t)__builtin_return_address(0);
  uintptr_t fp=0;
