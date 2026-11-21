@@ -532,7 +532,16 @@ uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){
  return filter_sync(p,n,h,1,(uintptr_t)__builtin_return_address(0));
 }
 uint32_t nx2_close_handle(uint32_t h){
+ uint32_t kind=tag(h);
+ Nx2IpcDecision empty={0};
+ char owner[9]={0};trace_name(h,owner);
+ uint32_t call_id=__atomic_add_fetch(&nx2_launch->ipc_call_next,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ ipc_event_emit(call_id,1,h,kind,empty,2,0x80U,0,0,0,
+                UINT32_MAX,UINT32_MAX,caller,owner);
  uint32_t rc=nx2_raw_close(h);
+ ipc_event_emit(call_id,2,h,kind,empty,2,0x80U,0,0,0,
+                rc,UINT32_MAX,caller,owner);
  if(!rc){set_tag(h,0);trace_forget(h);domain_cap_forget_handle(h);}
  return rc;
 }
@@ -550,7 +559,35 @@ void nx2_break(uint32_t reason,uint64_t address,uint64_t size){
 }
 void nx2_debug(const char *text,uint64_t n){char buf[NX2_PATH_MAX];if(n>=sizeof(buf))n=sizeof(buf)-1;for(uint64_t i=0;i<n;i++)buf[i]=text[i];buf[n]=0;nx2_rpc(RPC_LOG,0,0,0,0,0,buf,0,0);}
 
-uint32_t nx2_async(uint32_t *out,void *p,uint64_t n,uint32_t h){if(tag(h)){nx2_rpc(RPC_ABORT,h,0,0,0,0,"Refused asynchronous SM/FSP operation",0,0);for(;;)__asm__ volatile("wfe");}return nx2_raw_async(out,p,n,h);}
+uint32_t nx2_async(uint32_t *out,void *p,uint64_t n,uint32_t h){
+ uint32_t kind=tag(h);
+ Nx2IpcDecision d=nx2_ipc_decide(p,n,kind);
+ uint32_t hdr0=p&&n>=4?word(p):0;
+ uint32_t hdr1=p&&n>=8?word((const unsigned char*)p+4):0;
+ uint32_t special=p&&n>=12&&(hdr1&0x80000000U)?
+                  word((const unsigned char*)p+8):0;
+ uint32_t type=hdr0&0xffffU;
+ char owner[9]={0};
+ if(kind==1)nx2_ipc_service_name(p,n,owner);
+ if(!owner[0])trace_name(h,owner);
+ uint32_t call_id=__atomic_add_fetch(&nx2_launch->ipc_call_next,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ ipc_event_emit(call_id,1,h,kind,d,type,0x40U,hdr0,hdr1,special,
+                UINT32_MAX,UINT32_MAX,caller,owner);
+ if(kind){
+  /* There is no safe host-identity-agnostic async FSP/SM backend yet.
+   * Report an actual guest failure rather than aborting the whole loader
+   * or forwarding a guest operation into the MKW host service. */
+  if(out)*out=0;
+  ipc_event_emit(call_id,4,h,kind,d,type,0x40U,hdr0,hdr1,special,
+                 NX2_FS_UNSUPPORTED,UINT32_MAX,caller,owner);
+  return NX2_FS_UNSUPPORTED;
+ }
+ uint32_t rc=nx2_raw_async(out,p,n,h);
+ ipc_event_emit(call_id,2,h,kind,d,type,0x40U,hdr0,hdr1,special,
+                rc,UINT32_MAX,caller,owner);
+ return rc;
+}
 
 void nx2_exit_gate(void){nx2_rpc(RPC_ABORT,(uintptr_t)__builtin_return_address(0),0,0,0,0,"Game requested process exit; caller address in a",0,0);for(;;)__asm__ volatile("wfe");}
 
