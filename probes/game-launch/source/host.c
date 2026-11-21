@@ -315,6 +315,15 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
             (unsigned long long)r->a, (unsigned long long)r->b, (unsigned)r->c);
     break;
   case RPC_BREAK: {
+    /* Captured by OOT's register-preserving comparison trampoline. The
+     * guest already stopped via its own abort before this is inspected. */
+    extern volatile uint64_t nx2_oot_budget_capture[2];
+    uint64_t lhs=nx2_oot_budget_capture[0];
+    uint64_t rhs=nx2_oot_budget_capture[1];
+    if(l->guest_program_id == UINT64_C(0x0400486024dec000) &&
+       lhs!=UINT64_MAX)
+      logline(h,"OOT_BUDGET_COMPARE x0=%016llx x8=%016llx unsigned_x0_le_x8=%u\n",
+              (unsigned long long)lhs,(unsigned long long)rhs,lhs<=rhs);
     logline(h, "SDK_BREAK reason=%llx address=%016llx bytes=%llu caller=%016llx\n",
             (unsigned long long)r->a, (unsigned long long)r->b,
             (unsigned long long)r->c,(unsigned long long)r->d);
