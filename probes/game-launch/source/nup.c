@@ -72,10 +72,12 @@ static void sha256(const unsigned char *data, size_t size, unsigned char out[32]
     out[4*i+j]=(unsigned char)(h[i]>>(24-8*j));
 }
 static const char *probe_error = "Not checked";
+static char probe_details[160];
 const char *nx2_nup_probe_error(void) { return probe_error; }
 int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
   unsigned char header[128], digest[32];
   FILE *f=fopen(path,"rb");
+  probe_details[0]=0;
   probe_error = "Cannot open NUP file";
   if (!f) return 0;
   probe_error = "Incomplete NUP header";
@@ -112,19 +114,39 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
   if (nfiles>(toc_size-start)/80) goto done;
   start+=nfiles*80;
   if (pool_off<start || pool_off>toc_size || pool_len>toc_size-pool_off) goto done;
-  probe_error = "NUP package metadata invalid or no base game";
+  probe_error = "NUP has no base-game package";
   for (uint32_t i=0;i<packages;i++) {
     const unsigned char *p=toc+48+(size_t)i*64;
-    uint32_t root=rd32(p+8), exefs=rd32(p+12), romfs=rd32(p+16);
-    if (p[24]>=5 || p[25]&~1 || p[26] || p[27] || rd32(p+28) ||
+    uint64_t id=rd64(p);
+    uint32_t root=rd32(p+8),exefs=rd32(p+12),romfs=rd32(p+16);
+    unsigned kind=p[24],flags=p[25];
+    if (kind>=5 || (flags&~1) || p[26] || p[27] || rd32(p+28) ||
         root>=dirs || (exefs!=UINT32_MAX && exefs>=dirs) ||
-        (romfs!=UINT32_MAX && romfs>=dirs)) goto done;
-    if (p[24]==0 && exefs!=UINT32_MAX && romfs!=UINT32_MAX) {
-      if (title_id) *title_id=rd64(p);
-      if (files) *files=nfiles;
+        (romfs!=UINT32_MAX && romfs>=dirs)) {
+      snprintf(probe_details,sizeof(probe_details),
+        "Pkg %u invalid: kind=%u flags=%u root=%u exefs=%u romfs=%u",
+        i,kind,flags,root,exefs,romfs);
+      probe_error=probe_details;
+      goto done;
+    }
+    if (kind==0) {
+      if(exefs==UINT32_MAX || romfs==UINT32_MAX) {
+        snprintf(probe_details,sizeof(probe_details),
+          "Base pkg %u missing ExeFS/RomFS (exefs=%u romfs=%u)",i,exefs,romfs);
+        probe_error=probe_details;
+        goto done;
+      }
+      if(title_id)*title_id=id;
+      if(files)*files=nfiles;
       ok=1;
-      probe_error = "Ready for experimental launch";
+      probe_error="Ready for experimental launch";
       break;
+    }
+    if(i==0) {
+      snprintf(probe_details,sizeof(probe_details),
+        "No base game: first pkg kind=%u flags=%u id=%016llx",
+        kind,flags,(unsigned long long)id);
+      probe_error=probe_details;
     }
   }
 done:
