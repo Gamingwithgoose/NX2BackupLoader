@@ -2,6 +2,8 @@
 #include "images.h"
 #include "folder.h"
 #include "nso.h"
+#include "nup.h"
+#include <sys/stat.h>
 #include "patch.h"
 #include "patch_plan.h"
 #include "resolve.h"
@@ -177,6 +179,27 @@ int nx2_images_load(FILE *f, const char *root, Nx2Images *all, Nx2Launch *l,
     snprintf(path, sizeof(path), "%s/exefs/%s", root, names[i]);
     Nx2Loaded *im = &all->images[i];
     all->count = i + 1;
+    /* Log source size for every module before preparation. NUP entries
+     * can be raw (Fast NUP) or compressed; both share the same NSO loader.
+     * Folder launches report the equivalent size from the filesystem. */
+    uint64_t source_bytes=0;
+    unsigned source_codec=UINT32_MAX;
+    int source_found=0;
+    if(nx2_nup_active()){
+      char entry[64];
+      if(snprintf(entry,sizeof(entry),"exefs/%s",names[i])<(int)sizeof(entry))
+        source_found=nx2_nup_file_info(entry,&source_bytes,&source_codec);
+    }else{
+      struct stat st;
+      if(!stat(path,&st) && st.st_size>=0){
+        source_bytes=(uint64_t)st.st_size;
+        source_codec=0;
+        source_found=1;
+      }
+    }
+    row(f,"EXEFS_SOURCE module=%s type=%s found=%u bytes=%llu codec=%u\n",
+        names[i],nx2_nup_active()?"nup":"folder",source_found,
+        (unsigned long long)source_bytes,source_codec);
     int ok = nx2_prepare_nso(path, NULL, hash, &im->backing, &im->image,
                              &im->bss, error);
     row(f, "PREPARE %s status=%s\n", names[i], ok ? "OK" : error);
