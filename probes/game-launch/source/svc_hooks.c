@@ -403,7 +403,6 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  /* Avoid two synchronous host RPCs around every game IPC SVC.
   * Record the pre/post state in shared memory instead, including the
   * calls made after save mounting. The host snapshots this ring. */
- const uint32_t late=__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE);
  Nx2IpcBreadcrumb *crumb=0,*graphics_crumb=0;
  const char *graphics_owner=(kind==1&&service[0])?service:owner;
  const int graphics_service=
@@ -444,7 +443,10 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
      __atomic_store_n(&graphics_crumb->phase,1,__ATOMIC_RELEASE);
    }
  }
- if(kind && !late)nx2_rpc(RPC_IPC,h,cmd,UINT64_MAX,kind,0,"IPC_BEGIN",service,0);
+ /* The ring entry above is published BEFORE the native SVC. Previously
+  * every tagged guest IPC synchronously waited for a storage-worker RPC
+  * solely to print IPC_BEGIN. That extra guest/SD dependency is unnecessary
+  * and can postpone service initialization or graphics work. */
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
  if(crumb){
    crumb->result=rc;
@@ -473,9 +475,9 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    __atomic_store_n(&crumb->service_result,service_result,__ATOMIC_RELEASE);
  if(graphics_crumb && reply_decoded)
    __atomic_store_n(&graphics_crumb->service_result,service_result,__ATOMIC_RELEASE);
- if(kind&&reply_decoded)
-   nx2_rpc(RPC_LOG,service_result,cmd,h,kind,0,
-           "SERVICE_REPLY_RESULT",service,0);
+ /* The completed IPC_EVENT and breadcrumb already contain CMIF status.
+  * Do not block guest service calls on repetitive success-only SD logs.
+  * Error replies remain persisted by the main log's abnormal-event path. */
  if(!rc){
    if(want_fsp)response_tags(p,scan,2);
    else if(kind==2 && !control && cmd==62 &&
@@ -519,9 +521,8 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    nx2_rpc(RPC_LOG,h,rc,kind,request_type,0,
            "IPC_FAILED_HANDLE_OWNER",owner,0);
  }
- if((kind&&!late)||rc)nx2_rpc(RPC_IPC,h,cmd,rc,kind,0,
-                     want_fsp?"fsp-srv service acquired":
-                     (kind==2?"FSP request":"IPC"),0,0);
+ /* The host RPC_IPC handler was logging-only. Preserve actual error
+  * telemetry above and in IPC_EVENT without crossing the guest RPC gate. */
  return rc;
 }
 uint32_t nx2_sync(uint32_t h){
