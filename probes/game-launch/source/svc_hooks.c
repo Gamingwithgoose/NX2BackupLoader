@@ -242,10 +242,18 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  const uint32_t hdr0=n>=4?word(p):0;
  const uint32_t hdr1=n>=8?word(p+4):0;
  const uint32_t special=n>=12&&(hdr1&0x80000000U)?word(p+8):0;
+ /* Classify native filesystem capabilities by interface and command.
+  * This never grants new kernel permissions or mutates host save data.
+  * A cache save-info reader is an explicitly read-only child object. */
  if(kind==2&&!nx2_ipc_fsp_allowed(d)){
    __atomic_store_n(&nx2_launch->fsp_denied,1,__ATOMIC_RELEASE);
    nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
            "Blocked unapproved native FSP request",0,0);
+   for(;;)__asm__ volatile("wfe");
+ }
+ if(kind==3&&!nx2_ipc_save_reader_allowed(d)){
+   nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
+           "Blocked non-reader command on read-only FSP iterator",0,0);
    for(;;)__asm__ volatile("wfe");
  }
  /* Avoid two synchronous host RPCs around every game IPC SVC.
@@ -314,6 +322,14 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            "SERVICE_REPLY_RESULT",service,0);
  if(!rc){
    if(want_fsp)response_tags(p,scan,2);
+   else if(kind==2 && !control && cmd==62 &&
+           reply_decoded && !service_result) {
+     /* This response creates ISaveDataInfoReader, not a new unrestricted
+      * IFileSystemProxy. Preserve the read-only capability on its handle. */
+     response_tags(p,scan,3);
+     nx2_rpc(RPC_LOG,cmd,h,0,0,0,
+             "READ_ONLY_FSP_SAVE_INFO_READER_OPENED",owner,0);
+   }
    else if(kind&&control&&(cmd==1||cmd==2||cmd==4))
      response_tags(p,scan,kind);
    /* An SM GetService response identifies the new session's owner.
