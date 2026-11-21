@@ -428,6 +428,12 @@ static void run(const Nx2Game *game, int rebuild_index) {
           pending,host->abort,
           __atomic_load_n(&l->abort_requested,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->stage,__ATOMIC_ACQUIRE),late);
+      row(f,"GRAPHICS_PATH bootstrap=%u getproc=%u present_lookups=%u present_entered=%u present_returned=%u\n",
+          __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_present_lookups,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE));
     }
     if (!__atomic_load_n(&l->main_entered, __ATOMIC_ACQUIRE) &&
         armTicksToNs(armGetSystemTick() - began) > 300000000000ULL)
