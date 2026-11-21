@@ -413,12 +413,24 @@ static int read_compressed(const unsigned char *e,uint32_t file,
         free(raw);free(out);return 0;
       }
       size_t n=ZSTD_decompress(out,(size_t)total,raw,(size_t)packed);
-      free(raw);
       if(ZSTD_isError(n)||n!=total){
-        read_error=ZSTD_isError(n)?"Zstandard decompression returned an error":
-                                    "Zstandard output size differs from TOC";
-        free(out);return 0;
+        unsigned char header[8]={0};
+        size_t available=(size_t)packed<sizeof(header)?(size_t)packed:sizeof(header);
+        memcpy(header,raw,available);
+        if(ZSTD_isError(n))
+          snprintf(probe_details,sizeof(probe_details),
+            "ZSTD code=%llu frame=%02x%02x%02x%02x%02x%02x%02x%02x",
+            (unsigned long long)(0-(uint64_t)n),header[0],header[1],
+            header[2],header[3],header[4],header[5],header[6],header[7]);
+        else
+          snprintf(probe_details,sizeof(probe_details),
+            "ZSTD output=%llu expected=%llu frame=%02x%02x%02x%02x",
+            (unsigned long long)n,(unsigned long long)total,
+            header[0],header[1],header[2],header[3]);
+        read_error=probe_details;
+        free(raw);free(out);return 0;
       }
+      free(raw);
       unsigned char hash[32];
       sha256(out,(size_t)total,hash);
       if(memcmp(hash,e+32,32)){
