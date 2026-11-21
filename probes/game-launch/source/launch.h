@@ -55,6 +55,8 @@ typedef struct {
 typedef struct {
  uint64_t handle,caller;
  uint32_t request_type,command,result,phase;
+ uint32_t service_result;
+ char service[9];
 } Nx2IpcBreadcrumb;
 typedef struct {
  Nx2RomView rom;
