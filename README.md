@@ -103,3 +103,9 @@ The current extracted OOT test successfully built/loaded a cached index for 186,
 ### NUP package support
 
 NUP v1 archives can contain a base package or an update explicitly flagged `standalone_update` (flag bit 0). Both are eligible for experimental launch when their ExeFS and RomFS trees exist. Update-only archives lacking that standalone flag are not launchable without a base, and DLC/update layering is not yet implemented. If validation fails, the selected entry shows package index, kind, flags and directory indices to assist diagnosis.
+
+### Separate NUP launch logs and native heap diagnostics
+
+Selecting a NUP now writes `SD:/BackupLoaderMKW-nup.log` instead of overwriting the extracted-game log `SD:/BackupLoaderMKW-gameplay.log`. A NUP that returns to the menu should show an error on the menu; the dedicated log contains the selected file and the failing preparation step. The NUP mount reader now reports TOC, directory, or file-extent validation errors instead of returning silently.
+
+For extracted OOT, the kernel heap request still uses the real `svcSetHeapSize`, with a 3 GiB physical-budget floor. The checker now validates the **retained heap's end** rather than assuming a `QueryMemory` result at the heap base represents one contiguous region. Logs include `NATIVE_HEAP_BOUNDS_INPUT`, `NATIVE_HEAP_TAIL_INPUT`, and either `NATIVE_HEAP_SET_RESULT` or a refusal. These paths remain hardware-untested; preserve the previous working NRO.
