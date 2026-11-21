@@ -26,6 +26,32 @@ static void row(FILE *f, const char *fmt, ...) {
   va_end(a);
   fflush(f);
 }
+/* Drain every metadata-only IPC event into the common folder/NUP log.
+ * The guest never blocks on SD output. Ring overruns are explicitly counted. */
+static void drain_ipc_events(FILE *f,Nx2Launch *l,uint32_t *cursor){
+ uint32_t produced=__atomic_load_n(&l->ipc_event_next,__ATOMIC_ACQUIRE);
+ if((uint32_t)(produced-*cursor)>NX2_IPC_EVENT_SLOTS){
+  uint32_t lost=produced-*cursor-NX2_IPC_EVENT_SLOTS;
+  fprintf(f,"IPC_EVENTS_DROPPED count=%u first=%u next=%u reason=ring_overflow\n",
+          lost,*cursor,produced);
+  *cursor+=lost;
+ }
+ unsigned written=0;
+ while(*cursor!=produced&&written<128){
+  uint32_t expected=*cursor+1;
+  const Nx2IpcEvent *entry=&l->ipc_events[*cursor%NX2_IPC_EVENT_SLOTS];
+  if(__atomic_load_n(&entry->sequence,__ATOMIC_ACQUIRE)!=expected)break;
+  Nx2IpcEvent v=*entry;
+  if(__atomic_load_n(&entry->sequence,__ATOMIC_ACQUIRE)!=expected)break;
+  v.service[8]=0;
+  fprintf(f,"IPC_EVENT seq=%u call=%u phase=%u service=%s kind=%u handle=%08x hipc=%u command=%u domain_object=%08x flags=%02x hdr0=%08x hdr1=%08x special=%08x kernel=%08x cmif=%08x caller=%016llx tick=%llu\n",
+          expected,v.call_id,v.phase,v.service,v.kind,v.handle,
+          v.request_type,v.command,v.object_id,v.flags,v.hdr0,v.hdr1,
+          v.special,v.kernel_result,v.cmif_result,
+          (unsigned long long)v.caller,(unsigned long long)v.tick);
+  (*cursor)++;written++;
+ }
+}
 static void screen(const char *message) {
   consoleClear();
   printf("BackupLoaderMKW 0.14\n\n%s\n", message);
@@ -415,6 +441,9 @@ static void run(const Nx2Game *game, int rebuild_index) {
       (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   u64 trace_sample = began;
+  u64 ipc_event_flush=began;
+  uint32_t ipc_event_cursor=0;
+  row(f,"IPC_FULL_TRACE enabled=1 payloads=omitted ring=%u semantics=request_and_completion\n",NX2_IPC_EVENT_SLOTS);
   u64 crash_sample = began;
   u32 previous_crash_ipc_next = UINT32_MAX;
   u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX, previous_trace_begin = UINT32_MAX;
@@ -431,6 +460,11 @@ static void run(const Nx2Game *game, int rebuild_index) {
   for (;;) {
     check_fault(f, crash, images);
     nx2_host_poll(host, l);
+    drain_ipc_events(f,l,&ipc_event_cursor);
+    if(armTicksToNs(armGetSystemTick()-ipc_event_flush)>=250000000ULL){
+      ipc_event_flush=armGetSystemTick();
+      fflush(f);
+    }
     if (host->abort || __atomic_load_n(&l->abort_requested, __ATOMIC_ACQUIRE))
       stop(f, "Native launch requested stop");
     u32 stage = __atomic_load_n(&l->stage, __ATOMIC_ACQUIRE);
@@ -568,6 +602,26 @@ static void run(const Nx2Game *game, int rebuild_index) {
             (unsigned long long)offset);
         }
         previous_crash_ipc_next=next;
+      }
+    }
+    /* Independent crash report retains recent detailed requests and replies,
+     * even when the full gameplay/NUP trace cannot be completely drained. */
+    if(crash && captured_snapshot){
+      uint32_t total=__atomic_load_n(&l->ipc_event_next,__ATOMIC_ACQUIRE);
+      uint32_t count=total<24?total:24;
+      for(uint32_t back=count;back;back--){
+        uint32_t expected=total-back+1;
+        Nx2IpcEvent *entry=&l->ipc_events[(expected-1)%NX2_IPC_EVENT_SLOTS];
+        if(__atomic_load_n(&entry->sequence,__ATOMIC_ACQUIRE)!=expected)
+          continue;
+        Nx2IpcEvent v=*entry;
+        if(__atomic_load_n(&entry->sequence,__ATOMIC_ACQUIRE)!=expected)
+          continue;
+        v.service[8]=0;
+        row(crash,"IPC_EVENT_TAIL seq=%u call=%u phase=%u owner=%s kind=%u handle=%08x hipc=%u command=%u object=%08x flags=%02x kernel=%08x cmif=%08x caller=%016llx\n",
+            expected,v.call_id,v.phase,v.service,v.kind,v.handle,
+            v.request_type,v.command,v.object_id,v.flags,
+            v.kernel_result,v.cmif_result,(unsigned long long)v.caller);
       }
     }
     /* Guest-to-host RPC callsites are recorded before IPC, independently of
