@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include "rom_view.h"
 #define NX2_RPC_SLOTS 16
+#define NX2_RPC_TRACE_SLOTS 32
 #define NX2_PATH_MAX 1024
 #define NX2_OBJECTS 96
 #define NX2_FS_UNSUPPORTED 0x310002U
@@ -18,6 +19,12 @@ typedef struct {
  void *buffer;
  char path[NX2_PATH_MAX],path2[NX2_PATH_MAX];
 } Nx2Request;
+/* Append-only ring. sequence is published last, so the host can reject
+ * incomplete entries without relying on the faulted thread. */
+typedef struct {
+ uint64_t caller,thread;
+ uint32_t op,phase,result,sequence;
+} Nx2RpcTrace;
 typedef struct {uintptr_t vtable;uint64_t active,handle,mode;} Nx2Object;
 typedef struct {
  void (*os_init)(uint32_t,const void *);
@@ -73,6 +80,8 @@ typedef struct {
  Nx2RomView rom;
  Nx2LaunchApi api;
  Nx2Request requests[NX2_RPC_SLOTS];
+ uint32_t rpc_trace_next;
+ Nx2RpcTrace rpc_trace[NX2_RPC_TRACE_SLOTS];
  Nx2Object objects[NX2_OBJECTS];
  uintptr_t storage_table[10],fs_table[24],file_table[10],dir_table[6];
  Nx2Object storage,save_fs;
