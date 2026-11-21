@@ -359,7 +359,7 @@ void *nx2_nup_package_npdm(size_t *length) {
   if(!meta)return NULL;
   if(mounted.meta_offset>INT64_MAX ||
      nup_seek(mounted.f,(int64_t)mounted.meta_offset,SEEK_SET) ||
-     fread(meta,1,(size_t)mounted.meta_size,mounted.f)!=(size_t)mounted.meta_size)){
+     fread(meta,1,(size_t)mounted.meta_size,mounted.f)!=(size_t)mounted.meta_size){
     free(meta);return NULL;
   }
   size_t pos=0;
