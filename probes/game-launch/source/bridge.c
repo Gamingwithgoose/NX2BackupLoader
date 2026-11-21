@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "launch.h"
 #include "raw_svc.h"
+#include <stdio.h>
 Nx2Launch *nx2_launch;
 static void copy(void *d,const void *s,uint64_t n){unsigned char *a=d;const unsigned char *b=s;for(uint64_t i=0;i<n;i++)a[i]=b[i];}
 static void zero(void *d,uint64_t n){unsigned char *p=d;for(uint64_t i=0;i<n;i++)p[i]=0;}
@@ -78,6 +79,10 @@ static uint32_t storage_range(void *self,void *out,uint64_t outsize,
  return NX2_FS_UNSUPPORTED;
 }
 static Nx2Object *object(uintptr_t vt,uint64_t handle,uint64_t mode){for(unsigned i=0;i<NX2_OBJECTS;i++){uint64_t expected=0;if(__atomic_compare_exchange_n(&nx2_launch->objects[i].active,&expected,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)){Nx2Object *o=&nx2_launch->objects[i];o->vtable=vt;o->handle=handle;o->mode=mode;return o;}}return 0;}
+static void release_fs(void *p){
+ Nx2Object *o=p;
+ if(o!=&nx2_launch->save_fs)__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);
+}
 static void release_file(void *p){Nx2Object *o=p;if(o->active){nx2_rpc(RPC_SAVE_CLOSE,o->handle,0,0,0,0,0,0,0);__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);}}
 static void release_dir(void *p){Nx2Object *o=p;if(o->active){nx2_rpc(RPC_DIR_CLOSE,o->handle,0,0,0,0,0,0,0);__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);}}
 static uint32_t file_read(void *p,uint64_t *read,int64_t offset,void *buf,uint64_t size,const void *option){(void)option;Nx2Object *o=p;if(offset<0||!read)return NX2_INVALID;uint64_t n=0;uint32_t rc=nx2_rpc(RPC_SAVE_READ,o->handle,offset,size,0,buf,0,0,&n);*read=n;return rc;}
@@ -87,27 +92,93 @@ static uint32_t file_resize(void *p,int64_t n){if(n<0)return NX2_INVALID;return 
 static uint32_t file_size(void *p,int64_t *n){uint64_t size=0;uint32_t rc=nx2_rpc(RPC_SAVE_SIZE,((Nx2Object *)p)->handle,0,0,0,0,0,0,&size);if(n)*n=(int64_t)size;return n?rc:NX2_INVALID;}
 static uint32_t file_range(void *p,void *out,uint64_t outsize,uint32_t op,int64_t off,int64_t n,const void *in,uint64_t insize){return storage_range(p,out,outsize,op,off,n,in,insize);}
 static const char *path(const void *p){return nx2_launch->api.path_string(p);}
-static uint32_t create_file(void *s,const void *p,int64_t size,int option){(void)s;if(size<0)return NX2_INVALID;return nx2_rpc(RPC_SAVE_CREATE,size,(uint32_t)option,0,0,0,path(p),0,0);}
-#define PATH_FN(name,operation) static uint32_t name(void *s,const void *p){(void)s;return nx2_rpc(operation,0,0,0,0,0,path(p),0,0);}
+/* Translate cache-mounted paths into an isolated, per-index SD subtree.
+ * The host's save-path validator still checks all path components. */
+static const char *routed_path(void *self,const void *p,char out[NX2_PATH_MAX]){
+ const char *raw=path(p);
+ if(!raw)return 0;
+ if(!self || self==&nx2_launch->save_fs)return raw;
+ Nx2Object *fs=self;
+ if(!fs->active || fs->vtable!=(uintptr_t)&nx2_launch->fs_table[2] ||
+    !fs->mode)return 0;
+ while(*raw=='/')raw++;
+ int n=snprintf(out,NX2_PATH_MAX,"cache-storage/%llu%s%s",
+                (unsigned long long)(fs->mode-1),*raw?"/":"",raw);
+ return n>=0 && n<NX2_PATH_MAX?out:0;
+}
+static uint32_t create_file(void *s,const void *p,int64_t size,int option){
+ if(size<0)return NX2_INVALID;
+ char temp[NX2_PATH_MAX];const char *name=routed_path(s,p,temp);
+ return name?nx2_rpc(RPC_SAVE_CREATE,size,(uint32_t)option,0,0,0,name,0,0):NX2_INVALID;
+}
+#define PATH_FN(name,operation) static uint32_t name(void *s,const void *p){char temp[NX2_PATH_MAX];const char *name=routed_path(s,p,temp);return name?nx2_rpc(operation,0,0,0,0,0,name,0,0):NX2_INVALID;}
 PATH_FN(delete_file,RPC_SAVE_DELETE) PATH_FN(mkdir_save,RPC_SAVE_MKDIR) PATH_FN(rmdir_save,RPC_SAVE_RMDIR) PATH_FN(rmtree_save,RPC_SAVE_RMTREE) PATH_FN(clean_save,RPC_SAVE_CLEAN)
-static uint32_t rename_file(void *s,const void *a,const void *b){(void)s;return nx2_rpc(RPC_SAVE_RENAME_FILE,0,0,0,0,0,path(a),path(b),0);}
-static uint32_t rename_dir(void *s,const void *a,const void *b){(void)s;return nx2_rpc(RPC_SAVE_RENAME_DIR,0,0,0,0,0,path(a),path(b),0);}
-static uint32_t entry_type(void *s,uint32_t *out,const void *p){(void)s;uint64_t v=0;uint32_t rc=nx2_rpc(RPC_SAVE_TYPE,0,0,0,0,0,path(p),0,&v);if(out)*out=(uint32_t)v;return out?rc:NX2_INVALID;}
-static uint32_t free_size(void *s,int64_t *out,const void *p){(void)s;uint64_t v=0;uint32_t rc=nx2_rpc(RPC_SAVE_FREE,0,0,0,0,0,path(p),0,&v);if(out)*out=(int64_t)v;return out?rc:NX2_INVALID;}
-static uint32_t total_size(void *s,int64_t *out,const void *p){(void)s;uint64_t v=0;uint32_t rc=nx2_rpc(RPC_SAVE_TOTAL,0,0,0,0,0,path(p),0,&v);if(out)*out=(int64_t)v;return out?rc:NX2_INVALID;}
-static uint32_t open_file(void *s,void **out,const void *p,uint32_t mode){(void)s;if(!out)return NX2_INVALID;uint64_t handle=0;uint32_t rc=nx2_rpc(RPC_SAVE_OPEN,mode,0,0,0,0,path(p),0,&handle);if(rc)return rc;Nx2Object *o=object((uintptr_t)&nx2_launch->file_table[2],handle,mode);if(!o){nx2_rpc(RPC_SAVE_CLOSE,handle,0,0,0,0,0,0,0);return NX2_LIMIT;}*out=o;return 0;}
-static uint32_t open_dir(void *s,void **out,const void *p,uint32_t mode){(void)s;if(!out)return NX2_INVALID;uint64_t handle=0;uint32_t rc=nx2_rpc(RPC_DIR_OPEN,mode,0,0,0,0,path(p),0,&handle);if(rc)return rc;Nx2Object *o=object((uintptr_t)&nx2_launch->dir_table[2],handle,mode);if(!o){nx2_rpc(RPC_DIR_CLOSE,handle,0,0,0,0,0,0,0);return NX2_LIMIT;}*out=o;return 0;}
+static uint32_t rename_file(void *s,const void *a,const void *b){
+ char aa[NX2_PATH_MAX],bb[NX2_PATH_MAX];
+ const char *from=routed_path(s,a,aa),*to=routed_path(s,b,bb);
+ return from&&to?nx2_rpc(RPC_SAVE_RENAME_FILE,0,0,0,0,0,from,to,0):NX2_INVALID;
+}
+static uint32_t rename_dir(void *s,const void *a,const void *b){
+ char aa[NX2_PATH_MAX],bb[NX2_PATH_MAX];
+ const char *from=routed_path(s,a,aa),*to=routed_path(s,b,bb);
+ return from&&to?nx2_rpc(RPC_SAVE_RENAME_DIR,0,0,0,0,0,from,to,0):NX2_INVALID;
+}
+static uint32_t entry_type(void *s,uint32_t *out,const void *p){
+ if(!out)return NX2_INVALID;
+ char temp[NX2_PATH_MAX];const char *name=routed_path(s,p,temp);
+ uint64_t v=0;uint32_t rc=name?nx2_rpc(RPC_SAVE_TYPE,0,0,0,0,0,name,0,&v):NX2_INVALID;
+ if(!rc)*out=(uint32_t)v;
+ return rc;
+}
+static uint32_t free_size(void *s,int64_t *out,const void *p){
+ if(!out)return NX2_INVALID;
+ char temp[NX2_PATH_MAX];const char *name=routed_path(s,p,temp);
+ uint64_t v=0;uint32_t rc=name?nx2_rpc(RPC_SAVE_FREE,0,0,0,0,0,name,0,&v):NX2_INVALID;
+ if(!rc)*out=(int64_t)v;
+ return rc;
+}
+static uint32_t total_size(void *s,int64_t *out,const void *p){
+ if(!out)return NX2_INVALID;
+ char temp[NX2_PATH_MAX];const char *name=routed_path(s,p,temp);
+ uint64_t v=0;uint32_t rc=name?nx2_rpc(RPC_SAVE_TOTAL,0,0,0,0,0,name,0,&v):NX2_INVALID;
+ if(!rc)*out=(int64_t)v;
+ return rc;
+}
+static uint32_t open_file(void *s,void **out,const void *p,uint32_t mode){
+ if(!out)return NX2_INVALID;
+ char temp[NX2_PATH_MAX];const char *name=routed_path(s,p,temp);
+ if(!name)return NX2_INVALID;
+ uint64_t handle=0;uint32_t rc=nx2_rpc(RPC_SAVE_OPEN,mode,0,0,0,0,name,0,&handle);
+ if(rc)return rc;
+ Nx2Object *o=object((uintptr_t)&nx2_launch->file_table[2],handle,mode);
+ if(!o){nx2_rpc(RPC_SAVE_CLOSE,handle,0,0,0,0,0,0,0);return NX2_LIMIT;}
+ *out=o;return 0;
+}
+static uint32_t open_dir(void *s,void **out,const void *p,uint32_t mode){
+ if(!out)return NX2_INVALID;
+ char temp[NX2_PATH_MAX];const char *name=routed_path(s,p,temp);
+ if(!name)return NX2_INVALID;
+ uint64_t handle=0;uint32_t rc=nx2_rpc(RPC_DIR_OPEN,mode,0,0,0,0,name,0,&handle);
+ if(rc)return rc;
+ Nx2Object *o=object((uintptr_t)&nx2_launch->dir_table[2],handle,mode);
+ if(!o){nx2_rpc(RPC_DIR_CLOSE,handle,0,0,0,0,0,0,0);return NX2_LIMIT;}
+ *out=o;return 0;
+}
 static uint32_t commit(void *s){(void)s;return nx2_rpc(RPC_COMMIT,0,0,0,0,0,0,0,0);}
 static uint32_t commit_provisional(void *s,int64_t id){(void)id;return commit(s);}
 static uint32_t unsupported(void *s){(void)s;return NX2_FS_UNSUPPORTED;}
 static uint32_t dir_read(void *s,uint64_t *out,void *entries,int64_t max){if(!out||max<0)return NX2_INVALID;uint64_t n=0;uint32_t rc=nx2_rpc(RPC_DIR_READ,((Nx2Object *)s)->handle,max,0,0,entries,0,0,&n);*out=n;return rc;}
 static uint32_t dir_count(void *s,int64_t *out){uint64_t n=0;uint32_t rc=nx2_rpc(RPC_DIR_COUNT,((Nx2Object *)s)->handle,0,0,0,0,0,0,&n);if(out)*out=(int64_t)n;return out?rc:NX2_INVALID;}
-static uint32_t timestamp(void *self,void *out,const void *p){(void)self;if(!out)return NX2_INVALID;return nx2_rpc(RPC_SAVE_TIMESTAMP,0,0,0,0,out,path(p),0,0);}
+static uint32_t timestamp(void *self,void *out,const void *p){
+ if(!out)return NX2_INVALID;
+ char temp[NX2_PATH_MAX];const char *name=routed_path(self,p,temp);
+ return name?nx2_rpc(RPC_SAVE_TIMESTAMP,0,0,0,0,out,name,0,0):NX2_INVALID;
+}
 static uint32_t fs_attribute(void *self,void *out){(void)self;if(!out)return NX2_INVALID;zero(out,192);unsigned char *p=out;p[0]=p[1]=1;uint32_t *w=(void *)(p+40);w[0]=w[1]=0x300;return 0;}
 void nx2_bridge_init(Nx2Launch *l){
  nx2_launch=l;
  uintptr_t storage[]={0,l->api.storage_rtti,(uintptr_t)noop,(uintptr_t)noop,(uintptr_t)storage_read,(uintptr_t)storage_write,(uintptr_t)storage_flush,(uintptr_t)storage_resize,(uintptr_t)storage_size,(uintptr_t)storage_range};copy(l->storage_table,storage,sizeof(storage));l->storage.vtable=(uintptr_t)&l->storage_table[2];
- uintptr_t fs[]={0,l->api.fs_rtti,(uintptr_t)noop,(uintptr_t)noop,(uintptr_t)create_file,(uintptr_t)delete_file,(uintptr_t)mkdir_save,(uintptr_t)rmdir_save,(uintptr_t)rmtree_save,(uintptr_t)clean_save,(uintptr_t)rename_file,(uintptr_t)rename_dir,(uintptr_t)entry_type,(uintptr_t)free_size,(uintptr_t)total_size,(uintptr_t)open_file,(uintptr_t)open_dir,(uintptr_t)commit,(uintptr_t)commit_provisional,(uintptr_t)unsupported,(uintptr_t)unsupported,(uintptr_t)timestamp,(uintptr_t)unsupported,(uintptr_t)fs_attribute};copy(l->fs_table,fs,sizeof(fs));l->save_fs.vtable=(uintptr_t)&l->fs_table[2];
+ uintptr_t fs[]={0,l->api.fs_rtti,(uintptr_t)release_fs,(uintptr_t)release_fs,(uintptr_t)create_file,(uintptr_t)delete_file,(uintptr_t)mkdir_save,(uintptr_t)rmdir_save,(uintptr_t)rmtree_save,(uintptr_t)clean_save,(uintptr_t)rename_file,(uintptr_t)rename_dir,(uintptr_t)entry_type,(uintptr_t)free_size,(uintptr_t)total_size,(uintptr_t)open_file,(uintptr_t)open_dir,(uintptr_t)commit,(uintptr_t)commit_provisional,(uintptr_t)unsupported,(uintptr_t)unsupported,(uintptr_t)timestamp,(uintptr_t)unsupported,(uintptr_t)fs_attribute};copy(l->fs_table,fs,sizeof(fs));l->save_fs.vtable=(uintptr_t)&l->fs_table[2];
  uintptr_t file[]={0,l->api.file_rtti,(uintptr_t)release_file,(uintptr_t)release_file,(uintptr_t)file_read,(uintptr_t)file_write,(uintptr_t)file_flush,(uintptr_t)file_resize,(uintptr_t)file_size,(uintptr_t)file_range};copy(l->file_table,file,sizeof(file));
  uintptr_t dir[]={0,l->api.dir_rtti,(uintptr_t)release_dir,(uintptr_t)release_dir,(uintptr_t)dir_read,(uintptr_t)dir_count};copy(l->dir_table,dir,sizeof(dir));
 }
@@ -136,6 +207,39 @@ uint32_t __attribute__((noinline)) nx2_mount_save(const char *name){
  nx2_rpc(RPC_LOG,rc,reported,0,0,0,"SAVE_MOUNT_GATE_RETURN",name,0);
  __atomic_store_n(&l->save_gate_phase,4,__ATOMIC_RELEASE);
  return rc;
+}
+/* Back cache storage with a real, private SD subtree. Never claim
+ * creation if the host rejected the requested capacity or directory. */
+uint32_t nx2_create_cache_storage(int index,int64_t size,int64_t journal){
+ if(index<0||index>65535||size<0||journal<0||
+    (uint64_t)size>INT64_MAX-(uint64_t)journal)return NX2_INVALID;
+ uint32_t rc=nx2_rpc(RPC_CACHE_CREATE,(uint32_t)index,
+                     (uint64_t)size,(uint64_t)journal,0,0,0,0,0);
+ nx2_rpc(RPC_LOG,(uint32_t)index,(uint64_t)size,
+         (uint64_t)journal,rc,0,"VIRTUAL_CACHE_STORAGE_CREATE",0,0);
+ return rc;
+}
+uint32_t nx2_mount_cache_storage_index(const char *name,int index){
+ if(!name||index<0||index>65535)return NX2_INVALID;
+ uint32_t rc=nx2_rpc(RPC_CACHE_CHECK,(uint32_t)index,0,0,0,0,0,0,0);
+ if(rc)return rc;
+ Nx2Object *fs=object((uintptr_t)&nx2_launch->fs_table[2],0,(uint64_t)index+1);
+ if(!fs)return NX2_LIMIT;
+ void *owned=fs;
+ rc=nx2_launch->api.register_fs(name,&owned);
+ if(rc)__atomic_store_n(&fs->active,0,__ATOMIC_RELEASE);
+ nx2_rpc(RPC_LOG,(uint32_t)index,rc,0,0,0,
+         "VIRTUAL_CACHE_STORAGE_MOUNT",name,0);
+ return rc;
+}
+uint32_t nx2_mount_cache_storage(const char *name){
+ return nx2_mount_cache_storage_index(name,0);
+}
+uint32_t nx2_mount_cache_storage_app(const char *name,uint64_t app){
+ (void)app;return nx2_mount_cache_storage_index(name,0);
+}
+uint32_t nx2_mount_cache_storage_app_index(const char *name,uint64_t app,int index){
+ (void)app;return nx2_mount_cache_storage_index(name,index);
 }
 uint32_t nx2_ensure_save(uint64_t *required){if(required)*required=0;return 0;}
 uint32_t nx2_save_ok(void){return 0;}
