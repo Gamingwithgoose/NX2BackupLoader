@@ -86,10 +86,9 @@ Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro**. Copy 
 
 ## Current limitations
 
-Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUP launching is newly implemented and **untested on hardware**. It currently selects a base package only; updates and DLC are not merged. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Updates are not merged. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
+Only **Yoshi and the Mysterious Book Demo** is confirmed to work in gameplay. NUP launching is newly implemented and **untested on hardware**. It currently selects a base package only; updates and DLC are not merged. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
 
 **Early experimental release. Use at your own risk.**
-
 
 ## Experimental NUP and index test
 
