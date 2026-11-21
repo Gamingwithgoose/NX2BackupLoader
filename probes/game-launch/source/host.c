@@ -284,8 +284,10 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       }
     break;
   case RPC_LOG:
-    logline(h, "NATIVE_LOG a=%016llx text=%s detail=%s\n",
-            (unsigned long long)r->a, r->path, r->path2);
+    logline(h, "NATIVE_LOG a=%016llx b=%016llx c=%016llx d=%016llx text=%s detail=%s\n",
+            (unsigned long long)r->a, (unsigned long long)r->b,
+            (unsigned long long)r->c, (unsigned long long)r->d,
+            r->path, r->path2);
     break;
   case RPC_IPC:
     logline(
