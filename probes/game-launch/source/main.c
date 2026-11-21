@@ -99,8 +99,9 @@ static void check_fault(FILE *f, const Nx2Images *images) {
 }
 static int prepare_phase(FILE *f, const char *root, Nx2Images *images,
                          Nx2Launch *l, Nx2Host *host, const void *map,
-                         size_t bytes, int game) {
+                         size_t bytes, int game, uint64_t guest_id) {
   memset(l, 0, sizeof(*l));
+  l->guest_program_id = guest_id;
   if (!nx2_rom_view(map, bytes, &l->rom))
     return 0;
   l->preflight_result = l->save_result = NX2_INVALID;
@@ -325,7 +326,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     goto done;
   }
   screen("Preparing the selected game...");
-  if (!prepare_phase(f, game->root, images, l, host, map, map_bytes, 1)) {
+  if (!prepare_phase(f, game->root, images, l, host, map, map_bytes, 1, game->id)) {
     row(f, "LAUNCH_PREPARATION_REFUSED\n");
     snprintf(outcome, sizeof(outcome),
              game->is_nup ? "NUP preparation failed; see BackupLoaderMKW-nup.log." :
