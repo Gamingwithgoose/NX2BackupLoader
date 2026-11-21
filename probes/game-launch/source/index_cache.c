@@ -68,28 +68,29 @@ done:
   fclose(f);
   return data;
 }
-void nx2_cache_save(const char *root, const void *data, size_t bytes) {
+int nx2_cache_save(const char *root, const void *data, size_t bytes) {
   char path[160], tmp[170];
   if (!data || bytes < 80 || bytes > CACHE_LIMIT ||
-      !filename(root, path, sizeof(path))) return;
+      !filename(root, path, sizeof(path))) return 0;
   int64_t stamp = modified(root);
-  if (stamp < 0) return;
+  if (stamp < 0) return 0;
   mkdir("sdmc:/switch", 0777);
   mkdir("sdmc:/switch/BackupLoaderMKW", 0777);
   mkdir(CACHE_DIR, 0777);
   CacheHeader header = {{'N','X','2','I','D','X','0','1'}, hash_root(root),
                         (uint64_t)bytes,
                         hash_bytes(UINT64_C(14695981039346656037), data, bytes), stamp};
-  if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) return;
+  if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) return 0;
   FILE *f = fopen(tmp, "wb");
-  if (!f) return;
+  if (!f) return 0;
   int ok = fwrite(&header, 1, sizeof(header), f) == sizeof(header) &&
            fwrite(data, 1, bytes, f) == bytes;
   if (fflush(f)) ok = 0;
   if (fclose(f)) ok = 0;
   if (ok) {
     remove(path);
-    if (!rename(tmp, path)) return;
+    if (!rename(tmp, path)) return 1;
   }
   remove(tmp);
+  return 0;
 }
