@@ -177,6 +177,41 @@ static void trace_lock(void){
    __asm__ volatile("yield");
 }
 static void trace_unlock(void){__atomic_store_n(&ipc_trace_lock,0,__ATOMIC_RELEASE);}
+/* A single FSP session handle can contain multiple CMIF domain objects.
+ * Only grant a read-only reader's command to its specific object ID. */
+typedef struct {uint32_t handle,object,kind;} Nx2DomainCapability;
+static Nx2DomainCapability domain_caps[128];
+static void domain_cap_set(uint32_t h,uint32_t object,uint32_t kind){
+ if(!h||!object||!kind)return;
+ trace_lock();
+ unsigned slot=128;
+ for(unsigned i=0;i<128;i++){
+   if(domain_caps[i].handle==h && domain_caps[i].object==object){
+     slot=i;break;
+   }
+   if(slot==128 && !domain_caps[i].handle)slot=i;
+ }
+ if(slot<128)
+   domain_caps[slot]=(Nx2DomainCapability){h,object,kind};
+ trace_unlock();
+}
+static uint32_t domain_cap_kind(uint32_t h,uint32_t object){
+ uint32_t kind=0;
+ trace_lock();
+ for(unsigned i=0;i<128;i++){
+   if(domain_caps[i].handle==h && domain_caps[i].object==object){
+     kind=domain_caps[i].kind;break;
+   }
+ }
+ trace_unlock();
+ return kind;
+}
+static void domain_cap_forget_handle(uint32_t h){
+ trace_lock();
+ for(unsigned i=0;i<128;i++)if(domain_caps[i].handle==h)
+   domain_caps[i]=(Nx2DomainCapability){0};
+ trace_unlock();
+}
 static void trace_owner(uint32_t h,const char *name){
  if(!h||!name||!name[0])return;
  trace_lock();
@@ -245,7 +280,14 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  /* Classify native filesystem capabilities by interface and command.
   * This never grants new kernel permissions or mutates host save data.
   * A cache save-info reader is an explicitly read-only child object. */
- if(kind==2&&!nx2_ipc_fsp_allowed(d)){
+ uint32_t domain_kind=d.domain?domain_cap_kind(h,d.object_id):0;
+ /* Apply service permissions to the target domain object, not just the
+  * underlying session handle. Do not grant command 0 globally to FSP. */
+ int reader_domain=(kind==2 && d.domain && domain_kind==3);
+ if(kind==2 && !(reader_domain?nx2_ipc_save_reader_allowed(d):
+                            nx2_ipc_fsp_allowed(d))){
+   nx2_rpc(RPC_LOG,h,d.object_id,d.domain,cmd,0,
+           "FSP_DOMAIN_REQUEST_BLOCKED",owner,0);
    __atomic_store_n(&nx2_launch->fsp_denied,1,__ATOMIC_RELEASE);
    nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
            "Blocked unapproved native FSP request",0,0);
@@ -324,11 +366,21 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    if(want_fsp)response_tags(p,scan,2);
    else if(kind==2 && !control && cmd==62 &&
            reply_decoded && !service_result) {
-     /* This response creates ISaveDataInfoReader, not a new unrestricted
-      * IFileSystemProxy. Preserve the read-only capability on its handle. */
-     response_tags(p,scan,3);
-     nx2_rpc(RPC_LOG,cmd,h,0,0,0,
-             "READ_ONLY_FSP_SAVE_INFO_READER_OPENED",owner,0);
+     /* On a domain session the output object ID is NOT a new kernel
+      * handle. The previous allowlist missed this and rejected a read
+      * through the same FSP handle at command 0. */
+     uint32_t child=0;
+     if(d.domain &&
+        nx2_ipc_domain_response_first_object(p,n,&child)){
+       domain_cap_set(h,child,3);
+       nx2_rpc(RPC_LOG,h,child,cmd,d.object_id,0,
+               "FSP_DOMAIN_READER_CAPABILITY_REGISTERED",owner,0);
+     }else{
+       /* Non-domain output objects are moved handles. */
+       response_tags(p,scan,3);
+       nx2_rpc(RPC_LOG,h,cmd,d.domain,d.object_id,0,
+               "FSP_READER_NON_DOMAIN_OR_UNVERIFIED_RESPONSE",owner,0);
+     }
    }
    else if(kind&&control&&(cmd==1||cmd==2||cmd==4))
      response_tags(p,scan,kind);
@@ -367,7 +419,7 @@ uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){
 }
 uint32_t nx2_close_handle(uint32_t h){
  uint32_t rc=nx2_raw_close(h);
- if(!rc){set_tag(h,0);trace_forget(h);}
+ if(!rc){set_tag(h,0);trace_forget(h);domain_cap_forget_handle(h);}
  return rc;
 }
 __attribute__((noinline,optimize("no-omit-frame-pointer")))
