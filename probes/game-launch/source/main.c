@@ -853,6 +853,9 @@ static void run(const Nx2Game *game, int rebuild_index) {
             (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_RELAXED),
             (unsigned long long)(io_now>=io_last?armTicksToNs(io_now-io_last)/1000000ULL:0));
       }
+      row(f,"ROM_READAHEAD fills=%llu hits=%llu\n",
+          (unsigned long long)__atomic_load_n(&host->read_ahead_fills,__ATOMIC_RELAXED),
+          (unsigned long long)__atomic_load_n(&host->read_ahead_hits,__ATOMIC_RELAXED));
       row(f,"IPC_CAPTURE_SUMMARY observed_events=%u consumed_events=%u dropped=%u full_text=%u\n",
           __atomic_load_n(&l->ipc_event_next,__ATOMIC_ACQUIRE),
           ipc_event_cursor,ipc_event_dropped,(unsigned)ipc_full_text);
