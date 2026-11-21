@@ -49,6 +49,13 @@ typedef struct {
 typedef struct {
  uint64_t begin,end;uint32_t type,permission;
 } Nx2Region;
+/* Guest IPC SVC breadcrumbs: written without RPC, read by host watchdog.
+ * A bounded ring is diagnostic only; never changes IPC routing/results. */
+#define NX2_IPC_TRACE_SLOTS 32
+typedef struct {
+ uint64_t handle,caller;
+ uint32_t request_type,command,result,phase;
+} Nx2IpcBreadcrumb;
 typedef struct {
  Nx2RomView rom;
  Nx2LaunchApi api;
@@ -63,6 +70,8 @@ typedef struct {
  uint32_t late_trace_active; /* host arms diagnostics on successful save mount */
  uint64_t fsp_denied,rom_reads,save_calls,main_entered,frames;
  uint64_t handle_tags[128];
+ uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
+ Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
  Nx2Region regions[39];uint32_t region_count;
  uint32_t preflight,preflight_result;
  uint64_t cache_size;
