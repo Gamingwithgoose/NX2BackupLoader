@@ -43,7 +43,7 @@ static int relocate_one(uint32_t ins,uint32_t from,uint32_t to,
     int64_t imm=ins&0x3ffffff;
     if(imm&(1LL<<25))imm-=1LL<<26;
     uint32_t b;
-    if(!branch((int64_t)from+(imm<<2)-to,&b))return 0;
+    if(!branch((int64_t)from+(imm*4)-to,&b))return 0;
     *relocated=b;return 1;
   }
   if((ins&0x9f000000)==0x90000000) {
@@ -86,7 +86,7 @@ static int branch_alias_entry(unsigned char *text,uint32_t original_size,
   }
   int64_t displacement=(int64_t)(first&0x3ffffff);
   if(displacement&(1LL<<25))displacement-=1LL<<26;
-  int64_t destination=(int64_t)at+(displacement<<2);
+  int64_t destination=(int64_t)at+(displacement*4);
   if(destination<0 || (uint64_t)destination>=original_size ||
      (destination>=(int64_t)at && destination<(int64_t)at+16)) {
     patch_reason="branch_alias_destination_not_safe";return 0;
