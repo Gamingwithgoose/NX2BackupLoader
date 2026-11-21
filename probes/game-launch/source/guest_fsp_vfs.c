@@ -124,18 +124,24 @@ int nx2_guest_fsp_unsupported(void *buffer,uint64_t size,Nx2IpcDecision d){
   token=read32(hdr+12);
  return write_reply(buffer,size,d.domain,NX2_FS_UNSUPPORTED,0,0,0,token);
 }
+/* An nn::sf auto-buffer is encoded as a PAIR of descriptors: one X-static
+ * and one A-buffer, with the unused side explicitly set to NULL/zero.
+ * They are the same logical argument index, not two consecutive paths.
+ * This also handles pure static and pure transfer-buffer calls. */
 static int path_argument(const HipcParsedRequest *req,unsigned index,
                          char out[NX2_PATH_MAX]){
  const void *ptr=0;uint64_t len=0;
- unsigned total=req->meta.num_send_statics+req->meta.num_send_buffers;
- if(index>=total)return 0;
  if(index<req->meta.num_send_statics){
   const HipcStaticDescriptor *v=&req->data.send_statics[index];
-  ptr=hipcGetStaticAddress(v);len=hipcGetStaticSize(v);
- }else{
-  const HipcBufferDescriptor *v=
-   &req->data.send_buffers[index-req->meta.num_send_statics];
-  ptr=hipcGetBufferAddress(v);len=hipcGetBufferSize(v);
+  const void *candidate=hipcGetStaticAddress(v);
+  uint64_t n=hipcGetStaticSize(v);
+  if(candidate&&n){ptr=candidate;len=n;}
+ }
+ if(!ptr&&index<req->meta.num_send_buffers){
+  const HipcBufferDescriptor *v=&req->data.send_buffers[index];
+  const void *candidate=hipcGetBufferAddress(v);
+  uint64_t n=hipcGetBufferSize(v);
+  if(candidate&&n){ptr=candidate;len=n;}
  }
  if(len<1||len>0x301||!valid_memory(ptr,len,0))return 0;
  const unsigned char *src=ptr;
@@ -150,14 +156,31 @@ static int path_argument(const HipcParsedRequest *req,unsigned index,
 }
 static int data_buffer(const HipcParsedRequest *req,int output,
                        void **dst,uint64_t *size){
+ *dst=0;*size=0;
  if(output){
-  if(!req->meta.num_recv_buffers)return 0;
-  const HipcBufferDescriptor *d=&req->data.recv_buffers[0];
-  *dst=hipcGetBufferAddress(d);*size=hipcGetBufferSize(d);
+  if(req->meta.num_recv_buffers){
+   const HipcBufferDescriptor *d=&req->data.recv_buffers[0];
+   *dst=hipcGetBufferAddress(d);*size=hipcGetBufferSize(d);
+  }
+  /* cmifRequestOutAutoBuffer can use a C recv-list pointer rather than
+   * a B buffer when its data fits in the server's pointer buffer. */
+  if((!*dst||!*size) && req->meta.num_recv_statics &&
+     req->meta.num_recv_statics!=HIPC_AUTO_RECV_STATIC &&
+     req->data.recv_list){
+   const HipcRecvListEntry *v=&req->data.recv_list[0];
+   *dst=(void*)(uintptr_t)((uint64_t)v->address_low |
+                          ((uint64_t)v->address_high<<32));
+   *size=v->size;
+  }
  }else{
-  if(!req->meta.num_send_buffers)return 0;
-  const HipcBufferDescriptor *d=&req->data.send_buffers[0];
-  *dst=hipcGetBufferAddress(d);*size=hipcGetBufferSize(d);
+  if(req->meta.num_send_buffers){
+   const HipcBufferDescriptor *d=&req->data.send_buffers[0];
+   *dst=hipcGetBufferAddress(d);*size=hipcGetBufferSize(d);
+  }
+  if((!*dst||!*size)&&req->meta.num_send_statics){
+   const HipcStaticDescriptor *v=&req->data.send_statics[0];
+   *dst=hipcGetStaticAddress(v);*size=hipcGetStaticSize(v);
+  }
  }
  return *size && *size<=0x1000000U && valid_memory(*dst,*size,output);
 }
@@ -294,12 +317,29 @@ static uint32_t do_dir(const VfsObject *obj,uint32_t cmd,
  }
  return NX2_FS_UNSUPPORTED;
 }
+/* A native SaveDataAttribute is exactly 0x40 bytes. Canonicalize the
+ * resulting subdirectory once, for both explicit creation and opening.
+ * This namespace never escapes the selected guest title's SD root. */
+static int save_namespace(uint8_t space,const unsigned char *attr,
+                          char name[128]){
+ uint64_t app=read64(attr),uid0=read64(attr+8);
+ uint64_t uid1=read64(attr+16),system_id=read64(attr+24);
+ uint32_t type=attr[32],index=(uint32_t)attr[34] |
+                               ((uint32_t)attr[35]<<8);
+ int n=snprintf(name,128,
+     "vsave-%02x-%02x-%04x-%016llx-%016llx-%016llx-%016llx",
+     (unsigned)space,type,index,
+     (unsigned long long)app,(unsigned long long)uid0,
+     (unsigned long long)uid1,(unsigned long long)system_id);
+ return n>0&&n<128;
+}
 int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
                         uint32_t session_kind,Nx2IpcDecision d){
  if(session_kind!=2||!d.valid||!d.domain||d.control)return 0;
  VfsObject obj=find_object(session,d.object_id);
  if(!obj.kind&&d.close_kind==0&&
-    (d.command!=51&&d.command!=52&&d.command!=53))
+    (d.command!=22&&d.command!=23&&
+     d.command!=51&&d.command!=52&&d.command!=53))
   return 0;
  if(!obj.kind&&d.close_kind)return 0;
  if(size<64)return 0;
@@ -317,28 +357,36 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  const unsigned char *head=cmif+16;
  const unsigned char *in=head+16;
  const unsigned char *end=(const unsigned char*)buffer+size;
- if(in>end||read32(head)!=0x49434653U)return 0;
- uint64_t avail=(uint64_t)(end-in);
+ const unsigned char *declared_end=(const unsigned char*)rq.data.data_words+
+                                    (uint64_t)rq.meta.num_data_words*4;
+ /* Validate the declared HIPC payload, not leftover data in reused TLS. */
+ if(declared_end>end||in>declared_end||read32(head)!=0x49434653U)
+  return 0;
+ uint64_t avail=(uint64_t)(declared_end-in);
  uint32_t token=read32(head+12);
  uint32_t rc=NX2_FS_UNSUPPORTED,new_id=0;
  uint32_t out_size=0;unsigned char out[64]={0};
  if(!obj.kind){
-  /* SaveDataSpaceId + padding + 0x40-byte SaveDataAttribute.
-   * The selected NUP already scopes the host root. Preserve the account
-   * UID and save type/index so two guest profiles never share storage. */
-  if(avail<72)rc=NX2_INVALID;
-  else{
-   const unsigned char *attr=in+8;
-   uint64_t app=read64(attr),uid0=read64(attr+8),uid1=read64(attr+16);
-   uint64_t system_id=read64(attr+24);
-   uint32_t type=attr[32],index=attr[34]|((uint32_t)attr[35]<<8);
-   char name[128];
-   int n=snprintf(name,sizeof(name),
-       "vsave-%02x-%02x-%04x-%016llx-%016llx-%016llx-%016llx",
-       (unsigned)in[0],type,index,
-       (unsigned long long)app,(unsigned long long)uid0,
-       (unsigned long long)uid1,(unsigned long long)system_id);
-   if(n<0||n>=(int)sizeof(name))rc=NX2_INVALID;
+  char name[128]={0};
+  if(d.command==22||d.command==23){
+   /* IFileSystemProxy::CreateSaveDataFileSystem [22] and
+    * CreateSaveDataFileSystemBySystemSaveDataId [23] carry a 0x40-byte
+    * attribute followed by 0x40-byte creation metadata and a 0x10-byte
+    * owner/options field for [22]. Save creation is a private directory,
+    * never a native save created under Mario Kart World's identity.
+    * Root names use the identical formatter as the corresponding open. */
+   size_t minimum=d.command==22?0x90:0x80;
+   if(avail<minimum||!save_namespace(d.command==22?1:0,in,name))
+    rc=NX2_INVALID;
+   else rc=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,name,0,0);
+   nx2_rpc(RPC_LOG,session,d.command,rc,0,0,
+           "GUEST_FSP_SAVE_CREATE",0,0);
+  }else{
+   /* OpenSaveDataFileSystem [51], BySystemSaveDataId [52], or
+    * OpenReadOnlySaveDataFileSystem [53].
+    * Input = u8 SaveDataSpaceId + padding + 0x40 SaveDataAttribute. */
+   if(avail<0x48||!save_namespace(in[0],in+8,name))
+    rc=NX2_INVALID;
    else{
     rc=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,name,0,0);
     if(!rc){
@@ -346,9 +394,9 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
      if(!new_id)rc=NX2_LIMIT;
     }
    }
+   nx2_rpc(RPC_LOG,session,d.object_id,d.command,rc,0,
+           "GUEST_FSP_SAVE_OPEN",0,0);
   }
-  nx2_rpc(RPC_LOG,session,d.object_id,d.command,rc,0,
-          "GUEST_FSP_SAVE_OPEN",0,0);
  }else if(obj.kind==VFS_FS)
   rc=do_fs(&obj,d.command,in,avail,&rq,session,&new_id,out,&out_size);
  else if(obj.kind==VFS_FILE)
