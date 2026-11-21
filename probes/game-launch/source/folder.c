@@ -156,13 +156,15 @@ static int catalog_entry(void *v, const char *name) {
   if (type(folder, 0) && len > 4 &&
       !strcmp(name + len - 4, ".nup")) {
     uint64_t id = 0, files = 0;
-    if (!nx2_nup_probe(folder, &id, &files)) return 1;
+    int valid = nx2_nup_probe(folder, &id, &files);
     Nx2Game archive = {0};
     memcpy(archive.name, name, len - 4);
     archive.name[len - 4] = 0;
     strcpy(archive.root, folder);
     archive.id = id;
-    archive.is_nup = 1;
+    archive.is_nup = valid ? 1 : 2;
+    snprintf(archive.nup_status, sizeof(archive.nup_status),
+             "%s", nx2_nup_probe_error());
     if (c->out->count >= 4096) return 0;
     void *items = realloc(c->out->items,
                           (c->out->count + 1) * sizeof(archive));
