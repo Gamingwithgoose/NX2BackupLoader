@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "launch.h"
 #include "ipc_policy.h"
+#include "guest_fsp_vfs.h"
 #include "raw_svc.h"
 #include "vm_memory.h"
 #include <switch.h>
@@ -314,6 +315,11 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
   * underlying session handle. Do not grant command 0 globally to FSP. */
  int reader_domain=(kind==2 && d.domain && domain_kind==3);
  int closing=d.valid && d.close_kind!=0;
+ /* Route native FS-domain interfaces to this title's private SD backend.
+  * No guest save objects are ever sent to the host title's fsp-srv. */
+ if(kind==2 && !reader_domain &&
+    nx2_guest_fsp_route(p,n,h,kind,d))
+   return 0;
  if(reader_domain && !closing && nx2_ipc_save_reader_allowed(d))
    nx2_rpc(RPC_LOG,h,d.object_id,cmd,d.domain,0,
            "FSP_DOMAIN_READ_ONLY_REQUEST_ALLOWED",owner,0);
@@ -329,14 +335,24 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            "FSP_BLOCKED_REQUEST_HEADER",owner,0);
    nx2_rpc(RPC_LOG,h,d.object_id,d.domain,cmd,0,
            "FSP_DOMAIN_REQUEST_BLOCKED",owner,0);
-   __atomic_store_n(&nx2_launch->fsp_denied,1,__ATOMIC_RELEASE);
+   __atomic_fetch_add(&nx2_launch->fsp_denied,1,__ATOMIC_RELAXED);
+   /* The guest can handle an unsupported IPC operation itself. Never
+    * acknowledge success for missing functionality or forward it into
+    * the host application's save permissions. */
+   if(nx2_guest_fsp_unsupported(p,n,d)){
+     nx2_rpc(RPC_LOG,h,d.object_id,cmd,NX2_FS_UNSUPPORTED,0,
+             "GUEST_FSP_UNSUPPORTED_RESPONSE",owner,0);
+     return 0;
+   }
    nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
-           "Blocked unapproved native FSP request",0,0);
+           "Malformed or unroutable native FSP request",0,0);
    for(;;)__asm__ volatile("wfe");
  }
  if(kind==3&&!closing&&!nx2_ipc_save_reader_allowed(d)){
+   if(nx2_guest_fsp_unsupported(p,n,d))
+     return 0;
    nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
-           "Blocked non-reader command on read-only FSP iterator",0,0);
+           "Malformed read-only FSP iterator request",0,0);
    for(;;)__asm__ volatile("wfe");
  }
  /* Avoid two synchronous host RPCs around every game IPC SVC.
