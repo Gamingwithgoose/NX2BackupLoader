@@ -75,8 +75,12 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
   }
   for (uint64_t i = 0; i < nx2_patch_spec_count; i++) {
     const Nx2PatchSpec *p = &nx2_patch_specs[i];
+    /* SDK exports may live in main/subsdk as well as the final SDK
+     * module. Resolve hooks wherever the matching ABI is exported,
+     * independent of game identity and archive format. */
     if (p->svc != UINT64_MAX || !(p->mode & 2) ||
-        !((role == 2 && p->module == 5) || (role == 1 && p->module == 1)))
+        !((role != 0 && p->module == 5) ||
+          (role == 1 && p->module == 1)))
       continue;
     const char *name = p->symbol ? p->symbol : p->label;
     uintptr_t address = 0;
