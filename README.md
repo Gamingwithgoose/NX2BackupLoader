@@ -115,3 +115,9 @@ For extracted OOT, the kernel heap request still uses the real `svcSetHeapSize`,
 The NUP tester reached `NUP_NPDM_FAILED` before native startup. The experimental NUP reader now tries the original ExeFS `main.npdm` and, if that fails, the archive's package metadata TLV type 0 NPDM. `NUP_NPDM_ENTRY` and `NUP_NPDM_METADATA_FALLBACK` record which source succeeded. NUP archive mount also avoids the former duplicate TOC read and checksum pass.
 
 Extracted OOT reached `GAME_NNMAIN_ENTERED`, mounted RomFS and read `System/HeapSize/Product.Nin_Ounce_NVN2.HeapDef.byml.zs`, `System/RegionLangMask.txt`, and `System/GameRomConfig/NormalProduct.game__RomConfig.bgyml` before an SDK `Break` (reason 0). This is a deliberate game/SDK break, **not evidence of slow SD loading**. The break hook now records `caller` and attempts to identify the mapped code region via `SDK_BREAK_CALLER_REGION`. Do not bypass that break without resolving the originating assert/condition. Changes remain untested on hardware.
+
+### Latest OOT/NUP diagnostics
+
+The NUP run reaches `NUP_NPDM_ENTRY present=1 bytes=1828 codec=1`, confirming its NPDM file exists but is Zstandard compressed. The metadata TLV fallback also failed. This build does **not** yet establish whether the failed entry was unreadable, had a Zstandard decode error, or failed its SHA-256 check. The next log includes `NUP_NPDM_READ reason=...` and the stored extent information to distinguish these cases. No integrity check was bypassed.
+
+Extracted OOT successfully enters `nnMain`, mounts RomFS, and reads three startup files before `SDK_BREAK` from SDK code region offset `0xBC03C`. It did **not** demonstrate slow loading at that stage. The next run captures eight instruction words around the caller using `SDK_BREAK_CODE` so the source of this break can be analyzed; the handler still stops safely instead of suppressing the break.
