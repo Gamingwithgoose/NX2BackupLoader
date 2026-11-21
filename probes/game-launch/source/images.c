@@ -16,6 +16,68 @@ static void row(FILE *f, const char *fmt, ...) {
   va_end(a);
   fflush(f);
 }
+/* Written by the OOT-only AArch64 trampoline, read when the SDK aborts.
+ * Sentinel means that the comparison was never reached. */
+volatile uint64_t nx2_oot_budget_capture[2] = {UINT64_MAX, UINT64_MAX};
+static uint32_t read_ins(const unsigned char *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+         ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+static void write_ins(unsigned char *p,uint32_t v) {
+  for (unsigned n=0;n<4;n++)p[n]=(unsigned char)(v>>(8*n));
+}
+static int encode_branch(int64_t distance,uint32_t *out) {
+  if ((distance&3) || distance<-(INT64_C(1)<<27) ||
+      distance>=(INT64_C(1)<<27))return 0;
+  *out=0x14000000U|((uint64_t)(distance>>2)&0x03ffffffU);
+  return 1;
+}
+/* OOT's verified main+0x10ADBC8 CMP X0,X8 followed by B.LS.
+ * Capture both operands without a C call, keeping x16 and SP intact.
+ * The original CMP is executed in the trampoline, then we return to
+ * the untouched original B.LS at +4. NZCV is set by the original CMP. */
+static int install_oot_budget_probe(FILE *f,Nx2Module *m,uint32_t *cursor) {
+  const uint32_t site=0x10adbc8U;
+  if (m->file_size[0]<site+8 || *cursor>m->address[1] ||
+      m->address[1]-*cursor<32U) {
+    row(f,"OOT_BUDGET_PROBE refused=range_or_capacity\n");return 0;
+  }
+  unsigned char *text=m->guest;
+  const uint32_t cmp=read_ins(text+site);
+  const uint32_t cond=read_ins(text+site+4);
+  if (cmp!=0xeb08001fU || cond!=0x54000369U) {
+    row(f,"OOT_BUDGET_PROBE refused=signature cmp=%08x branch=%08x\n",
+        cmp,cond);
+    return 0;
+  }
+  const uint32_t stub=*cursor;
+  uint32_t to_stub=0,back=0;
+  if (!encode_branch((int64_t)stub-site,&to_stub) ||
+      !encode_branch((int64_t)site+4-((int64_t)stub+20),&back)) {
+    row(f,"OOT_BUDGET_PROBE refused=out_of_branch_range site=%x stub=%x\n",
+        site,stub);
+    return 0;
+  }
+  /* The 32-byte stub:
+   * STR x16,[sp,#-16]!; LDR x16,[pc+20]; STP x0,x8,[x16];
+   * LDR x16,[sp],#16; CMP x0,x8; B site+4; .quad capture.
+   * The PC-relative LDR addresses the embedded .quad at stub+24. */
+  write_ins(text+stub,   0xf81f0ff0U);
+  write_ins(text+stub+4, 0x580000b0U);
+  write_ins(text+stub+8, 0xa9002200U);
+  write_ins(text+stub+12,0xf84107f0U);
+  write_ins(text+stub+16,cmp);
+  write_ins(text+stub+20,back);
+  const uint64_t capture=(uint64_t)(uintptr_t)&nx2_oot_budget_capture[0];
+  memcpy(text+stub+24,&capture,sizeof(capture));
+  nx2_oot_budget_capture[0]=UINT64_MAX;
+  nx2_oot_budget_capture[1]=UINT64_MAX;
+  write_ins(text+site,to_stub);
+  *cursor+=32;
+  row(f,"OOT_BUDGET_PROBE installed site=%08x stub=%08x original_cmp=%08x original_branch=%08x\n",
+      site,stub,cmp,cond);
+  return 1;
+}
 static void hash(unsigned char out[32], const void *p, size_t n) {
   sha256CalculateHash(out, p, n);
 }
@@ -54,6 +116,12 @@ static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
       all->deferred[n].module = module;
       all->deferred[n].offset = original;
     }
+  }
+  /* The comparison probe is OOT-image-specific and refuses to modify
+   * unknown revisions rather than risking an incorrect instruction hook. */
+  if(role==1 && all && nx2_launch &&
+     nx2_launch->guest_program_id==UINT64_C(0x0400486024dec000)) {
+    if(!install_oot_budget_probe(f,m,&cursor))return 0;
   }
   row(f, "THUNK_SPACE module=%u used=%u available=%u resolved_hooks=%u\n",
       module, cursor - m->file_size[0], m->address[1] - m->file_size[0], count);
