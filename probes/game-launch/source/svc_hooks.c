@@ -119,9 +119,12 @@ uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){return filter_sync(p,n,h
 uint32_t nx2_close_handle(uint32_t h){uint32_t rc=nx2_raw_close(h);if(!rc)set_tag(h,0);return rc;}
 void nx2_break(uint32_t reason,uint64_t address,uint64_t size){
  uintptr_t caller=(uintptr_t)__builtin_return_address(0);
- uintptr_t sp=0;
- __asm__ volatile("mov %0, sp":"=r"(sp));
- nx2_rpc(RPC_BREAK,reason,address,size,caller,(void *)sp,
+ uintptr_t fp=0;
+ /* Capture the AArch64 frame pointer, not this wrapper's stack pointer:
+  * the abort origin is above the SDK's generic Abort(Result*) routine.
+  * The host validates every frame link before dereferencing it. */
+ __asm__ volatile("mov %0, x29":"=r"(fp));
+ nx2_rpc(RPC_BREAK,reason,address,size,caller,(void *)fp,
          "Native SDK Break",0,0);
  for(;;)__asm__ volatile("wfe");
 }
