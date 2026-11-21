@@ -10,3 +10,7 @@ int nx2_ipc_service_name(const void *,uint64_t,char out[9]);
 int nx2_ipc_reply_result(const void *,uint64_t,uint32_t,uint32_t *);
 /* Inspect only bounded HIPC CMIF domain metadata; never use title IDs. */
 int nx2_ipc_domain_response_first_object(const void *,uint64_t,uint32_t *);
+
+/* Service-domain lifetime helpers for clone and copy controls. */
+int nx2_ipc_control_copy_domain_object(const void *,uint64_t,uint32_t *);
+int nx2_ipc_reply_first_moved_handle(const void *,uint64_t,uint32_t *);
