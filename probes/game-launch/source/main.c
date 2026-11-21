@@ -171,7 +171,8 @@ static void scan_progress(uint32_t files, void *unused) {
   screen(message);
 }
 static void run(const Nx2Game *game, int rebuild_index) {
-  FILE *f = fopen("sdmc:/BackupLoaderMKW-gameplay.log", "w");
+  FILE *f = fopen(game->is_nup ? "sdmc:/BackupLoaderMKW-nup.log" :
+                          "sdmc:/BackupLoaderMKW-gameplay.log", "w");
   if (!f) {
     snprintf(outcome, sizeof(outcome), "Could not create launch report.");
     return;
@@ -198,10 +199,11 @@ static void run(const Nx2Game *game, int rebuild_index) {
   selected_resource = game->resource;
   if(game->is_nup) {
     screen("Opening NUP game...");
+    row(f,"NUP_LAUNCH_REQUEST path=%s\n",game->root);
     if(!nx2_nup_open(game->root)) {
-      row(f,"NUP_OPEN_FAILED path=%s\n",game->root);
+      row(f,"NUP_OPEN_FAILED path=%s reason=%s\n",game->root,nx2_nup_probe_error());
       fclose(f);
-      snprintf(outcome,sizeof(outcome),"Could not open this NUP. Check the gameplay log.");
+      snprintf(outcome,sizeof(outcome),"NUP open failed: %.115s",nx2_nup_probe_error());
       return;
     }
     size_t npdm_size=0;
@@ -210,7 +212,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
       row(f,"NUP_NPDM_FAILED\n");
       free(npdm);
       nx2_nup_close();fclose(f);
-      snprintf(outcome,sizeof(outcome),"NUP main.npdm missing or invalid.");
+      snprintf(outcome,sizeof(outcome),"NUP ExeFS main.npdm missing, unreadable, or invalid.");
       return;
     }
     memcpy(&selected_resource,npdm+0x14,4);
@@ -233,6 +235,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   screen(rebuild_index ? "Rebuilding game index..." : "Loading game index...");
   char rom[1400], error[160];
   if (snprintf(rom, sizeof(rom), "%s/romfs", game->root) >= (int)sizeof(rom)) {
+    snprintf(outcome,sizeof(outcome),"Game path too long to construct RomFS.");
     nx2_nup_close();
     fclose(f);
     return;
@@ -279,12 +282,14 @@ static void run(const Nx2Game *game, int rebuild_index) {
     nx2_nup_close();
     fclose(f);
     snprintf(outcome, sizeof(outcome),
-             "Could not index this folder. See BackupLoaderMKW-gameplay.log.");
+             game->is_nup ? "NUP RomFS index failed. See BackupLoaderMKW-nup.log." :
+                           "Folder index failed. See BackupLoaderMKW-gameplay.log.");
     return;
   }
   Nx2RomView view;
   if (!nx2_rom_view(map, map_bytes, &view)) {
     row(f, "ROMFS_INDEX_INVALID\n");
+    snprintf(outcome,sizeof(outcome),"Game RomFS metadata failed validation.");
     free(map);
     nx2_nup_close();
     fclose(f);
@@ -306,7 +311,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
   if (!prepare_phase(f, game->root, images, l, host, map, map_bytes, 1)) {
     row(f, "LAUNCH_PREPARATION_REFUSED\n");
     snprintf(outcome, sizeof(outcome),
-             "This backup could not be prepared. See BackupLoaderMKW-gameplay.log.");
+             game->is_nup ? "NUP preparation failed; see BackupLoaderMKW-nup.log." :
+                            "Game preparation failed; see BackupLoaderMKW-gameplay.log.");
     goto done;
   }
   row(f, "ACTUAL_ENTRY_ABOUT_TO_EXECUTE rtld=%016llx physical_budget=%llu\n",
