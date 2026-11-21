@@ -162,6 +162,59 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       return NX2_INVALID;
   }
   switch (r->op) {
+  case RPC_CACHE_CREATE:
+  case RPC_CACHE_CHECK: {
+    /* Cache indexes and quotas are properties of the virtual guest store,
+     * not permissions or quotas of the Mario Kart World host title. */
+    if(r->a>65535 || r->b>INT64_MAX || r->c>INT64_MAX ||
+       r->b>INT64_MAX-r->c)return NX2_INVALID;
+    char parent[600],dir[640],marker[700];
+    int x=snprintf(parent,sizeof(parent),"%s/cache-storage",h->save_root);
+    int y=snprintf(dir,sizeof(dir),"%s/%llu",parent,
+                   (unsigned long long)r->a);
+    int z=snprintf(marker,sizeof(marker),"sdmc:%s/.nx2-capacity",dir);
+    if(x<0||x>=(int)sizeof(parent)||y<0||y>=(int)sizeof(dir)||
+       z<0||z>=(int)sizeof(marker))return NX2_INVALID;
+    if(r->op==RPC_CACHE_CHECK){
+      FsDirEntryType type;
+      rc=fsFsGetEntryType(h->sd,dir,&type);
+      if(R_SUCCEEDED(rc) && type!=FsDirEntryType_Dir)rc=NX2_INVALID;
+      logline(h,"VIRTUAL_CACHE_CHECK index=%llu result=%08x path=%s\\n",
+              (unsigned long long)r->a,rc,dir);
+      break;
+    }
+    s64 free_bytes=0;
+    rc=fsFsGetFreeSpace(h->sd,h->save_root,&free_bytes);
+    if(R_FAILED(rc)){
+      logline(h,"VIRTUAL_CACHE_FREE_SPACE_FAILED result=%08x\\n",rc);
+      break;
+    }
+    if(free_bytes<0 || r->b+r->c>(uint64_t)free_bytes){
+      rc=NX2_LIMIT;
+      logline(h,"VIRTUAL_CACHE_SPACE_REFUSED index=%llu size=%llu journal=%llu free=%lld\\n",
+              (unsigned long long)r->a,(unsigned long long)r->b,
+              (unsigned long long)r->c,(long long)free_bytes);
+      break;
+    }
+    rc=mkdir_one(h->sd,parent);
+    if(R_SUCCEEDED(rc))rc=mkdir_one(h->sd,dir);
+    if(R_SUCCEEDED(rc)){
+      /* Record the requested logical capacity persistently. Data files are
+       * allocated on demand, and subsequent writes still use real SD errors. */
+      uint64_t quota[]={UINT64_C(0x31534E4532484343),r->b,r->c};
+      FILE *f=fopen(marker,"wb");
+      if(!f)rc=NX2_INVALID;
+      else{
+        if(fwrite(quota,1,sizeof(quota),f)!=sizeof(quota)||fflush(f))
+          rc=NX2_INVALID;
+        if(fclose(f))rc=NX2_INVALID;
+      }
+    }
+    logline(h,"VIRTUAL_CACHE_CREATE index=%llu size=%llu journal=%llu free=%lld result=%08x path=%s\\n",
+            (unsigned long long)r->a,(unsigned long long)r->b,
+            (unsigned long long)r->c,(long long)free_bytes,rc,dir);
+    break;
+  }
   case RPC_SAVE_CREATE:
     if (r->a > 0x40000000)
       return NX2_LIMIT;
