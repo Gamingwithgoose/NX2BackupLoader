@@ -34,7 +34,22 @@ uint32_t nx2_rpc(uint32_t op,uint64_t a,uint64_t b,uint64_t c,uint64_t d,void *b
 }
 static uint32_t extent(void *ctx,uint32_t file,uint64_t off,void *buf,uint64_t size){(void)ctx;return nx2_rpc(RPC_ROM_READ,file,off,size,0,buf,0,0,0);}
 static void noop(void *obj){(void)obj;}
-static uint32_t storage_read(void *self,int64_t offset,void *buffer,uint64_t size){(void)self;if(offset<0)return NX2_INVALID;return nx2_rom_read(&nx2_launch->rom,(uint64_t)offset,buffer,size,extent,0);}
+static __attribute__((noinline)) uint32_t storage_read(void *self,int64_t offset,void *buffer,uint64_t size){
+ (void)self;
+ Nx2Launch *l=nx2_launch;
+ /* Called through the guest's IStorage vtable: unlike nx2_rpc's return
+  * address, this return address belongs to the original guest caller. */
+ __atomic_fetch_add(&l->fs_guest_read_entries,1,__ATOMIC_RELAXED);
+ __atomic_store_n(&l->fs_guest_read_caller,
+                  (uint64_t)(uintptr_t)__builtin_return_address(0),__ATOMIC_RELEASE);
+ __atomic_store_n(&l->fs_guest_read_offset,(uint64_t)offset,__ATOMIC_RELAXED);
+ __atomic_store_n(&l->fs_guest_read_size,size,__ATOMIC_RELAXED);
+ uint32_t rc=offset<0?NX2_INVALID:
+   nx2_rom_read(&l->rom,(uint64_t)offset,buffer,size,extent,0);
+ __atomic_store_n(&l->fs_guest_read_result,rc,__ATOMIC_RELAXED);
+ __atomic_fetch_add(&l->fs_guest_read_returns,1,__ATOMIC_RELEASE);
+ return rc;
+}
 static uint32_t storage_write(void *self,int64_t off,const void *p,uint64_t n){(void)self;(void)off;(void)p;(void)n;return NX2_FS_UNSUPPORTED;}
 static uint32_t storage_flush(void *self){(void)self;return 0;}
 static uint32_t storage_resize(void *self,int64_t n){(void)self;(void)n;return NX2_FS_UNSUPPORTED;}
@@ -83,18 +98,26 @@ uint32_t nx2_mount_rom(const char *name,void *cache,uint64_t bytes){void *owned=
 uint32_t nx2_mount_rom_default(const char *name){uint64_t size=0;uint32_t rc=nx2_query_rom(&size);if(rc)return rc;void *cache=arena_alloc(size);if(!cache)return NX2_LIMIT;return nx2_mount_rom(name,cache,size);}
 uint32_t nx2_mount_rom_app(const char *name,uint64_t app,void *p,uint64_t n){(void)app;return nx2_mount_rom(name,p,n);}
 uint32_t nx2_mount_rom_index(const char *name,int index,void *p,uint64_t n){(void)index;return nx2_mount_rom(name,p,n);}
-uint32_t nx2_mount_save(const char *name){
+uint32_t __attribute__((noinline)) nx2_mount_save(const char *name){
+ Nx2Launch *l=nx2_launch;
+ __atomic_store_n(&l->save_gate_caller,
+                  (uint64_t)(uintptr_t)__builtin_return_address(0),__ATOMIC_RELEASE);
+ __atomic_store_n(&l->save_gate_phase,1,__ATOMIC_RELEASE);
  void *owned=&nx2_launch->save_fs;
  nx2_rpc(RPC_LOG,0,0,0,0,0,"SAVE_MOUNT_REGISTER_BEGIN",name,0);
  uint32_t rc=nx2_launch->api.register_fs(name,&owned);
+ __atomic_store_n(&l->save_gate_result,rc,__ATOMIC_RELEASE);
+ __atomic_store_n(&l->save_gate_phase,2,__ATOMIC_RELEASE);
  nx2_rpc(RPC_LOG,rc,0,0,0,0,"SAVE_MOUNT_REGISTER_RETURN",name,0);
  uint32_t reported=nx2_rpc(RPC_SAVE_MOUNT,rc,0,0,0,0,name,0,0);
+ __atomic_store_n(&l->save_gate_phase,3,__ATOMIC_RELEASE);
  nx2_rpc(RPC_LOG,rc,reported,0,0,0,"SAVE_MOUNT_GATE_RETURN",name,0);
+ __atomic_store_n(&l->save_gate_phase,4,__ATOMIC_RELEASE);
  return rc;
 }
 uint32_t nx2_ensure_save(uint64_t *required){if(required)*required=0;return 0;}
 uint32_t nx2_save_ok(void){return 0;}
-void nx2_main_gate(void){__atomic_store_n(&nx2_launch->main_entered,1,__ATOMIC_RELEASE);nx2_rpc(RPC_MAIN_ENTERED,0,0,0,0,0,0,0,0);nx2_launch->api.original_main();nx2_rpc(RPC_ABORT,0,0,0,0,0,"nnMain returned",0,0);for(;;)wait();}
+void nx2_main_gate(void){__atomic_store_n(&nx2_launch->main_entered,1,__ATOMIC_RELEASE);nx2_rpc(RPC_MAIN_ENTERED,0,0,0,0,0,0,0,0);nx2_launch->api.original_main();__atomic_store_n(&nx2_launch->guest_main_returned,1,__ATOMIC_RELEASE);nx2_rpc(RPC_ABORT,0,0,0,0,0,"nnMain returned",0,0);for(;;)wait();}
 static uint32_t preflight_fs_policy(uint32_t result){(void)result;return 2;}
 void nx2_preflight_worker(Nx2Launch *l){
  volatile unsigned char *tlr;uint64_t tp;unsigned char saved[128];__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));__asm__ volatile("mrs %0,tpidr_el0":"=r"(tp));
