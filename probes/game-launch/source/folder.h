@@ -25,3 +25,6 @@ void nx2_folder_cancel(int (*fn)(void *), void *ctx);
 
 /* Discard an interrupted scan when the user requests a fresh rebuild. */
 void nx2_folder_part_clear(const char *root);
+
+/* Number of files recovered from a completed .part checkpoint. */
+uint32_t nx2_folder_resumed_files(void);
