@@ -22,7 +22,7 @@ typedef struct {
   uint64_t nup_large_reads;
   int abort;
 } Nx2Host;
-int nx2_host_init(Nx2Host *, FILE *, const char *, const char *);
+int nx2_host_init(Nx2Host *, FILE *, const char *, const char *,uint64_t);
 int nx2_host_poll(Nx2Host *, Nx2Launch *);
 void nx2_host_close(Nx2Host *);
 int nx2_save_path(char *, size_t, const char *, const char *);
