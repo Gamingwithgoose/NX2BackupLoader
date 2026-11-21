@@ -121,6 +121,12 @@ typedef struct {
  Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
  uint32_t ipc_call_next,ipc_event_next;
  Nx2IpcEvent ipc_events[NX2_IPC_EVENT_SLOTS];
+ /* Native FSP router stage published in shared RAM without a blocking
+  * guest-to-host logging RPC from intercepted synchronous IPC.
+  * Stage: 1 entered, 2 decoded, 3 namespace, 4 virtual object,
+  * 5 response serialized, 6 unsupported/rejected. */
+ uint32_t fsp_route_stage,fsp_route_command,fsp_route_object;
+ uint32_t fsp_route_result,fsp_route_child;
  uint32_t graphics_ipc_next;
  Nx2IpcBreadcrumb graphics_ipc[NX2_GRAPHICS_TRACE_SLOTS];
  Nx2Region regions[39];uint32_t region_count;
