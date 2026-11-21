@@ -58,11 +58,15 @@ The folder name is the same one shown under SD:/games. Renaming the game folder 
 
 ## Gameplay / crash log
 
-Every launch writes one log to:
+Launch logs depend on the selected format:
 
-    SD:/BackupLoaderMKW-gameplay.log
+    SD:/BackupLoaderMKW-gameplay.log  (extracted game)
+    SD:/BackupLoaderMKW-nup.log       (NUP archive)
+    SD:/BackupLoaderMKW-crash.log     (separate crash diagnostic)
 
-If a backup crashes, copy this file **before launching something else**, because the next launch replaces it. It records startup, game progress, and errors. An abrupt system crash may prevent the final lines from being saved. No other SD launch reports are produced.
+Copy relevant logs **before launching another game**, because the next matching launch overwrites them. The separate crash diagnostic records periodic host state and, if captured, an application-local CPU exception. An abrupt system-initiated termination may leave only the last flushed snapshot; it is **not** a kernel or GPU crash report.
+
+For the complete project status, compatibility evidence, limitations, universal-fix roadmap and next-day handoff see [Findings.md](Findings.md) and [HANDOFF_2026-11-21.md](HANDOFF_2026-11-21.md).
 
 ## How it works
 
