@@ -7,6 +7,12 @@ static int name(const unsigned char *p){static const unsigned char s[8]={'f','s'
 Nx2IpcDecision nx2_ipc_decide(const void *buffer,uint64_t size,uint32_t kind){
  Nx2IpcDecision d={0};const unsigned char *p=buffer;if(!p||size<8)return d;
  uint32_t a=word(p),b=word(p+4),type=a&65535;uint64_t off=8;
+ /* HIPC type 2 releases an entire session and has no CMIF SFCI header.
+  * The previous FSP command gate misclassified it as an invalid method. */
+ if(type==2){
+   if(a==2 && b==0){d.valid=1;d.close_kind=2;}
+   return d;
+ }
  if(b&0x80000000){if(size<12)return d;uint32_t s=word(p+8);off=12+((s&1)?8:0)+4*(((s>>1)&15)+((s>>5)&15));}
  off+=8*((a>>16)&15)+12*(((a>>20)&15)+((a>>24)&15)+((a>>28)&15));
  uint64_t bytes=4*(b&1023);if(off>size||bytes>size-off)return d;uint64_t end=off+bytes;
@@ -14,9 +20,19 @@ Nx2IpcDecision nx2_ipc_decide(const void *buffer,uint64_t size,uint32_t kind){
  if(type!=4&&type!=5&&type!=6&&type!=7)return d;
  uint64_t cmif=(off+15)&~UINT64_C(15);if(cmif+16>end)return d;
  if(word(p+cmif)!=0x49434653){
-   /* A domain request carries a 16-byte header preceding SFCI.
-    * The kernel handle remains the same for all objects in the domain;
-    * command IDs only have meaning within the addressed object. */
+   /* Domain messages address an object on a shared session handle.
+    * Close (domain kind 2) contains only the domain header, no SFCI.
+    * Match the exact canonical zero-payload release header so it cannot
+    * grant arbitrary requests access to the host filesystem service. */
+   if(p[cmif]==2 &&
+      word(p+cmif)==2 &&
+      word(p+cmif+8)==0 && word(p+cmif+12)==0 &&
+      word(p+cmif+4)!=0){
+     d.valid=1;d.domain=1;d.object_id=word(p+cmif+4);
+     d.close_kind=1;
+     return d;
+   }
+   /* Invoke (kind 1) carries a separate 16-byte SFCI command header. */
    if(cmif+32>end||p[cmif]!=1||word(p+cmif+16)!=0x49434653)
      return d;
    d.domain=1;
