@@ -165,7 +165,7 @@ int nx2_guest_fsp_unsupported(void *buffer,uint64_t size,Nx2IpcDecision d){
   const unsigned char *header=0,*payload=0;
   uint64_t avail=0;
   if(!native_domain_payload(buffer,size,d,&header,&payload,&avail,&token))
-   return 0;
+   return write_reply(buffer,size,1,NX2_INVALID,0,0,0,0);
  }else{
   /* A non-domain error needs only a bounded CMIF request header.
    * Its HIPC control and descriptor placement was already checked by
@@ -184,7 +184,7 @@ int nx2_guest_fsp_unsupported(void *buffer,uint64_t size,Nx2IpcDecision d){
   uint64_t aligned=(off+15U)&~UINT64_C(15);
   if(off>size||count>size-off||aligned>off+count||
      off+count-aligned<16||read32(p+aligned)!=0x49434653U)
-    return 0;
+    return write_reply(buffer,size,0,NX2_INVALID,0,0,0,0);
   token=read32(p+aligned+12);
  }
  return write_reply(buffer,size,d.domain,NX2_FS_UNSUPPORTED,0,0,0,token);
