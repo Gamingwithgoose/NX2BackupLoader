@@ -453,7 +453,9 @@ static void run(const Nx2Game *game, int rebuild_index) {
     /* Maintain an independently flushed process-end breadcrumb. A final
      * snapshot with no exception record means only that the app disappeared
      * without invoking the libounce handler; it is not a kernel diagnosis. */
+    int captured_snapshot=0;
     if(crash && armTicksToNs(armGetSystemTick()-crash_sample)>=500000000ULL){
+      captured_snapshot=1;
       crash_sample=armGetSystemTick();
       unsigned pending=0;
       for(unsigned i=0;i<NX2_RPC_SLOTS;i++)
@@ -486,7 +488,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     /* Guest-to-host RPC callsites are recorded before IPC, independently of
      * filesystem logging. Keep a short tail in the separate crash file;
      * correlate guest module offsets even if the last event has no reply. */
-    if(crash && armTicksToNs(armGetSystemTick()-crash_sample)<30000000ULL){
+    if(crash && captured_snapshot){
       uint32_t next=__atomic_load_n(&l->rpc_trace_next,__ATOMIC_ACQUIRE);
       uint32_t count=next<4?next:4;
       for(uint32_t back=count;back;back--){
