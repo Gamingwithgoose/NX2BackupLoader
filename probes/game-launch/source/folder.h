@@ -7,6 +7,7 @@ typedef struct {
   uint64_t id;
   uint32_t resource;
   int updates;
+  int is_nup;
 } Nx2Game;
 typedef struct {
   Nx2Game *items;
