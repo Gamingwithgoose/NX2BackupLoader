@@ -4,7 +4,6 @@
 #include "raw_svc.h"
 #include "vm_memory.h"
 #include <switch.h>
-#include <stdio.h>
 uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t sub){
  Nx2Launch *l=nx2_launch;
  /* The guest is executing inside MKW's process, but its own program ID
@@ -29,16 +28,9 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
      static uint32_t seen=0;
      uint32_t bit=(type==5)?1U:(type==6)?2U:(type==7)?4U:
                   (type==16)?8U:(type==21)?16U:32U;
-     if(!(__atomic_fetch_or(&seen,bit,__ATOMIC_RELAXED)&bit)){
-       char detail[120];
-       snprintf(detail,sizeof(detail),
-                "type=%u rc=%08x retained_host_bytes=%llu",
-                type,(unsigned)rc,
-                (unsigned long long)nx2_process_heap.host_bytes);
-       nx2_rpc(RPC_LOG,R_SUCCEEDED(rc)?*out:0,type,rc,
-               nx2_process_heap.host_bytes,0,
-               "GUEST_MEMORY_INFO_FIRST_QUERY",detail,0);
-     }
+     if(!(__atomic_fetch_or(&seen,bit,__ATOMIC_RELAXED)&bit))
+       nx2_rpc(RPC_LOG,*out,type,rc,nx2_process_heap.host_bytes,0,
+               "GUEST_MEMORY_INFO_FIRST_QUERY",0,0);
    }
    return rc;
  }
