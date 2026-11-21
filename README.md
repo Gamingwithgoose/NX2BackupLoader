@@ -109,3 +109,9 @@ NUP v1 archives can contain a base package or an update explicitly flagged `stan
 Selecting a NUP now writes `SD:/BackupLoaderMKW-nup.log` instead of overwriting the extracted-game log `SD:/BackupLoaderMKW-gameplay.log`. A NUP that returns to the menu should show an error on the menu; the dedicated log contains the selected file and the failing preparation step. The NUP mount reader now reports TOC, directory, or file-extent validation errors instead of returning silently.
 
 For extracted OOT, the kernel heap request still uses the real `svcSetHeapSize`, with a 3 GiB physical-budget floor. The checker now validates the **retained heap's end** rather than assuming a `QueryMemory` result at the heap base represents one contiguous region. Logs include `NATIVE_HEAP_BOUNDS_INPUT`, `NATIVE_HEAP_TAIL_INPUT`, and either `NATIVE_HEAP_SET_RESULT` or a refusal. These paths remain hardware-untested; preserve the previous working NRO.
+
+### November NUP/OOT startup test
+
+The NUP tester reached `NUP_NPDM_FAILED` before native startup. The experimental NUP reader now tries the original ExeFS `main.npdm` and, if that fails, the archive's package metadata TLV type 0 NPDM. `NUP_NPDM_ENTRY` and `NUP_NPDM_METADATA_FALLBACK` record which source succeeded. NUP archive mount also avoids the former duplicate TOC read and checksum pass.
+
+Extracted OOT reached `GAME_NNMAIN_ENTERED`, mounted RomFS and read `System/HeapSize/Product.Nin_Ounce_NVN2.HeapDef.byml.zs`, `System/RegionLangMask.txt`, and `System/GameRomConfig/NormalProduct.game__RomConfig.bgyml` before an SDK `Break` (reason 0). This is a deliberate game/SDK break, **not evidence of slow SD loading**. The break hook now records `caller` and attempts to identify the mapped code region via `SDK_BREAK_CALLER_REGION`. Do not bypass that break without resolving the originating assert/condition. Changes remain untested on hardware.
