@@ -211,9 +211,14 @@ static void run(const Nx2Game *game, int rebuild_index) {
     unsigned npdm_codec=0;
     int npdm_present=nx2_nup_file_info("exefs/main.npdm",
                                        &npdm_file_size,&npdm_codec);
-    row(f,"NUP_NPDM_ENTRY present=%d bytes=%llu codec=%u\n",
-        npdm_present,(unsigned long long)npdm_file_size,npdm_codec);
+    uint64_t packed=0,where=0;
+    nx2_nup_entry_detail("exefs/main.npdm",&packed,&where);
+    row(f,"NUP_NPDM_ENTRY present=%d bytes=%llu codec=%u stored=%llu extent=%llu\n",
+        npdm_present,(unsigned long long)npdm_file_size,npdm_codec,
+        (unsigned long long)packed,(unsigned long long)where);
     unsigned char *npdm=nx2_nup_read_all("exefs/main.npdm",0x100000,&npdm_size);
+    row(f,"NUP_NPDM_READ status=%s reason=%s\n",
+        npdm?"OK":"FAILED",nx2_nup_read_error());
     if(!npdm || npdm_size<128 || memcmp(npdm,"META",4)) {
       free(npdm);
       npdm=nx2_nup_package_npdm(&npdm_size);
