@@ -153,8 +153,11 @@ static int catalog_entry(void *v, const char *name) {
   if (!child(folder, sizeof(folder), c->root, name))
     return 1;
   size_t len = strlen(name);
-  if (type(folder, 0) && len > 4 &&
-      !strcmp(name + len - 4, ".nup")) {
+  if (len > 4 && name[len-4]=='.' &&
+      (name[len-3]=='n'||name[len-3]=='N') &&
+      (name[len-2]=='u'||name[len-2]=='U') &&
+      (name[len-1]=='p'||name[len-1]=='P') &&
+      type(folder,0)) {
     uint64_t id = 0, files = 0;
     int valid = nx2_nup_probe(folder, &id, &files);
     Nx2Game archive = {0};
