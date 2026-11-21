@@ -493,6 +493,10 @@ static int read_raw(uint32_t file,uint64_t base,uint64_t total,
     Nx2RawWindow *w=&raw_windows[slot];
     if(!w->bytes)w->bytes=malloc(NX2_RAW_WINDOW_BYTES);
     if(w->bytes){
+      /* Invalidate before reuse: a short SD read must never leave corrupted
+       * cached bytes reachable under the previous file/window identity. */
+      w->file=UINT32_MAX;
+      w->length=0;
       uint64_t remaining=total-offset;
       size_t prefetch=(size_t)(remaining>NX2_RAW_WINDOW_BYTES?
                                NX2_RAW_WINDOW_BYTES:remaining);
