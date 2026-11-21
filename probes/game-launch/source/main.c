@@ -207,12 +207,24 @@ static void run(const Nx2Game *game, int rebuild_index) {
       return;
     }
     size_t npdm_size=0;
+    uint64_t npdm_file_size=0;
+    unsigned npdm_codec=0;
+    int npdm_present=nx2_nup_file_info("exefs/main.npdm",
+                                       &npdm_file_size,&npdm_codec);
+    row(f,"NUP_NPDM_ENTRY present=%d bytes=%llu codec=%u\n",
+        npdm_present,(unsigned long long)npdm_file_size,npdm_codec);
     unsigned char *npdm=nx2_nup_read_all("exefs/main.npdm",0x100000,&npdm_size);
+    if(!npdm || npdm_size<128 || memcmp(npdm,"META",4)) {
+      free(npdm);
+      npdm=nx2_nup_package_npdm(&npdm_size);
+      row(f,"NUP_NPDM_METADATA_FALLBACK status=%s bytes=%llu\n",
+          npdm?"OK":"FAILED",(unsigned long long)npdm_size);
+    }
     if(!npdm || npdm_size<128 || memcmp(npdm,"META",4)) {
       row(f,"NUP_NPDM_FAILED\n");
       free(npdm);
       nx2_nup_close();fclose(f);
-      snprintf(outcome,sizeof(outcome),"NUP ExeFS main.npdm missing, unreadable, or invalid.");
+      snprintf(outcome,sizeof(outcome),"NUP NPDM missing or unreadable; see NUP log.");
       return;
     }
     memcpy(&selected_resource,npdm+0x14,4);
