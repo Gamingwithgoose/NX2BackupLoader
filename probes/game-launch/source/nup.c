@@ -262,14 +262,15 @@ int nx2_nup_open(const char *path) {
     if(first>m.child_count||n>m.child_count-first||rd64(d+16))goto fail;
     for(uint32_t j=0;j<n;j++){
       uint32_t child=dirchild(&m,(uint32_t)i,j),len=0;
-      if((uint64_t)child>=nd+nf ||
-         !safe_name(name_for(&m,child,&len),len))goto fail;
+      const unsigned char *nm=(uint64_t)child<nd+nf?name_for(&m,child,&len):NULL;
+      if(!safe_name(nm,len))goto fail;
     }
   }
   for(uint64_t i=0;i<nf;i++){
     const unsigned char *e=m.files+i*80;
     uint32_t nl=0;
-    if(!safe_name(name_for(&m,(uint32_t)(nd+i),&nl),nl))goto fail;
+    const unsigned char *nm=name_for(&m,(uint32_t)(nd+i),&nl);
+    if(!safe_name(nm,nl))goto fail;
     uint64_t size=rd64(e+8),at=rd64(e+16),stored=rd64(e+24);
     unsigned codec=e[64];
     if(codec>1||e[65]||e[66]||e[67]||
