@@ -13,7 +13,17 @@ Nx2IpcDecision nx2_ipc_decide(const void *buffer,uint64_t size,uint32_t kind){
  if(kind==1&&type==17){d.command=1;d.valid=1;d.want_fsp=bytes>=8&&name(p+off);return d;}
  if(type!=4&&type!=5&&type!=6&&type!=7)return d;
  uint64_t cmif=(off+15)&~UINT64_C(15);if(cmif+16>end)return d;
- if(word(p+cmif)!=0x49434653){cmif+=16;if(cmif+16>end||word(p+cmif)!=0x49434653)return d;}
+ if(word(p+cmif)!=0x49434653){
+   /* A domain request carries a 16-byte header preceding SFCI.
+    * The kernel handle remains the same for all objects in the domain;
+    * command IDs only have meaning within the addressed object. */
+   if(cmif+32>end||p[cmif]!=1||word(p+cmif+16)!=0x49434653)
+     return d;
+   d.domain=1;
+   d.object_id=word(p+cmif+4);
+   if(!d.object_id)return d;
+   cmif+=16;
+ }
  d.command=word(p+cmif+8);d.valid=1;d.control=type==5||type==7;
  if(kind==1&&!d.control&&d.command==1&&cmif+24<=end)d.want_fsp=name(p+cmif+16);
  return d;
@@ -58,4 +68,25 @@ int nx2_ipc_reply_result(const void *buffer,uint64_t size,uint32_t request_type,
  at=(at+15)&~UINT64_C(15);if(at+16>end)return 0;
  if(word(p+at)!=0x4f434653){at+=16;if(at+16>end||word(p+at)!=0x4f434653)return 0;}
  *out=word(p+at+8);return 1;
+}
+
+/* A zero-payload domain response that creates a child object places its
+ * first object ID immediately after the 16-byte SFCO response header.
+ * Read only if the HIPC data bounds, response magic and object count
+ * establish this exact layout. Callers should fall back to normal
+ * non-domain returned handles if no domain object can be verified. */
+int nx2_ipc_domain_response_first_object(const void *buffer,uint64_t size,
+                                         uint32_t *out){
+ const unsigned char *p=buffer;
+ uint64_t at=0,end=0;
+ if(!out||!data_area(p,size,&at,&end))return 0;
+ at=(at+15)&~UINT64_C(15);
+ if(at>end||end-at<36)return 0;
+ uint32_t count=word(p+at);
+ if(!count||count>8||word(p+at+16)!=0x4f434653||
+    word(p+at+24)!=0)return 0;
+ uint32_t id=word(p+at+32);
+ if(!id)return 0;
+ *out=id;
+ return 1;
 }
