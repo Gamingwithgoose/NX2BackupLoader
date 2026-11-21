@@ -12,6 +12,12 @@
 #include <dirent.h>
 #define STAT stat
 #endif
+static int (*cancel_callback)(void *);
+static void *cancel_context;
+void nx2_folder_cancel(int (*fn)(void *), void *ctx) {
+  cancel_callback = fn;
+  cancel_context = ctx;
+}
 static void (*progress_callback)(uint32_t, void *);
 static void *progress_context;
 void nx2_folder_progress(void (*fn)(uint32_t, void *), void *ctx) {
@@ -240,6 +246,7 @@ static int add(Entry **items, uint32_t *count, uint32_t *capacity,
 }
 static int tree_entry(void *v, const char *name) {
   Tree *t = v;
+  if (cancel_callback && cancel_callback(cancel_context)) return 0;
   if (!strcmp(name, ".listing"))
     return 1;
   if (strchr(name, ':') || strchr(name, '\\'))
