@@ -367,16 +367,24 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
              frame>stack_end || stack_end-frame<16)break;
           const uint64_t *record=(const uint64_t *)(uintptr_t)frame;
           uint64_t next=record[0],return_pc=record[1];
+          /* Saved LR can contain AArch64 pointer-authentication bits. The
+           * native guest lives below the loader's 0x8000000000 VA boundary.
+           * Try the raw address first; only normalize if it matches a known
+           * executable region. Retain the original for unknown frames. */
+          uint64_t candidates[2]={return_pc,return_pc & UINT64_C(0x7fffffffff)};
           int found=0;
-          for(uint32_t j=0;j<l->region_count;j++){
-            const Nx2Region *m=&l->regions[j];
-            if(m->permission==5 && return_pc>=m->begin &&
-               return_pc<m->end){
-              logline(h,
-                "SDK_BREAK_FRAME depth=%u region=%u code_offset=%llx\n",
-                depth,j,(unsigned long long)(return_pc-m->begin));
-              found=1;
-              break;
+          for(unsigned variant=0;variant<2&&!found;variant++){
+            if(variant && candidates[variant]==candidates[0])break;
+            for(uint32_t j=0;j<l->region_count;j++){
+              const Nx2Region *m=&l->regions[j];
+              if(m->permission==5 && candidates[variant]>=m->begin &&
+                 candidates[variant]<m->end){
+                logline(h,
+                  "SDK_BREAK_FRAME depth=%u region=%u code_offset=%llx pac_stripped=%u\n",
+                  depth,j,(unsigned long long)(candidates[variant]-m->begin),variant);
+                found=1;
+                break;
+              }
             }
           }
           if(!found)
