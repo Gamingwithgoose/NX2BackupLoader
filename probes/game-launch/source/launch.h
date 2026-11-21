@@ -140,6 +140,8 @@ uint32_t nx2_mount_rom_index(const char *,int,void *,uint64_t);
 uint32_t nx2_query_rom_app(uint64_t *,uint64_t);
 uint32_t nx2_query_rom_index(uint64_t *,int);
 uint32_t nx2_mount_save(const char *);
+/* Kirby's native ldr:ro session cannot be assumed to belong to the guest. */
+uint32_t nx2_ro_initialize_compat(void);
 uint32_t nx2_ensure_save(uint64_t *);
 uint32_t nx2_save_ok(void);
 
