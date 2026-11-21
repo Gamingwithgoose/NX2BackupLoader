@@ -458,17 +458,39 @@ static int read_compressed(const unsigned char *e,uint32_t file,
   unsigned char *out=dest;
   int ok=0;
   NupIn in={input,0,0};
-  while(remaining && consumed<packed) {
-    if(in.pos==in.size) {
+  unsigned stalls=0;
+  for(;;) {
+    /* Reading the last compressed chunk is NOT the same as consuming it.
+     * ZSTD_decompressStream can still have buffered input and output to
+     * process, including the final checksum and frame terminator. */
+    if(in.pos==in.size && consumed<packed) {
       size_t n=(size_t)(packed-consumed);
       if(n>128*1024)n=128*1024;
-      if(fread(input,1,n,mounted.f)!=n)break;
+      if(fread(input,1,n,mounted.f)!=n){
+        read_error="Zstandard stream truncated while reading packed bytes";
+        break;
+      }
       consumed+=n;in.size=n;in.pos=0;
     }
+    size_t prior=in.pos;
     NupOut z={output,128*1024,0};
     size_t step=ZSTD_decompressStream(stream,&z,&in);
-    if(ZSTD_isError(step))break;
+    if(ZSTD_isError(step)){
+      snprintf(probe_details,sizeof(probe_details),
+          "ZSTD stream code=%llu packed=%llu/%llu produced=%llu/%llu",
+          (unsigned long long)(0-(uint64_t)step),
+          (unsigned long long)consumed,(unsigned long long)packed,
+          (unsigned long long)produced,(unsigned long long)total);
+      read_error=probe_details;
+      break;
+    }
+    if(z.pos>UINT64_MAX-produced) {
+      read_error="Zstandard stream output overflow";break;
+    }
     uint64_t end=produced+z.pos;
+    if(end>total){
+      read_error="Zstandard stream exceeds declared entry size";break;
+    }
     if(end>offset && produced<offset+length){
       uint64_t begin=produced>offset?produced:offset;
       uint64_t finish=end<offset+length?end:offset+length;
@@ -479,11 +501,24 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       }
     }
     produced=end;
-    if(step==0 && remaining)break;
-    if(!z.pos && in.pos==in.size && consumed==packed)break;
+    if(step==0){
+      if(produced!=total || remaining){
+        read_error="Zstandard frame finished before declared output size";
+        break;
+      }
+      ok=1;
+      read_error="OK";
+      break;
+    }
+    if(in.pos==prior && z.pos==0){
+      if(++stalls>=2){
+        read_error="Zstandard stream made no progress";break;
+      }
+    }else stalls=0;
+    if(consumed==packed && in.pos==in.size && z.pos==0){
+      read_error="Zstandard stream ended without completing frame";break;
+    }
   }
-  ok=remaining==0;
-  if(ok)read_error="OK";
   ZSTD_freeDStream(stream);
   free(input);free(output);
   return ok;
