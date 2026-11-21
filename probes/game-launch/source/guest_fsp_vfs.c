@@ -424,6 +424,18 @@ static int save_namespace(uint8_t space,const unsigned char *attr,
  *p=0;
  return (size_t)(p-name)<128;
 }
+/* Shared-memory breadcrumbs replace synchronous RPC_LOG calls in
+ * the FSP dispatch path. This avoids waiting for SD writes while the game
+ * is inside a synchronous SendSyncRequest hook. */
+static void fsp_stage(uint32_t stage,Nx2IpcDecision d,
+                      uint32_t result,uint32_t child){
+ Nx2Launch *l=nx2_launch;
+ __atomic_store_n(&l->fsp_route_command,d.command,__ATOMIC_RELAXED);
+ __atomic_store_n(&l->fsp_route_object,d.object_id,__ATOMIC_RELAXED);
+ __atomic_store_n(&l->fsp_route_result,result,__ATOMIC_RELAXED);
+ __atomic_store_n(&l->fsp_route_child,child,__ATOMIC_RELAXED);
+ __atomic_store_n(&l->fsp_route_stage,stage,__ATOMIC_RELEASE);
+}
 int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
                         uint32_t session_kind,Nx2IpcDecision d){
  if(session_kind!=2||!d.valid||!d.domain||d.control)return 0;
@@ -434,10 +446,8 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
   return 0;
  if(!obj.kind&&d.close_kind)return 0;
  if(size<64)return 0;
- if(!obj.kind && !d.close_kind){
-  nx2_rpc(RPC_LOG,session,d.object_id,d.command,size,0,
-          "GUEST_FSP_ROOT_ROUTE_ENTER",0,0);
- }
+ if(!obj.kind && !d.close_kind)
+  fsp_stage(1,d,UINT32_MAX,0);
  if(d.close_kind==1){
   VfsObject old={0};
   if(forget_object(session,d.object_id,&old))
@@ -454,13 +464,11 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
   /* Known save-open methods must NOT escape to the native host service.
    * Return a syntactically valid error response even when the guest
    * request has incorrect length/layout; no extra pointer reparse. */
-  nx2_rpc(RPC_LOG,session,d.object_id,d.command,NX2_INVALID,0,
-          "GUEST_FSP_ROOT_DECODE_REJECTED",0,0);
+  fsp_stage(6,d,NX2_INVALID,0);
   return write_reply(buffer,size,1,NX2_INVALID,0,0,0,0);
  }
  if(!obj.kind)
-  nx2_rpc(RPC_LOG,session,d.object_id,d.command,avail,0,
-          "GUEST_FSP_ROOT_DECODE_OK",0,0);
+  fsp_stage(2,d,UINT32_MAX,0);
  uint32_t rc=NX2_FS_UNSUPPORTED,new_id=0;
  uint32_t out_size=0;unsigned char out[64]={0};
  if(!obj.kind){
@@ -476,8 +484,7 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
    if(avail<minimum||!save_namespace(d.command==22?1:0,in,name))
     rc=NX2_INVALID;
    else rc=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,name,0,0);
-   nx2_rpc(RPC_LOG,session,d.command,rc,0,0,
-           "GUEST_FSP_SAVE_CREATE",0,0);
+   fsp_stage(rc?6:4,d,rc,0);
   }else{
    /* OpenSaveDataFileSystem [51], BySystemSaveDataId [52], or
     * OpenReadOnlySaveDataFileSystem [53].
@@ -491,8 +498,7 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
     new_id=allocate_object(session,VFS_FS,d.command==53,0,name);
     rc=new_id?0:NX2_LIMIT;
    }
-   nx2_rpc(RPC_LOG,session,d.object_id,d.command,rc,new_id,
-           "GUEST_FSP_SAVE_OPEN",0,0);
+   fsp_stage(rc?6:4,d,rc,new_id);
   }
  }else{
   /* Parse descriptor lists only for already allocated virtual child
@@ -506,6 +512,10 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
    rc=do_dir(&obj,d.command,&rq,out,&out_size);
  }
  if(!write_reply(buffer,size,1,rc,rc?0:new_id,
-                 rc?0:out,rc?0:out_size,token))return 0;
+                 rc?0:out,rc?0:out_size,token)){
+  if(!obj.kind)fsp_stage(6,d,NX2_INVALID,new_id);
+  return 0;
+ }
+ if(!obj.kind)fsp_stage(5,d,rc,new_id);
  return 1;
 }
