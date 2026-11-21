@@ -20,6 +20,13 @@ typedef struct {
   } cache[16];
   uint64_t calls, bytes, save_bytes, lines;
   uint64_t nup_large_reads;
+  /* 1 MiB read-ahead for shared loose-file and raw-NUP asset reads.
+   * This state is only accessed by the serialized storage worker. */
+  unsigned char *read_ahead_data;
+  uint64_t read_ahead_offset,read_ahead_length,read_ahead_last_end;
+  uint64_t read_ahead_hits,read_ahead_fills;
+  uint32_t read_ahead_file,read_ahead_last_file;
+  uint32_t read_ahead_valid,read_ahead_previous;
   /* Storage worker publishes this before blocking SD operations. */
   uint64_t rpc_started_tick,rpc_completed_count;
   uint32_t rpc_active_slot,rpc_active_op;
