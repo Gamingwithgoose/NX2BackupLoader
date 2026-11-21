@@ -48,6 +48,11 @@ static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
   uint32_t cursor = (m->file_size[0] + 15) & ~15U;
   for (unsigned i = 0; i < count; i++) {
     Nx2PatchSpec *p = &plan[i];
+    /* Controlled A/B for Kirby Global Test Ride only. Do not change
+     * working Yoshi or later-stage Zelda RO behavior by accident. */
+    if (p->gate == (uintptr_t)nx2_ro_initialize_compat &&
+        (!launch || launch->guest_program_id != UINT64_C(0x04005b902517c000)))
+      continue;
     uintptr_t original = 0;
     int preserve = p->original_field != UINT64_MAX;
     if (!gate(f, m, &cursor, (uint32_t)p->offset, p->gate,
