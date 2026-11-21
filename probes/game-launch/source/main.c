@@ -2,6 +2,7 @@
 #include "fault.h"
 #include "folder.h"
 #include "heap_plan.h"
+#include "index_cache.h"
 #include "host.h"
 #include "images.h"
 #include "raw_svc.h"
@@ -160,7 +161,7 @@ static void scan_progress(uint32_t files, void *unused) {
   snprintf(message, sizeof(message), "Indexing game files... %u found", files);
   screen(message);
 }
-static void run(const Nx2Game *game) {
+static void run(const Nx2Game *game, int rebuild_index) {
   FILE *f = fopen("sdmc:/BackupLoaderMKW-gameplay.log", "w");
   if (!f) {
     snprintf(outcome, sizeof(outcome), "Could not create launch report.");
@@ -197,18 +198,29 @@ static void run(const Nx2Game *game) {
              "This backup requires more resources than MKW provides.");
     return;
   }
-  screen("Indexing the selected game folder...\nLarge folders can take several "
-         "minutes.");
+  screen(rebuild_index ? "Rebuilding game index..." : "Loading game index...");
   char rom[1400], error[160];
   if (snprintf(rom, sizeof(rom), "%s/romfs", game->root) >= (int)sizeof(rom)) {
     fclose(f);
     return;
   }
-  row(f, "ROMFS_SCAN_BEGIN root=%s\n", rom);
   size_t map_bytes = 0;
-  nx2_folder_progress(scan_progress, NULL);
-  void *map = nx2_folder_rom(rom, &map_bytes, error);
-  nx2_folder_progress(NULL, NULL);
+  void *map = rebuild_index ? NULL : nx2_cache_load(rom, &map_bytes);
+  if (map) {
+    row(f, "ROMFS_CACHE_HIT root=%s bytes=%llu\n",
+        rom, (unsigned long long)map_bytes);
+  } else {
+    row(f, "ROMFS_SCAN_BEGIN root=%s\n", rom);
+    screen("Indexing the selected game folder...\nFirst launch may take several minutes.");
+    nx2_folder_progress(scan_progress, NULL);
+    map = nx2_folder_rom(rom, &map_bytes, error);
+    nx2_folder_progress(NULL, NULL);
+    if (map) {
+      nx2_cache_save(rom, map, map_bytes);
+      row(f, "ROMFS_CACHE_SAVED bytes=%llu\n",
+          (unsigned long long)map_bytes);
+    }
+  }
   if (!map) {
     row(f, "ROMFS_SCAN_FAILED reason=%s\n", error);
     fclose(f);
@@ -316,7 +328,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
     if (catalog->items[selected].updates)
       printf("This selection loads base; updates are not merged.\n");
   }
-  printf("\nUp/Down: select   A: launch   X: refresh   +: exit\n\n%s\n",
+  printf("\nUp/Down: select   A: launch   Hold B+A: rebuild index   X: refresh   +: exit\n\n%s\n",
          outcome);
   consoleUpdate(NULL);
 }
@@ -358,7 +370,7 @@ int main(int argc, char **argv) {
       selected = move < 0 ? (selected ? selected - 1 : catalog.count - 1)
                           : (selected + 1) % catalog.count;
     if (catalog.count && (down & HidNpadButton_A))
-      run(&catalog.items[selected]);
+      run(&catalog.items[selected], (held & HidNpadButton_B) != 0);
     draw(&catalog, selected);
     svcSleepThread(16666667);
   }
