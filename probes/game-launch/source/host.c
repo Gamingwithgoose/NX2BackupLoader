@@ -238,7 +238,11 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   case RPC_SAVE_CREATE:
     if (r->a > 0x40000000)
       return NX2_LIMIT;
-    rc = fsFsCreateFile(h->sd, p, r->a, 0);
+    /* Keep guest file-create options intact for both the SDK adapter and
+     * direct IFileSystem IPC path, rather than silently dropping BigFile. */
+    if (r->b & ~UINT64_C(1))
+      return NX2_INVALID;
+    rc = fsFsCreateFile(h->sd, p, r->a, (uint32_t)r->b);
     break;
   case RPC_SAVE_DELETE:
     rc = fsFsDeleteFile(h->sd, p);
