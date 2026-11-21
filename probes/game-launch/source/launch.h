@@ -69,7 +69,7 @@ typedef struct {
 #define NX2_IPC_TRACE_SLOTS 32
 #define NX2_GRAPHICS_TRACE_SLOTS 32
 /* Experimental all-service IPC metadata trace; 0 bytes of guest payload. */
-#define NX2_IPC_EVENT_SLOTS 4096U
+#define NX2_IPC_EVENT_SLOTS 16384U
 #define NX2_NVN_STAGE_COUNT 5
 /* NVN stages: 0 submit, 1 flush, 2 finish, 3 window acquire, 4 queue acquire. */
 typedef struct {
