@@ -189,10 +189,28 @@ static void run(const Nx2Game *game, int rebuild_index) {
     snprintf(outcome, sizeof(outcome), "Could not create launch report.");
     return;
   }
+  /* Separate, flushed diagnostic survives abrupt process termination where
+   * the game cannot flush its own shutdown record. It is overwritten per run.
+   * This cannot capture kernel/GPU faults that never reach the CPU handler. */
+  FILE *crash = fopen("sdmc:/BackupLoaderMKW-crash.log","w");
+  if (crash)
+    row(crash,"NX2_CRASH_DIAGNOSTIC version=2 game=%s guest=%016llx host=0400c3f00006e000\n"
+              "CAPTURE_MODE libounce_cpu_exception_plus_host_snapshot_and_prelaunch\n"
+              "LIMITATION no_external_kernel_or_gpu_exception_monitor\n",
+        game->name,(unsigned long long)game->id);
+
+  const char *launch_phase="START";
+  row(f,"REPORT_FORMAT version=3 source=%s crash_path=sdmc:/BackupLoaderMKW-crash.log\n",
+      game->is_nup?"nup":"folder");
+  if(crash)row(crash,"REPORT_FORMAT version=3 source=%s primary_path=%s\n",
+      game->is_nup?"nup":"folder",
+      game->is_nup?"sdmc:/BackupLoaderMKW-nup.log":"sdmc:/BackupLoaderMKW-gameplay.log");
+
   row(f,
       "BackupLoaderMKW experimental 0.14\nSELECTED_GAME name=%s root=%s "
       "program_id=%016llx\n",
       game->name, game->root, (unsigned long long)game->id);
+  launch_phase="HOST_CHECK";
   u64 title = 0;
   Result rc = svcGetInfo(&title, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0);
   row(f, "HOST result=%08x title=%016llx\n", rc, (unsigned long long)title);
@@ -201,13 +219,16 @@ static void run(const Nx2Game *game, int rebuild_index) {
     fclose(f);
     snprintf(outcome, sizeof(outcome),
              "Start NX2 through Mario Kart World's override.");
+    if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
   if (snprintf(selected_save, sizeof(selected_save), "%s", game->name) >= (int)sizeof(selected_save)) {
     row(f, "REFUSED save name too long\n");
     fclose(f);
+    if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
+  launch_phase="PACKAGE_OPEN";
   selected_resource = game->resource;
   if(game->is_nup) {
     screen("Opening NUP game...");
@@ -216,6 +237,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
       row(f,"NUP_OPEN_FAILED path=%s reason=%s\n",game->root,nx2_nup_probe_error());
       fclose(f);
       snprintf(outcome,sizeof(outcome),"NUP open failed: %.115s",nx2_nup_probe_error());
+      if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
       return;
     }
     size_t npdm_size=0;
@@ -242,6 +264,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
       free(npdm);
       nx2_nup_close();fclose(f);
       snprintf(outcome,sizeof(outcome),"NUP NPDM missing or unreadable; see NUP log.");
+      if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
       return;
     }
     memcpy(&selected_resource,npdm+0x14,4);
@@ -249,6 +272,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     row(f,"NUP_OPEN_OK title=%016llx resource=%u\n",
         (unsigned long long)game->id,selected_resource);
   }
+  launch_phase="RESOURCE_CHECK";
   u64 resource = 0;
   rc = svcGetInfo(&resource, 16, CUR_PROCESS_HANDLE, 0);
   row(f, "RESOURCE_CHECK result=%08x available=%llu requested=%u\n", rc,
@@ -259,14 +283,17 @@ static void run(const Nx2Game *game, int rebuild_index) {
     fclose(f);
     snprintf(outcome, sizeof(outcome),
              "This backup requires more resources than MKW provides.");
+    if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
+  launch_phase="ROMFS_INDEX";
   screen(rebuild_index ? "Rebuilding game index..." : "Loading game index...");
   char rom[1400], error[160];
   if (snprintf(rom, sizeof(rom), "%s/romfs", game->root) >= (int)sizeof(rom)) {
     snprintf(outcome,sizeof(outcome),"Game path too long to construct RomFS.");
     nx2_nup_close();
     fclose(f);
+    if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
   if(rebuild_index && !game->is_nup)nx2_folder_part_clear(rom);
@@ -296,6 +323,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
       nx2_nup_close();
       fclose(f);
       snprintf(outcome, sizeof(outcome), "Indexing cancelled. Press A to restart.");
+      if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
       return;
     }
     if (map && !game->is_nup) {
@@ -313,6 +341,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     snprintf(outcome, sizeof(outcome),
              game->is_nup ? "NUP RomFS index failed. See BackupLoaderMKW-nup.log." :
                            "Folder index failed. See BackupLoaderMKW-gameplay.log.");
+    if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
   Nx2RomView view;
@@ -322,12 +351,14 @@ static void run(const Nx2Game *game, int rebuild_index) {
     free(map);
     nx2_nup_close();
     fclose(f);
+    if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
   row(f, game->is_nup ? "NUP_ROMFS_INDEX_BUILT files=%u bytes=%llu virtual_bytes=%llu\n" :
                          "ROMFS_INDEX_BUILT files=%u bytes=%llu virtual_bytes=%llu\n",
       view.count, (unsigned long long)map_bytes,
       (unsigned long long)view.total);
+  launch_phase="PREPARE_MODULES";
   Nx2Launch *l = calloc(1, sizeof(*l));
   Nx2Host *host = calloc(1, sizeof(*host));
   Nx2Images *images = calloc(1, sizeof(*images));
@@ -344,18 +375,9 @@ static void run(const Nx2Game *game, int rebuild_index) {
                             "Game preparation failed; see BackupLoaderMKW-gameplay.log.");
     goto done;
   }
-  /* Separate, flushed diagnostic survives abrupt process termination where
-   * the game cannot flush its own shutdown record. It is overwritten per run.
-   * This cannot capture kernel/GPU faults that never reach the CPU handler. */
-  FILE *crash = fopen("sdmc:/BackupLoaderMKW-crash.log","w");
-  if (crash)
-    row(crash,"NX2_CRASH_DIAGNOSTIC version=1 game=%s guest=%016llx host=0400c3f00006e000\n"
-              "CAPTURE_MODE libounce_cpu_exception_plus_host_snapshot\n"
-              "LIMITATION no_external_kernel_or_gpu_exception_monitor\n",
-        game->name,(unsigned long long)game->id);
-  row(f,"CRASH_REPORT path=sdmc:/BackupLoaderMKW-crash.log status=%s\n",
-      crash?"OPEN":"FAILED");
+  launch_phase="GUEST_EXECUTE";
   row(f,"DIAGNOSTIC_PROFILE version=2 guest_fs_callsite=1 save_gate=1 exit_observer=existing CPU_exception_observer=libounce\n");
+  if(crash)row(crash,"GUEST_EXECUTION_BEGIN phase=%s\n",launch_phase);
   row(f, "ACTUAL_ENTRY_ABOUT_TO_EXECUTE rtld=%016llx physical_budget=%llu\n",
       (unsigned long long)(uintptr_t)l->api.rtld,
       (unsigned long long)l->heap_capacity);
@@ -694,8 +716,10 @@ static void run(const Nx2Game *game, int rebuild_index) {
     svcSleepThread(1000000);
   }
 done:
-  row(f, "REPORT_END game_entry_attempted=0\n");
+  row(f, "REPORT_END game_entry_attempted=0 phase=%s\n",launch_phase);
+  if(crash)row(crash,"PRELAUNCH_STOP phase=%s report_end=1\n",launch_phase);
   fclose(f);
+  if(crash)fclose(crash);
   nx2_nup_close();
   free(map);
   free(l);
