@@ -100,7 +100,7 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
          "NATIVE_HEAP_TAIL_INPUT",0,0);
  if(plan->original_bytes>UINT64_MAX-plan->original_begin ||
     plan->original_begin<base || cut<base || cut>original_end ||
-    original_end<base || size<retain || size>original_end-base ||
+    original_end<base || size>original_end-base ||
     end_region.addr>cut-1 || end_region.size>UINT64_MAX-end_region.addr ||
     end_of_commit!=cut || end_region.type!=MemType_Heap ||
     (end_region.perm&Perm_Rw)!=Perm_Rw ||
@@ -119,7 +119,10 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
    return 0xd001;
  }
  uint64_t kernel_size=retain+size;
- uint64_t increase=size;
+ /* Repeated SetHeapSize calls grow only the uncommitted delta. A shrink
+  * does not consume more physical memory. */
+ uint64_t previous_guest=__atomic_load_n(&l->heap_size,__ATOMIC_ACQUIRE);
+ uint64_t increase=size>previous_guest?size-previous_guest:0;
  if(increase>available || available-increase<NX2_NATIVE_PHYSICAL_FLOOR) {
    nx2_rpc(RPC_LOG,size,kernel_size,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
            "GUEST_HEAP_BUDGET_REFUSED",0,0);
