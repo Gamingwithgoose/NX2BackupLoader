@@ -501,6 +501,16 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       }
     }
     produced=end;
+    /* Random-access reads need only the requested range, not the rest
+     * of a potentially multi-GiB single-frame asset. Full-file reads
+     * still decode the whole frame and are SHA-256 checked by read_all.
+     * This avoids re-decoding gigabytes for every small read near the
+     * beginning, without changing the standard NUP file format. */
+    if(!remaining && offset+length<total){
+      ok=1;
+      read_error="OK";
+      break;
+    }
     if(step==0){
       if(produced!=total || remaining){
         read_error="Zstandard frame finished before declared output size";
