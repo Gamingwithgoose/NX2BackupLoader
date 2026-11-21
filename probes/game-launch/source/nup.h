@@ -12,3 +12,4 @@ int nx2_nup_read(const char *path, uint64_t offset, void *dest, size_t length);
 void *nx2_nup_read_all(const char *path, size_t limit, size_t *length);
 typedef int (*Nx2NupVisit)(void *context,const char *path,int is_directory,uint64_t size);
 int nx2_nup_romfs_walk(Nx2NupVisit visitor, void *context);
+const char *nx2_nup_probe_error(void);
