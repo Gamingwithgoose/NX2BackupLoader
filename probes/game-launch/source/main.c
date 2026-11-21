@@ -375,6 +375,28 @@ static void run(const Nx2Game *game, int rebuild_index) {
                                               __ATOMIC_ACQUIRE),
           (unsigned long long)host->calls, (unsigned long long)host->bytes,
           (unsigned long long)frames);
+      unsigned pending=0;
+      for(unsigned slot=0;slot<NX2_RPC_SLOTS;slot++){
+        Nx2Request *request=&l->requests[slot];
+        uint32_t state=__atomic_load_n(&request->state,__ATOMIC_ACQUIRE);
+        if(state){
+          pending++;
+          /* State 1 is only claimed, so op/args are not initialized yet.
+           * State 2 is published and safely readable via acquire. */
+          if(state==2 || state==3)
+            row(f,"RPC_PENDING slot=%u state=%u op=%u a=%016llx b=%016llx c=%016llx\n",
+                slot,state,request->op,
+                (unsigned long long)request->a,
+                (unsigned long long)request->b,
+                (unsigned long long)request->c);
+          else
+            row(f,"RPC_PENDING slot=%u state=%u unpublished=1\n",slot,state);
+        }
+      }
+      row(f,"RPC_HEARTBEAT_SUMMARY pending=%u host_abort=%u guest_abort=%u stage=%u\n",
+          pending,host->abort,
+          __atomic_load_n(&l->abort_requested,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->stage,__ATOMIC_ACQUIRE));
     }
     if (!__atomic_load_n(&l->main_entered, __ATOMIC_ACQUIRE) &&
         armTicksToNs(armGetSystemTick() - began) > 300000000000ULL)
