@@ -374,7 +374,7 @@ done:
 }
 static void draw(const Nx2Catalog *catalog, size_t selected) {
   consoleClear();
-  printf("BackupLoaderMKW 0.13\n\n");
+  printf("BackupLoaderMKW 0.14\n\n");
   if (!catalog->count)
     printf("No extracted games or NUP backups found in /games.\n\n");
   else {
@@ -383,7 +383,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
       printf("%s %.66s\n", i == selected ? ">" : " ", catalog->items[i].name);
     printf("\n%u / %u\n", (unsigned)selected + 1, (unsigned)catalog->count);
     if (catalog->items[selected].is_nup)
-      printf("NUP base game (experimental direct launch).\n");
+      printf("NUP: %s\n", catalog->items[selected].nup_status);
     else if (catalog->items[selected].updates)
       printf("This selection loads base; updates are not merged.\n");
   }
@@ -429,7 +429,11 @@ int main(int argc, char **argv) {
       selected = move < 0 ? (selected ? selected - 1 : catalog.count - 1)
                           : (selected + 1) % catalog.count;
     if (catalog.count && (down & HidNpadButton_A)) {
-      run(&catalog.items[selected], (held & HidNpadButton_B) != 0);
+      const Nx2Game *game=&catalog.items[selected];
+      if (game->is_nup == 2)
+        snprintf(outcome,sizeof(outcome),"NUP not ready: %.95s",game->nup_status);
+      else
+        run(game, (held & HidNpadButton_B) != 0);
     }
     draw(&catalog, selected);
     svcSleepThread(16666667);
