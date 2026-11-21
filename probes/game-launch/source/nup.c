@@ -168,9 +168,12 @@ typedef struct {
   uint64_t meta_offset, meta_size;
   const unsigned char *dirs, *files, *children, *pool;
   uint64_t child_count, pool_size;
-  uint32_t cached_file;
-  unsigned char *cached_bytes;
-  size_t cached_size;
+  /* Two-entry LRU avoids repeatedly decompressing alternating Zstd assets.
+   * Bounded at 32 MiB: the existing single entry could already reach 16 MiB. */
+  uint32_t cached_file[2];
+  unsigned char *cached_bytes[2];
+  size_t cached_size[2];
+  uint64_t cached_stamp[2],cache_clock;
 } NupMount;
 static NupMount mounted;
 
@@ -244,7 +247,7 @@ static uint32_t lookup_file(const char *path) {
 void nx2_nup_close(void) {
   if(mounted.f)fclose(mounted.f);
   free(mounted.toc);
-  free(mounted.cached_bytes);
+  for(unsigned j=0;j<2;j++)free(mounted.cached_bytes[j]);
   memset(&mounted,0,sizeof(mounted));
 }
 int nx2_nup_active(void) {return mounted.f!=NULL;}
@@ -300,7 +303,7 @@ int nx2_nup_open(const char *path) {
   m.children=toc+children_start;m.pool=toc+pool_off;
   m.child_count=(pool_off-children_start)/4;m.pool_size=pool_len;
   m.exefs_dir=m.romfs_dir=UINT32_MAX;
-  m.cached_file=UINT32_MAX;
+  for(unsigned j=0;j<2;j++)m.cached_file[j]=UINT32_MAX;
   for(uint32_t i=0;i<pc;i++){
     const unsigned char *p=toc+48+(size_t)i*64;
     if(p[24]==0 || (p[24]==1 && (p[25]&1))){
@@ -404,9 +407,21 @@ static int read_compressed(const unsigned char *e,uint32_t file,
   uint64_t total=rd64(e+8),at=rd64(e+16),packed=rd64(e+24);
   if(total<=16*1024*1024 && packed<=32*1024*1024) {
     read_error="Zstandard small-entry allocation/read failure";
-    if(mounted.cached_file!=file) {
-      free(mounted.cached_bytes);
-      mounted.cached_bytes=NULL;mounted.cached_file=UINT32_MAX;
+    unsigned slot=2;
+    for(unsigned k=0;k<2;k++)
+      if(mounted.cached_file[k]==file && mounted.cached_bytes[k]){
+        slot=k;break;
+      }
+    if(slot==2) {
+      /* Empty slot first, then oldest. This code runs on the single
+       * Nx2Host service thread, not the concurrent guest worker threads. */
+      slot=mounted.cached_file[0]==UINT32_MAX?0:
+           mounted.cached_file[1]==UINT32_MAX?1:
+           mounted.cached_stamp[0]<=mounted.cached_stamp[1]?0:1;
+      free(mounted.cached_bytes[slot]);
+      mounted.cached_bytes[slot]=NULL;
+      mounted.cached_file[slot]=UINT32_MAX;
+      mounted.cached_size[slot]=0;
       unsigned char *raw=malloc((size_t)packed),*out=malloc((size_t)total);
       if(!raw||!out||!nup_seek_file(mounted.f,at)||
          fread(raw,1,(size_t)packed,mounted.f)!=(size_t)packed) {
@@ -436,11 +451,12 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       if(memcmp(hash,e+32,32)){
         read_error="Zstandard entry SHA-256 mismatch";free(out);return 0;
       }
-      mounted.cached_bytes=out;
-      mounted.cached_size=(size_t)total;
-      mounted.cached_file=file;
+      mounted.cached_bytes[slot]=out;
+      mounted.cached_size[slot]=(size_t)total;
+      mounted.cached_file[slot]=file;
     }
-    memcpy(dest,mounted.cached_bytes+offset,length);
+    mounted.cached_stamp[slot]=++mounted.cache_clock;
+    memcpy(dest,mounted.cached_bytes[slot]+offset,length);
     return 1;
   }
   /* Large frames are decompressed in small pieces. Nothing is extracted
