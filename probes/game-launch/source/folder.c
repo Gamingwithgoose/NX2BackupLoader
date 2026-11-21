@@ -18,6 +18,8 @@
 #include <dirent.h>
 #define STAT stat
 #endif
+static uint32_t resume_files;
+uint32_t nx2_folder_resumed_files(void) {return resume_files;}
 static int (*cancel_callback)(void *);
 static void *cancel_context;
 void nx2_folder_cancel(int (*fn)(void *), void *ctx) {
@@ -491,6 +493,7 @@ static FILE *part_open(Tree *t, const char *root) {
       if(ftruncate(fileno(f),valid)) {fclose(f);return NULL;}
 #endif
       fseek(f,valid,SEEK_SET);
+      resume_files=t->nf;
       if(progress_callback && t->nf) progress_callback(t->nf,progress_context);
       return f;
     }
@@ -550,6 +553,7 @@ static int nup_entry(void *ctx,const char *path,int directory,uint64_t size) {
   return ok;
 }
 void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
+  resume_files=0;
   Tree t = {.root = root};
   Entry **index = NULL;
   unsigned char *blob = NULL;
