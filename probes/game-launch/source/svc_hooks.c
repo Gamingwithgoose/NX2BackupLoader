@@ -3,8 +3,67 @@
 #include "ipc_policy.h"
 #include "raw_svc.h"
 #include "vm_memory.h"
+#include <switch.h>
 uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t sub){Nx2Launch *l=nx2_launch;if(__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE))return nx2_raw_info(out,type,handle,sub);if(handle==0xffff8001U&&!sub){switch(type){case 4:*out=l->heap_base;return 0;case 5:case 6:case 21:*out=l->heap_capacity;return 0;case 7:case 22:*out=__atomic_load_n(&l->heap_size,__ATOMIC_ACQUIRE);return 0;}}return nx2_raw_info(out,type,handle,sub);}
-uint32_t nx2_virtual_heap(void **out,uint64_t size){Nx2Launch *l=nx2_launch;if(__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE)){nx2_rpc(RPC_ABORT,size,0,0,0,0,"Refused legacy SetHeapSize while native virtual memory is active",0,0);for(;;)__asm__ volatile("wfe");}if(!out||(size&0x1fffff)||size>l->heap_capacity)return 0xd001;__atomic_store_n(&l->heap_size,size,__ATOMIC_RELEASE);*out=(void *)(uintptr_t)l->heap_base;nx2_rpc(RPC_LOG,size,0,0,0,0,"SetHeapSize handled in private arena",0,0);return 0;}
+/* Native SDK heap requests must go through the actual kernel, not a
+ * fake arena pointer. Preserve the host allocator's committed prefix,
+ * stay in the game's original reserved heap span, and keep physical
+ * headroom for native physical-memory maps. */
+#define NX2_NATIVE_PHYSICAL_FLOOR UINT64_C(0xC0000000) /* 3 GiB */
+uint32_t nx2_virtual_heap(void **out,uint64_t size){
+ Nx2Launch *l=nx2_launch;
+ if(!out || !size || (size & (NX2_GAME_ALIGNMENT-1)))return 0xd001;
+ if(!__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE)){
+   if(size>l->heap_capacity)return 0xd001;
+   __atomic_store_n(&l->heap_size,size,__ATOMIC_RELEASE);
+   *out=(void *)(uintptr_t)l->heap_base;
+   nx2_rpc(RPC_LOG,size,0,0,0,0,"SetHeapSize handled in private arena",0,0);
+   return 0;
+ }
+ const Nx2HeapPlan *plan=&nx2_process_heap;
+ uint64_t base=0,total=0,used=0;
+ Result rc=svcGetInfo(&base,4,CUR_PROCESS_HANDLE,0);
+ if(R_FAILED(rc))return rc;
+ rc=svcGetInfo(&total,6,CUR_PROCESS_HANDLE,0);
+ if(R_FAILED(rc))return rc;
+ rc=svcGetInfo(&used,7,CUR_PROCESS_HANDLE,0);
+ if(R_FAILED(rc))return rc;
+ MemoryInfo current;u32 page=0;
+ rc=svcQueryMemory(&current,&page,base);
+ if(R_FAILED(rc))return rc;
+ uint64_t retain=plan->game_begin-base;
+ uint64_t current_size=current.size;
+ uint64_t available=total>=used?total-used:0;
+ if(base!=current.addr || current.type!=MemType_Heap ||
+    plan->original_begin<base ||
+    plan->original_bytes>UINT64_MAX-plan->original_begin ||
+    plan->original_begin+plan->original_bytes<base ||
+    size<retain || size>plan->original_begin+plan->original_bytes-base ||
+    current_size<retain) {
+   nx2_rpc(RPC_LOG,size,retain,current_size,available,0,
+           "NATIVE_HEAP_BOUNDS_REFUSED",0,0);
+   return 0xd001;
+ }
+ uint64_t increase=size>current_size?size-current_size:0;
+ if(increase>available || available-increase<NX2_NATIVE_PHYSICAL_FLOOR) {
+   nx2_rpc(RPC_LOG,size,current_size,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
+           "NATIVE_HEAP_BUDGET_REFUSED",0,0);
+   return 0xd001;
+ }
+ void *returned=NULL;
+ rc=svcSetHeapSize(&returned,size);
+ nx2_rpc(RPC_LOG,size,current_size,available,rc,0,
+         "NATIVE_HEAP_SET_RESULT",0,0);
+ if(R_FAILED(rc))return rc;
+ if((uintptr_t)returned!=base) {
+   nx2_rpc(RPC_ABORT,(uintptr_t)returned,base,size,0,0,
+           "Native heap base changed unexpectedly",0,0);
+   for(;;)__asm__ volatile("wfe");
+ }
+ *out=returned;
+ __atomic_store_n(&l->heap_size,size,__ATOMIC_RELEASE);
+ return 0;
+}
 uint32_t nx2_rtld_query(void *memory,uint32_t *page,uint64_t address){Nx2Launch *l=nx2_launch;uint64_t begin=0,end=UINT64_C(0x8000000000);uint32_t type=0,perm=0;for(uint32_t i=0;i<l->region_count;i++){Nx2Region *r=&l->regions[i];if(address>=r->begin&&address<r->end){begin=r->begin;end=r->end;type=r->type;perm=r->permission;break;}if(r->end<=address&&r->end>begin)begin=r->end;if(r->begin>address&&r->begin<end)end=r->begin;}if(!memory)return 0xdc01;if(address>=UINT64_C(0x8000000000)){begin=UINT64_C(0x8000000000);end=0;type=0x10;perm=0;}uint64_t *q=memory;uint32_t *w=memory;q[0]=begin;q[1]=end-begin;w[4]=type;w[5]=0;w[6]=perm;w[7]=w[8]=w[9]=0;if(page)*page=0;return 0;}
 static uint32_t tag(uint32_t h){for(unsigned i=0;i<128;i++){uint64_t v=__atomic_load_n(&nx2_launch->handle_tags[i],__ATOMIC_ACQUIRE);if((uint32_t)v==h&&h)return v>>32;}return 0;}
 static void set_tag(uint32_t h,uint32_t kind){if(!h)return;for(unsigned i=0;i<128;i++){uint64_t v=__atomic_load_n(&nx2_launch->handle_tags[i],__ATOMIC_RELAXED);if((uint32_t)v==h){__atomic_store_n(&nx2_launch->handle_tags[i],kind?((uint64_t)kind<<32)|h:0,__ATOMIC_RELEASE);return;}}if(!kind)return;for(unsigned i=0;i<128;i++){uint64_t expected=0;if(__atomic_compare_exchange_n(&nx2_launch->handle_tags[i],&expected,((uint64_t)kind<<32)|h,0,__ATOMIC_RELEASE,__ATOMIC_RELAXED))return;}nx2_rpc(RPC_ABORT,h,0,0,0,0,"Service handle tag table full",0,0);for(;;)__asm__ volatile("wfe");}
