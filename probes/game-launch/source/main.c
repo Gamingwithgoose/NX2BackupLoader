@@ -26,29 +26,43 @@ static void row(FILE *f, const char *fmt, ...) {
   va_end(a);
   fflush(f);
 }
-/* Drain every metadata-only IPC event into the common folder/NUP log.
- * The guest never blocks on SD output. Ring overruns are explicitly counted. */
-static void drain_ipc_events(FILE *f,Nx2Launch *l,uint32_t *cursor){
+/* All guest IPC requests and replies remain in the preallocated RAM ring.
+ * Only important events are written to the SD by default. This avoids
+ * defeating concurrent RomFS/game loading with dozens of thousands of
+ * blocking SD-card text writes. Optional full text mode is for very short
+ * diagnostic runs only, controlled by a user-created flag file. */
+static void drain_ipc_events(FILE *f,Nx2Launch *l,uint32_t *cursor,
+                             uint32_t *dropped,int full_text){
  uint32_t produced=__atomic_load_n(&l->ipc_event_next,__ATOMIC_ACQUIRE);
  if((uint32_t)(produced-*cursor)>NX2_IPC_EVENT_SLOTS){
   uint32_t lost=produced-*cursor-NX2_IPC_EVENT_SLOTS;
   fprintf(f,"IPC_EVENTS_DROPPED count=%u first=%u next=%u reason=ring_overflow\n",
           lost,*cursor,produced);
   *cursor+=lost;
+  *dropped+=lost;
  }
  unsigned written=0;
- while(*cursor!=produced&&written<128){
+ while(*cursor!=produced&&written<1024){
   uint32_t expected=*cursor+1;
   const Nx2IpcEvent *entry=&l->ipc_events[*cursor%NX2_IPC_EVENT_SLOTS];
   if(__atomic_load_n(&entry->sequence,__ATOMIC_ACQUIRE)!=expected)break;
   Nx2IpcEvent v=*entry;
   if(__atomic_load_n(&entry->sequence,__ATOMIC_ACQUIRE)!=expected)break;
   v.service[8]=0;
-  fprintf(f,"IPC_EVENT seq=%u call=%u phase=%u service=%s kind=%u handle=%08x hipc=%u command=%u domain_object=%08x flags=%02x hdr0=%08x hdr1=%08x special=%08x kernel=%08x cmif=%08x caller=%016llx tick=%llu\n",
-          expected,v.call_id,v.phase,v.service,v.kind,v.handle,
-          v.request_type,v.command,v.object_id,v.flags,v.hdr0,v.hdr1,
-          v.special,v.kernel_result,v.cmif_result,
-          (unsigned long long)v.caller,(unsigned long long)v.tick);
+  /* Normal HID, applet and NVN polling dominates the IPC stream.
+   * Keep those calls in RAM and in crash-tail snapshots. Disk records
+   * focus on FSP interfaces, service acquisition and any error. */
+  const int abnormal=(v.phase==2 &&
+    ((v.kernel_result!=0 && v.kernel_result!=UINT32_MAX)||
+     (v.cmif_result!=0 && v.cmif_result!=UINT32_MAX)));
+  const int important=full_text||v.phase>=3||v.kind==2||v.kind==3||
+                      abnormal||(v.phase==2&&v.kind==1&&v.command==1);
+  if(important)
+    fprintf(f,"IPC_EVENT seq=%u call=%u phase=%u service=%s kind=%u handle=%08x hipc=%u command=%u domain_object=%08x flags=%02x hdr0=%08x hdr1=%08x special=%08x kernel=%08x cmif=%08x caller=%016llx tick=%llu\n",
+            expected,v.call_id,v.phase,v.service,v.kind,v.handle,
+            v.request_type,v.command,v.object_id,v.flags,v.hdr0,v.hdr1,
+            v.special,v.kernel_result,v.cmif_result,
+            (unsigned long long)v.caller,(unsigned long long)v.tick);
   (*cursor)++;written++;
  }
 }
@@ -442,8 +456,16 @@ static void run(const Nx2Game *game, int rebuild_index) {
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   u64 trace_sample = began;
   u64 ipc_event_flush=began;
-  uint32_t ipc_event_cursor=0;
-  row(f,"IPC_FULL_TRACE enabled=1 payloads=omitted ring=%u semantics=request_and_completion\n",NX2_IPC_EVENT_SLOTS);
+  uint32_t ipc_event_cursor=0,ipc_event_dropped=0;
+  /* Opt into exhaustive text output only for short debugging runs by
+   * placing full-ipc-trace.flag under /switch/BackupLoaderMKW on SD.
+   * No flag means complete in-memory capture with sparse persistent logs. */
+  int ipc_full_text=0;
+  FILE *trace_flag=fopen("sdmc:/switch/BackupLoaderMKW/full-ipc-trace.flag","rb");
+  if(trace_flag){ipc_full_text=1;fclose(trace_flag);}
+  row(f,"IPC_CAPTURE mode=%s ring=%u request_reply=1 crash_tail=1 payloads=omitted\n",
+      ipc_full_text?"full_text_opt_in":"memory_plus_important_text",
+      NX2_IPC_EVENT_SLOTS);
   u64 crash_sample = began;
   u32 previous_crash_ipc_next = UINT32_MAX;
   u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX, previous_trace_begin = UINT32_MAX;
@@ -460,7 +482,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   for (;;) {
     check_fault(f, crash, images);
     nx2_host_poll(host, l);
-    drain_ipc_events(f,l,&ipc_event_cursor);
+    drain_ipc_events(f,l,&ipc_event_cursor,&ipc_event_dropped,ipc_full_text);
     if(armTicksToNs(armGetSystemTick()-ipc_event_flush)>=250000000ULL){
       ipc_event_flush=armGetSystemTick();
       fflush(f);
@@ -486,7 +508,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
     uint32_t pcount=__atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE);
     if(bcount!=last_graphics_bootstrap ||
        gcount/256!=last_graphics_getproc/256 ||
-       pcount!=last_graphics_present){
+       (pcount!=last_graphics_present &&
+         (!last_graphics_present || pcount/120!=last_graphics_present/120))){
       row(f,"GRAPHICS_PROGRESS bootstrap=%u getproc=%u present_lookups=%u present_entered=%u present_returned=%u\n",
           bcount,gcount,
           __atomic_load_n(&l->nvn_present_lookups,__ATOMIC_ACQUIRE),
@@ -536,8 +559,10 @@ static void run(const Nx2Game *game, int rebuild_index) {
     /* Capture short-lived exits before 15 seconds or first presentation,
      * without paying the 100-ms SD logging cost throughout gameplay. */
     uint64_t since_start=armTicksToNs(armGetSystemTick()-began);
-    uint64_t crash_interval=(since_start<15000000000ULL && !frames)
-                          ?100000000ULL:500000000ULL;
+    /* Early no-frame boot still gets subsecond diagnostics, but regular
+     * snapshots must not compete with game asset reads every 100-500ms. */
+    uint64_t crash_interval=(since_start<3000000000ULL && !frames)
+                          ?250000000ULL:2000000000ULL;
     int captured_snapshot=0;
     if(crash && armTicksToNs(armGetSystemTick()-crash_sample)>=crash_interval){
       captured_snapshot=1;
@@ -706,7 +731,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
       uint32_t next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
       uint32_t ended=__atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE);
       uint32_t started=__atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE);
-      if(ended!=previous_trace_end || started!=previous_trace_begin){
+      if((ended!=previous_trace_end || started!=previous_trace_begin) &&
+         (!frames || started>ended)){
         row(f,"IPC_WATCHDOG started=%u ended=%u in_flight_estimate=%u next=%u frames=%llu\n",
             started,ended,started>=ended?started-ended:0,next,
             (unsigned long long)frames);
@@ -731,6 +757,9 @@ static void run(const Nx2Game *game, int rebuild_index) {
     if (armTicksToNs(armGetSystemTick() - heartbeat) >=
         (late?1000000000ULL:5000000000ULL)) {
       heartbeat = armGetSystemTick();
+      row(f,"IPC_CAPTURE_SUMMARY observed_events=%u consumed_events=%u dropped=%u full_text=%u\n",
+          __atomic_load_n(&l->ipc_event_next,__ATOMIC_ACQUIRE),
+          ipc_event_cursor,ipc_event_dropped,(unsigned)ipc_full_text);
       row(f,
           "LAUNCH_HEARTBEAT elapsed_seconds=%llu main_entered=%llu "
           "rpc_calls=%llu rom_bytes=%llu frames=%llu\n",
