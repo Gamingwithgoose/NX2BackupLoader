@@ -298,7 +298,8 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
                         uint32_t session_kind,Nx2IpcDecision d){
  if(session_kind!=2||!d.valid||!d.domain||d.control)return 0;
  VfsObject obj=find_object(session,d.object_id);
- if(!obj.kind&&d.close_kind==0&&(d.command!=51&&d.command!=53))
+ if(!obj.kind&&d.close_kind==0&&
+    (d.command!=51&&d.command!=52&&d.command!=53))
   return 0;
  if(!obj.kind&&d.close_kind)return 0;
  if(size<64)return 0;
