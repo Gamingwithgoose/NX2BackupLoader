@@ -422,6 +422,10 @@ static int part_path(const char *root, char out[160]) {
     (unsigned long long)part_root_hash(root));
   return n>0 && n<160;
 }
+void nx2_folder_part_clear(const char *root) {
+  char name[160];
+  if(part_path(root,name))remove(name);
+}
 static void part_dirs(void) {
   mkdir("sdmc:/switch",0777);
   mkdir("sdmc:/switch/BackupLoaderMKW",0777);
