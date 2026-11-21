@@ -531,8 +531,13 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
      }
    }
    else if(kind&&control&&(cmd==1||cmd==2||cmd==4)){
-     /* CopyFromCurrentDomain must keep a reader handle read-only. */
-     response_tags(p,scan,(kind==2&&cmd==1&&copied_reader)?3:kind);
+     /* CopyFromCurrentDomain produces ONE moved reader handle.
+      * Never retag unrelated copied handles as reader sessions. */
+     if(kind==2&&cmd==1&&copied_reader){
+       uint32_t reader=0;
+       if(nx2_ipc_reply_first_moved_handle(p,scan,&reader))
+         set_tag(reader,3);
+     }else response_tags(p,scan,kind);
      /* Session clones inherit only previously validated reader objects. */
      if(kind==2&&(cmd==2||cmd==4)&&reply_decoded&&!service_result){
        uint32_t clone=0;
