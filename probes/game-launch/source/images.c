@@ -23,17 +23,20 @@ static void hash(unsigned char out[32], const void *p, size_t n) {
 }
 static int gate(FILE *f, Nx2Module *m, uint32_t *cursor, uint32_t offset,
                 uintptr_t to, uintptr_t *original, const char *name) {
+  uint32_t initial_instruction=0;
+  if(offset<=m->file_size[0] && m->file_size[0]-offset>=4)
+    initial_instruction=(uint32_t)m->guest[offset] |
+                        ((uint32_t)m->guest[offset+1]<<8) |
+                        ((uint32_t)m->guest[offset+2]<<16) |
+                        ((uint32_t)m->guest[offset+3]<<24);
+  uint32_t initial_cursor=*cursor;
   int ok = nx2_patch_gate(m->guest, m->file_size[0], m->address[1], cursor,
                           offset, to, 0, original);
   row(f, "PATCH name=%s offset=%x status=%s method=%s reason=%s text_bytes=%u padded_end=%u trampoline_offset=%u first=%08x\n",
       name, offset, ok ? "OK" : "FAILED",
       nx2_patch_method(),nx2_patch_failure_reason(),
-      m->file_size[0],m->address[1],*cursor,
-      offset+4<=m->file_size[0]?
-        ((uint32_t)m->guest[offset] |
-         ((uint32_t)m->guest[offset+1]<<8) |
-         ((uint32_t)m->guest[offset+2]<<16) |
-         ((uint32_t)m->guest[offset+3]<<24)):0);
+      m->file_size[0],m->address[1],initial_cursor,
+      initial_instruction);
   return ok;
 }
 static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
