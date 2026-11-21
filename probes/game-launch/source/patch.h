@@ -3,3 +3,5 @@
 #include <stdint.h>
 #include <stddef.h>
 int nx2_patch_gate(unsigned char *,uint32_t,uint32_t,uint32_t *,uint32_t,uintptr_t,uintptr_t,uintptr_t *);
+const char *nx2_patch_failure_reason(void);
+const char *nx2_patch_method(void);
