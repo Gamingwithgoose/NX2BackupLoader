@@ -248,12 +248,16 @@ static void run(const Nx2Game *game, int rebuild_index) {
                             "ROMFS_SCAN_BEGIN root=%s\n", rom);
     screen(game->is_nup ? "Building RomFS map from NUP table..." :
             "Indexing extracted game files...\nPress B to save progress and cancel.");
+    u64 scan_began=armGetSystemTick();
     scan_cancelled = 0;
     nx2_folder_cancel(scan_cancel, NULL);
     nx2_folder_progress(scan_progress, NULL);
     map = nx2_folder_rom(rom, &map_bytes, error);
     nx2_folder_progress(NULL, NULL);
     nx2_folder_cancel(NULL, NULL);
+    row(f,"INDEX_DURATION_MS=%llu RESUMED_FILES=%u\n",
+        (unsigned long long)(armTicksToNs(armGetSystemTick()-scan_began)/1000000ULL),
+        nx2_folder_resumed_files());
     if (scan_cancelled) {
       row(f, "ROMFS_SCAN_CANCELLED\n");
       free(map);
