@@ -454,9 +454,19 @@ int main(int argc, char **argv) {
                           : (selected + 1) % catalog.count;
     if (catalog.count && (down & HidNpadButton_A)) {
       const Nx2Game *game=&catalog.items[selected];
-      if (game->is_nup == 2)
+      if (game->is_nup == 2) {
+        /* Invalid NUP selections never entered run(), so they previously
+         * returned to the menu without creating any launch log. */
+        FILE *rejected=fopen("sdmc:/BackupLoaderMKW-nup.log","w");
+        if(rejected){
+          row(rejected,"BackupLoaderMKW experimental 0.14\n"
+             "NUP_CATALOG_REFUSED name=%s path=%s title=%016llx reason=%s\n",
+             game->name,game->root,
+             (unsigned long long)game->id,game->nup_status);
+          fclose(rejected);
+        }
         snprintf(outcome,sizeof(outcome),"NUP not ready: %.95s",game->nup_status);
-      else
+      } else
         run(game, (held & HidNpadButton_B) != 0);
     }
     draw(&catalog, selected);
