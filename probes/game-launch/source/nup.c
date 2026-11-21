@@ -165,6 +165,7 @@ typedef struct {
   uint64_t blob_start, file_length;
   uint64_t ndirs, nfiles;
   uint32_t exefs_dir, romfs_dir;
+  uint64_t meta_offset, meta_size;
   const unsigned char *dirs, *files, *children, *pool;
   uint64_t child_count, pool_size;
   uint32_t cached_file;
@@ -291,6 +292,8 @@ int nx2_nup_open(const char *path) {
     if(p[24]==0 || (p[24]==1 && (p[25]&1))){
       m.exefs_dir=rd32(p+12);
       m.romfs_dir=rd32(p+16);
+      m.meta_offset=rd64(p+32);
+      m.meta_size=rd32(p+40);
       break;
     }
   }
@@ -329,6 +332,36 @@ fail:
   free(toc);
   fclose(f);
   return 0;
+}
+/* Metadata is outside the ExeFS file tree: package record 0x20/0x28
+ * points to TLVs. Type 0 holds an independent NPDM copy. */
+void *nx2_nup_package_npdm(size_t *length) {
+  if(length)*length=0;
+  if(!mounted.f || !mounted.meta_size || mounted.meta_size>0x100000 ||
+     mounted.meta_offset>mounted.file_length ||
+     mounted.meta_size>mounted.file_length-mounted.meta_offset)
+    return NULL;
+  unsigned char *meta=malloc((size_t)mounted.meta_size);
+  if(!meta)return NULL;
+  if(mounted.meta_offset>INT64_MAX ||
+     nup_seek(mounted.f,(int64_t)mounted.meta_offset,SEEK_SET) ||
+     fread(meta,1,(size_t)mounted.meta_size,mounted.f)!=(size_t)mounted.meta_size)){
+    free(meta);return NULL;
+  }
+  size_t pos=0;
+  while(pos+8<=(size_t)mounted.meta_size){
+    uint16_t type=(uint16_t)(meta[pos]|(meta[pos+1]<<8));
+    uint16_t reserved=(uint16_t)(meta[pos+2]|(meta[pos+3]<<8));
+    uint32_t n=rd32(meta+pos+4);pos+=8;
+    if(reserved || n>mounted.meta_size-pos)break;
+    if(type==0 && n>=128 && !memcmp(meta+pos,"META",4)){
+      void *copy=malloc(n);
+      if(copy){memcpy(copy,meta+pos,n);if(length)*length=n;}
+      free(meta);return copy;
+    }
+    pos+=n;
+  }
+  free(meta);return NULL;
 }
 int nx2_nup_file_info(const char *path,uint64_t *size,unsigned *codec){
   uint32_t i=lookup_file(path);
