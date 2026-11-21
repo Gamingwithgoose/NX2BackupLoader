@@ -30,3 +30,7 @@ tools/
 *.elf
 *.nro
 *.map
+
+# Local game inputs and generated NUP archives; never commit game content.
+/extracted/
+/nups/
