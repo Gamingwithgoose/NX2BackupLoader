@@ -70,6 +70,8 @@ typedef struct {
  uint32_t late_trace_active; /* host arms diagnostics on successful save mount */
  uint64_t fsp_denied,rom_reads,save_calls,main_entered,frames;
  uint64_t handle_tags[128];
+ uint32_t nvn_bootstrap_calls,nvn_getproc_calls,nvn_present_lookups;
+ uint32_t nvn_present_entered,nvn_present_returned;
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
  Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
  Nx2Region regions[39];uint32_t region_count;
