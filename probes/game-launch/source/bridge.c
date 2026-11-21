@@ -70,7 +70,15 @@ uint32_t nx2_mount_rom(const char *name,void *cache,uint64_t bytes){void *owned=
 uint32_t nx2_mount_rom_default(const char *name){uint64_t size=0;uint32_t rc=nx2_query_rom(&size);if(rc)return rc;void *cache=arena_alloc(size);if(!cache)return NX2_LIMIT;return nx2_mount_rom(name,cache,size);}
 uint32_t nx2_mount_rom_app(const char *name,uint64_t app,void *p,uint64_t n){(void)app;return nx2_mount_rom(name,p,n);}
 uint32_t nx2_mount_rom_index(const char *name,int index,void *p,uint64_t n){(void)index;return nx2_mount_rom(name,p,n);}
-uint32_t nx2_mount_save(const char *name){void *owned=&nx2_launch->save_fs;uint32_t rc=nx2_launch->api.register_fs(name,&owned);nx2_rpc(RPC_SAVE_MOUNT,rc,0,0,0,0,name,0,0);return rc;}
+uint32_t nx2_mount_save(const char *name){
+ void *owned=&nx2_launch->save_fs;
+ nx2_rpc(RPC_LOG,0,0,0,0,0,"SAVE_MOUNT_REGISTER_BEGIN",name,0);
+ uint32_t rc=nx2_launch->api.register_fs(name,&owned);
+ nx2_rpc(RPC_LOG,rc,0,0,0,0,"SAVE_MOUNT_REGISTER_RETURN",name,0);
+ uint32_t reported=nx2_rpc(RPC_SAVE_MOUNT,rc,0,0,0,0,name,0,0);
+ nx2_rpc(RPC_LOG,rc,reported,0,0,0,"SAVE_MOUNT_GATE_RETURN",name,0);
+ return rc;
+}
 uint32_t nx2_ensure_save(uint64_t *required){if(required)*required=0;return 0;}
 uint32_t nx2_save_ok(void){return 0;}
 void nx2_main_gate(void){__atomic_store_n(&nx2_launch->main_entered,1,__ATOMIC_RELEASE);nx2_rpc(RPC_MAIN_ENTERED,0,0,0,0,0,0,0,0);nx2_launch->api.original_main();nx2_rpc(RPC_ABORT,0,0,0,0,0,"nnMain returned",0,0);for(;;)wait();}
