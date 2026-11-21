@@ -41,7 +41,7 @@ Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs
 2. Fully close Mario Kart World.
 3. Start Homebrew Menu using **Mario Kart World's title override**.
 4. Start BackupLoaderMKW.
-5. Select an extracted game using Up/Down or the left stick. Press **A** to launch, **X** to refresh the list, or **+** to exit. Hold **B** while pressing **A** to rebuild an extracted game’s index.
+5. Select an extracted game using Up/Down or the left stick. Press **A** to launch, **X** to refresh the list, or **+** to exit. Hold **B** while pressing **A** to rebuild an extracted game’s index. While a large folder is being indexed, press **B** to cancel and return to the game list. Cancelled scans do not yet resume.
 6. Use HOME / Close Software to stop playing.
 
 If the list is empty, confirm the game folders contain real exefs and romfs directories. Large backups may take several minutes to index the first time. Completed indexes are saved in SD:/switch/BackupLoaderMKW/cache/ so later launches can skip the file-by-file scan. The cache checks the top-level romfs folder timestamp; changes inside nested folders may require **B+A** to rebuild it. NUP files appear in the list if their header and table of contents pass initial checks, but selecting one only shows a development notice.
