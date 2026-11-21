@@ -90,6 +90,13 @@ typedef struct {
  uint64_t arena_base,arena_capacity,arena_used;
  uint32_t worker_handle,stage,finished,abort_requested;
  uint32_t late_trace_active; /* host arms diagnostics on successful save mount */
+ /* Guest-side C++ filesystem callback entry sites (before RPC helpers). */
+ uint32_t fs_guest_read_entries,fs_guest_read_returns;
+ uint64_t fs_guest_read_caller,fs_guest_read_offset,fs_guest_read_size;
+ uint32_t fs_guest_read_result;
+ uint32_t save_gate_phase,save_gate_result;
+ uint64_t save_gate_caller;
+ uint32_t guest_main_returned;
  uint64_t fsp_denied,rom_reads,save_calls,main_entered,frames;
  uint64_t handle_tags[128];
  uint32_t nvn_bootstrap_calls,nvn_getproc_calls,nvn_present_lookups;
