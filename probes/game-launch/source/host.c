@@ -641,6 +641,18 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
     Nx2Request *r = &l->requests[i];
     if (__atomic_load_n(&r->state, __ATOMIC_ACQUIRE) == 2) {
       r->result = serve(h, l, r);
+      /* Full experimental RPC trace covers the host-side operations that
+       * plain kernel IPC tracing cannot see: RomFS reads, save writes,
+       * virtual archive creation and resource allocation. Do not print
+       * guest memory buffers, account UIDs or authentication material. */
+      const char *p=r->path;
+      if(!strncmp(p,"vsave-",6))p="[account-scoped]";
+      fprintf(h->report,
+              "RPC_EVENT seq=%llu op=%u a=%016llx b=%016llx c=%016llx d=%016llx rc=%08x answer=%016llx path=%.160s\n",
+              (unsigned long long)h->calls,r->op,
+              (unsigned long long)r->a,(unsigned long long)r->b,
+              (unsigned long long)r->c,(unsigned long long)r->d,
+              r->result,(unsigned long long)r->answer,p);
       __atomic_store_n(&r->state, 3, __ATOMIC_RELEASE);
       __asm__ volatile("sev" ::: "memory");
       served++;
