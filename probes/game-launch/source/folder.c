@@ -94,6 +94,22 @@ static int child(char *out, size_t cap, const char *root, const char *name) {
   return n >= 0 && (size_t)n < cap;
 }
 int nx2_folder_modules(const char *root, char names[13][16], unsigned *count) {
+  if(nx2_nup_active()) {
+    const char *required[]={"rtld","main"};
+    uint64_t size=0; unsigned n=0;
+    for(unsigned i=0;i<2;i++) {
+      char path[64];snprintf(path,sizeof(path),"exefs/%s",required[i]);
+      if(!nx2_nup_file_info(path,&size,NULL))return 0;
+      strcpy(names[n++],required[i]);
+    }
+    for(unsigned i=0;i<10;i++) {
+      char path[64];snprintf(path,sizeof(path),"exefs/subsdk%u",i);
+      if(nx2_nup_file_info(path,&size,NULL))
+        snprintf(names[n++],16,"subsdk%u",i);
+    }
+    if(!nx2_nup_file_info("exefs/sdk",&size,NULL))return 0;
+    strcpy(names[n++],"sdk");*count=n;return 1;
+  }
   char path[1400];
   unsigned n = 0;
   const char *first[] = {"rtld", "main"};
@@ -520,6 +536,15 @@ static int part_write(FILE *f, const Tree *t, const char *dir,
   return ok;
 }
 
+static int nup_entry(void *ctx,const char *path,int directory,uint64_t size) {
+  Tree *t=ctx;
+  if(cancel_callback && cancel_callback(cancel_context))return 0;
+  int ok=directory?add(&t->dirs,&t->nd,&t->dc,path,0):
+                   add(&t->files,&t->nf,&t->fc,path,size);
+  if(ok && !directory && progress_callback && !(t->nf%1024))
+    progress_callback(t->nf,progress_context);
+  return ok;
+}
 void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
   Tree t = {.root = root};
   Entry **index = NULL;
@@ -528,9 +553,11 @@ void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
   *out_size = 0;
   snprintf(error, 160, "Could not scan or allocate the RomFS directory index");
   if (!add(&t.dirs,&t.nd,&t.dc,"",0)) goto done;
-  FILE *part=part_open(&t,root);
+  int nup=nx2_nup_active();
+  FILE *part=nup?NULL:part_open(&t,root);
   int scan_ok=1;
-  for (uint32_t d=0;d<t.nd;d++) {
+  if(nup)scan_ok=nx2_nup_romfs_walk(nup_entry,&t);
+  for (uint32_t d=0;!nup && d<t.nd;d++) {
     if(t.dirs[d].hash) continue;
     char dir[2400], rel[1024];
     snprintf(rel,sizeof(rel),"%s",t.dirs[d].path);
