@@ -57,6 +57,7 @@ typedef struct {
  uintptr_t storage_table[10],fs_table[24],file_table[10],dir_table[6];
  Nx2Object storage,save_fs;
  uint64_t heap_base,heap_capacity,heap_size;
+ uint64_t guest_program_id;
  uint64_t arena_base,arena_capacity,arena_used;
  uint32_t worker_handle,stage,finished,abort_requested;
  uint64_t fsp_denied,rom_reads,save_calls,main_entered,frames;
