@@ -485,13 +485,6 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   for (unsigned i = 0; i < NX2_RPC_SLOTS; i++) {
     Nx2Request *r = &l->requests[i];
     if (__atomic_load_n(&r->state, __ATOMIC_ACQUIRE) == 2) {
-      if (h->reader_started && r->op == RPC_ROM_READ) {
-        /* Keep the host loop responsive while a compressed or RAW NUP
-         * entry is being read. The reader alone owns archive I/O. */
-        if (!__atomic_load_n(&h->reader_request, __ATOMIC_ACQUIRE))
-          __atomic_store_n(&h->reader_request, r, __ATOMIC_RELEASE);
-        continue;
-      }
       r->result = serve(h, l, r);
       __atomic_store_n(&r->state, 3, __ATOMIC_RELEASE);
       __asm__ volatile("sev" ::: "memory");
@@ -499,24 +492,6 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
     }
   }
   return served;
-}
-/* Independent of the guest's RTLD worker: preserves crash snapshots
- * while expensive NUP asset requests are in flight. */
-void nx2_host_reader_thread(void *context) {
-  Nx2Host *h = context;
-  for (;;) {
-    Nx2Request *r = __atomic_load_n(&h->reader_request, __ATOMIC_ACQUIRE);
-    if (!r) {
-      svcSleepThread(100000);
-      continue;
-    }
-    uint32_t rc = serve(h, h->reader_launch, r);
-    r->result = rc;
-    __atomic_store_n(&r->state, 3, __ATOMIC_RELEASE);
-    __atomic_fetch_add(&h->reader_completed, 1, __ATOMIC_RELAXED);
-    __atomic_store_n(&h->reader_request, NULL, __ATOMIC_RELEASE);
-    __asm__ volatile("sev" ::: "memory");
-  }
 }
 void nx2_host_close(Nx2Host *h) {
   for (unsigned i = 0; i < 128; i++) {
