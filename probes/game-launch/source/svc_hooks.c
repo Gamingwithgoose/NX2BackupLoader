@@ -167,20 +167,124 @@ static uint32_t tag(uint32_t h){for(unsigned i=0;i<128;i++){uint64_t v=__atomic_
 static void set_tag(uint32_t h,uint32_t kind){if(!h)return;for(unsigned i=0;i<128;i++){uint64_t v=__atomic_load_n(&nx2_launch->handle_tags[i],__ATOMIC_RELAXED);if((uint32_t)v==h){__atomic_store_n(&nx2_launch->handle_tags[i],kind?((uint64_t)kind<<32)|h:0,__ATOMIC_RELEASE);return;}}if(!kind)return;for(unsigned i=0;i<128;i++){uint64_t expected=0;if(__atomic_compare_exchange_n(&nx2_launch->handle_tags[i],&expected,((uint64_t)kind<<32)|h,0,__ATOMIC_RELEASE,__ATOMIC_RELAXED))return;}nx2_rpc(RPC_ABORT,h,0,0,0,0,"Service handle tag table full",0,0);for(;;)__asm__ volatile("wfe");}
 uint32_t nx2_connect(uint32_t *out,const char *name){nx2_rpc(RPC_LOG,0x1f,0,0,0,0,"CONNECT_TO_NAMED_PORT_BEGIN",name,0);uint32_t rc=nx2_raw_connect(out,name);if(!rc&&name&&name[0]=='s'&&name[1]=='m'&&name[2]==':'&&!name[3])set_tag(*out,1);nx2_rpc(RPC_LOG,rc,rc?0:*out,0x1f,0,0,"CONNECT_TO_NAMED_PORT_RESULT",name,0);return rc;}
 static uint32_t word(const unsigned char *p){return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
+/* Best-effort diagnostic ownership, deliberately separate from the SM/FSP
+ * enforcement tags. A slot never authorizes an IPC request. */
+typedef struct {uint32_t handle;char service[9];} Nx2IpcTraceHandle;
+static Nx2IpcTraceHandle ipc_owners[256];
+static volatile uint32_t ipc_trace_lock;
+static void trace_lock(void){
+ while(__atomic_exchange_n(&ipc_trace_lock,1,__ATOMIC_ACQUIRE))
+   __asm__ volatile("yield");
+}
+static void trace_unlock(void){__atomic_store_n(&ipc_trace_lock,0,__ATOMIC_RELEASE);}
+static void trace_owner(uint32_t h,const char *name){
+ if(!h||!name||!name[0])return;
+ trace_lock();
+ unsigned slot=256;
+ for(unsigned i=0;i<256;i++){
+   if(ipc_owners[i].handle==h){slot=i;break;}
+   if(slot==256&&!ipc_owners[i].handle)slot=i;
+ }
+ if(slot<256){
+   ipc_owners[slot].handle=h;
+   unsigned i=0;for(;i<8&&name[i];i++)ipc_owners[slot].service[i]=name[i];
+   ipc_owners[slot].service[i]=0;
+ }
+ trace_unlock();
+}
+static void trace_name(uint32_t h,char out[9]){
+ out[0]=0;
+ trace_lock();
+ for(unsigned i=0;i<256;i++)if(ipc_owners[i].handle==h){
+   for(unsigned j=0;j<9;j++)out[j]=ipc_owners[i].service[j];
+   break;
+ }
+ trace_unlock();
+}
+static void trace_forget(uint32_t h){
+ trace_lock();
+ for(unsigned i=0;i<256;i++)if(ipc_owners[i].handle==h){
+   ipc_owners[i].handle=0;ipc_owners[i].service[0]=0;break;
+ }
+ trace_unlock();
+}
+/* The HIPC special header contains copy and move handles. Read no more
+ * than the provided request/reply buffer, and emit only handle IDs. */
+static void trace_reply_handles(const unsigned char *p,uint64_t n,
+                                uint32_t parent,const char *owner){
+ if(!p||n<12||!(word(p+4)&0x80000000U))return;
+ uint32_t sh=word(p+8),copies=(sh>>1)&15U,moves=(sh>>5)&15U;
+ uint64_t off=12+((sh&1U)?8U:0U);
+ if(off>n || (uint64_t)(copies+moves)*4U>n-off)return;
+ for(uint32_t i=0;i<copies+moves;i++){
+   uint32_t child=word(p+off+4U*i);
+   if(!child)continue;
+   trace_owner(child,owner);
+   nx2_rpc(RPC_LOG,child,parent,i>=copies,sh,0,
+           "IPC_RETURNED_HANDLE",owner,0);
+ }
+}
 static void response_tags(const unsigned char *p,uint64_t n,uint32_t kind){if(n<12||!(word(p+4)&0x80000000))return;uint32_t s=word(p+8),copy=(s>>1)&15,move=(s>>5)&15;uint64_t off=12+((s&1)?8:0);if(off+4*(copy+move)>n)return;for(uint32_t i=0;i<copy+move;i++)set_tag(word(p+off+4*i),kind);}
 static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external){
- unsigned char *p=buffer;uint32_t kind=tag(h);Nx2IpcDecision d=nx2_ipc_decide(p,n,kind);uint32_t cmd=d.command,has=d.valid,control=d.control,want_fsp=d.want_fsp;uint64_t scan=n<256?n:256;uint32_t request_type=n>=4?word(p)&65535:0;char service[9]={0};if(kind==1)nx2_ipc_service_name(p,n,service);
- if(kind==2&&!nx2_ipc_fsp_allowed(d)){__atomic_store_n(&nx2_launch->fsp_denied,1,__ATOMIC_RELEASE);nx2_rpc(RPC_ABORT,h,cmd,has,control,0,"Blocked unapproved native FSP request",0,0);for(;;)__asm__ volatile("wfe");}
+ unsigned char *p=buffer;uint32_t kind=tag(h);
+ Nx2IpcDecision d=nx2_ipc_decide(p,n,kind);
+ uint32_t cmd=d.command,has=d.valid,control=d.control,want_fsp=d.want_fsp;
+ uint64_t scan=n<256?n:256;
+ uint32_t request_type=n>=4?word(p)&65535:0;
+ char service[9]={0},owner[9]={0};
+ if(kind==1)nx2_ipc_service_name(p,n,service);
+ trace_name(h,owner);
+ /* Snapshot before SVC: kernel may replace TLS request bytes with its
+  * reply. No payload contents, guest pointers, or sensitive IDs logged. */
+ const uint32_t hdr0=n>=4?word(p):0;
+ const uint32_t hdr1=n>=8?word(p+4):0;
+ const uint32_t special=n>=12&&(hdr1&0x80000000U)?word(p+8):0;
+ if(kind==2&&!nx2_ipc_fsp_allowed(d)){
+   __atomic_store_n(&nx2_launch->fsp_denied,1,__ATOMIC_RELEASE);
+   nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
+           "Blocked unapproved native FSP request",0,0);
+   for(;;)__asm__ volatile("wfe");
+ }
  if(kind)nx2_rpc(RPC_IPC,h,cmd,UINT64_MAX,kind,0,"IPC_BEGIN",service,0);
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
- uint32_t service_result=0;if(kind&&!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result))nx2_rpc(RPC_LOG,service_result,cmd,h,kind,0,"SERVICE_REPLY_RESULT",service,0);
- if(!rc){if(want_fsp)response_tags(p,scan,2);else if(kind&&control&&(cmd==1||cmd==2||cmd==4))response_tags(p,scan,kind);}
- if(kind||rc)nx2_rpc(RPC_IPC,h,cmd,rc,kind,0,want_fsp?"fsp-srv service acquired":(kind==2?"FSP request":"IPC"),0,0);
+ uint32_t service_result=0;
+ int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
+ if(kind&&reply_decoded)
+   nx2_rpc(RPC_LOG,service_result,cmd,h,kind,0,
+           "SERVICE_REPLY_RESULT",service,0);
+ if(!rc){
+   if(want_fsp)response_tags(p,scan,2);
+   else if(kind&&control&&(cmd==1||cmd==2||cmd==4))
+     response_tags(p,scan,kind);
+   /* An SM GetService response identifies the new session's owner.
+    * Also trace returned child handles from any already classified
+    * session, without changing access-control tags. */
+   if(reply_decoded && !service_result){
+     if(kind==1&&service[0])trace_reply_handles(p,scan,h,service);
+     else if(owner[0])trace_reply_handles(p,scan,h,owner);
+   }
+ }
+ if(rc){
+   nx2_rpc(RPC_LOG,((uint64_t)hdr0<<32)|hdr1,
+           ((uint64_t)special<<32)|request_type,
+           ((uint64_t)cmd<<32)|(has?1U:0U)|(control?2U:0U),
+           ((uint64_t)external<<32)|n,0,
+           "IPC_FAILED_REQUEST_HEADER",owner,0);
+   nx2_rpc(RPC_LOG,h,rc,kind,request_type,0,
+           "IPC_FAILED_HANDLE_OWNER",owner,0);
+ }
+ if(kind||rc)nx2_rpc(RPC_IPC,h,cmd,rc,kind,0,
+                     want_fsp?"fsp-srv service acquired":
+                     (kind==2?"FSP request":"IPC"),0,0);
  return rc;
 }
 uint32_t nx2_sync(uint32_t h){void *tlr;__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));return filter_sync(tlr,256,h,0);}
 uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){return filter_sync(p,n,h,1);}
-uint32_t nx2_close_handle(uint32_t h){uint32_t rc=nx2_raw_close(h);if(!rc)set_tag(h,0);return rc;}
+uint32_t nx2_close_handle(uint32_t h){
+ uint32_t rc=nx2_raw_close(h);
+ if(!rc){set_tag(h,0);trace_forget(h);}
+ return rc;
+}
 __attribute__((noinline,optimize("no-omit-frame-pointer")))
 void nx2_break(uint32_t reason,uint64_t address,uint64_t size){
  uintptr_t caller=(uintptr_t)__builtin_return_address(0);
