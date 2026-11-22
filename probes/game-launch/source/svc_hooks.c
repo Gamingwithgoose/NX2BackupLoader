@@ -71,14 +71,13 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
  * fake arena pointer. Preserve the host allocator's committed prefix,
  * stay in the game's original reserved heap span, and keep physical
  * headroom for native physical-memory maps. */
-/* Reserve 1 GiB of *actual kernel-reported* free physical memory
- * for graphics/host/native service allocations when growing guest heap.
- * Earlier 2.5 GiB reservation was an arbitrary compatibility floor which
- * can block otherwise valid native allocations before the kernel does.
- * The real svcSetHeapSize and native physical-map checks still decide
- * validity; unchanged/shrinking requests charge zero additional bytes.
- * Experimental until GPU/full-game hardware regression is confirmed. */
-#define NX2_NATIVE_PHYSICAL_FLOOR UINT64_C(0x40000000) /* 1 GiB */
+/* The 512-MiB host partition gives previously reserved pages back to
+ * the kernel. Retain a real 384-MiB minimum of uncommitted physical
+ * headroom for GPU, host and other native allocations. Recheck actual
+ * kernel accounting on every growth; do NOT grant or fake an over-budget
+ * request. This is a universal experimental policy, not a title exception.
+ * Unchanged/shrinking requests still charge zero additional bytes. */
+#define NX2_NATIVE_PHYSICAL_FLOOR NX2_NATIVE_PHYSICAL_FLOOR_BYTES
 uint32_t nx2_virtual_heap(void **out,uint64_t size){
  Nx2Launch *l=nx2_launch;
  if(!out || !size || (size & (NX2_GAME_ALIGNMENT-1)))return 0xd001;
