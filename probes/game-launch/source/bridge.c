@@ -315,12 +315,16 @@ void nx2_nninit_gate(void){nx2_rpc(RPC_LOG,0,0,0,0,0,"NNINIT_STARTUP_ENTERED",0,
 void nx2_sdk_init_gate(void){nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_MODULE_INIT_ENTERED",0,0);nx2_launch->api.original_sdk_init();nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_MODULE_INIT_RETURNED",0,0);}
 uint32_t nx2_false(void){return 0;}
 static int equal(const char *a,const char *b){if(!a||!b)return 0;while(*a&&*a==*b){a++;b++;}return *a==*b;}
-static uint64_t present_gate(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h){
+/* Exact NVNqueuePresentTexture ABI. The old generic 8x u64
+ * forwarding function made a void three-argument GPU call through an
+ * incompatible function pointer type. Forward only real arguments and do
+ * not invent a return value; still preserve frame counters. */
+static void present_gate(void *queue,void *window,int texture_index){
  __atomic_fetch_add(&nx2_launch->nvn_present_entered,1,__ATOMIC_RELAXED);
- uint64_t result=__atomic_load_n(&nx2_launch->api.original_present,__ATOMIC_ACQUIRE)(a,b,c,d,e,f,g,h);
+ __atomic_load_n(&nx2_launch->api.original_present,__ATOMIC_ACQUIRE)
+     (queue,window,texture_index);
  __atomic_fetch_add(&nx2_launch->nvn_present_returned,1,__ATOMIC_RELAXED);
  __atomic_fetch_add(&nx2_launch->frames,1,__ATOMIC_RELAXED);
- return result;
 }
 /* Observe native initialization without altering the real NVN implementation,
  * arguments, or returned success/failure result. No RPC or synchronous I/O. */
