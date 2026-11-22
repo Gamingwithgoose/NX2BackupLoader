@@ -310,7 +310,7 @@ static void run(const Nx2Game *game, int rebuild_index, int direct_nvn) {
       game->is_nup?"sdmc:/BackupLoaderMKW-nup.log":"sdmc:/BackupLoaderMKW-gameplay.log");
 
   row(f,
-      "BackupLoaderMKW experimental 0.14\nSELECTED_GAME name=%s root=%s "
+      "BackupLoaderMKW experimental 0.15\nSELECTED_GAME name=%s root=%s "
       "program_id=%016llx\n",
       game->name, game->root, (unsigned long long)game->id);
   launch_phase="HOST_CHECK";
@@ -1170,7 +1170,7 @@ int main(int argc, char **argv) {
         FILE *rejected=fopen("sdmc:/BackupLoaderMKW-nup.log","w");
         FILE *crash_rejected=fopen("sdmc:/BackupLoaderMKW-crash.log","w");
         if(rejected){
-          row(rejected,"BackupLoaderMKW experimental 0.14\n"
+          row(rejected,"BackupLoaderMKW experimental 0.15\n"
              "REPORT_FORMAT version=3 source=nup crash_path=sdmc:/BackupLoaderMKW-crash.log\n"
              "NUP_CATALOG_REFUSED name=%s path=%s title=%016llx reason=%s\n",
              game->name,game->root,

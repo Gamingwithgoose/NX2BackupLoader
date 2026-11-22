@@ -232,7 +232,10 @@ static uint32_t mount_save_uid(const char *name,Nx2UserId uid){
  fs->profile_high=uid.hi;
  void *owned=fs;rc=nx2_launch->api.register_fs(name,&owned);
  if(rc)__atomic_store_n(&fs->active,0,__ATOMIC_RELEASE);
+ /* Preserve the original save mount's late-startup trace and crash marker
+  * even when this mount is scoped to an individual guest profile. */
  nx2_rpc(RPC_LOG,rc,primary,0,0,0,"SAVE_PROFILE_MOUNT",name,0);
+ nx2_rpc(RPC_SAVE_MOUNT,rc,0,0,0,0,name,0,0);
  return rc;
 }
 uint32_t nx2_mount_save_user_ref(const char *s,const Nx2UserId *u){

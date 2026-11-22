@@ -897,7 +897,8 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   }
   if (r->op >= RPC_SAVE_CREATE && r->op <= RPC_COMMIT){
     const char *visible=r->path;
-    if(!strncmp(visible,"vsave-",6))visible="[account-scoped]";
+    if(!strncmp(visible,"vsave-",6)||
+        !strncmp(visible,"profiles/",9))visible="[account-scoped]";
     logline(h, "PRIVATE_SAVE op=%u result=%08x path=%s\n", r->op, rc, visible);
   }
   return rc;
