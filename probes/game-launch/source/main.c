@@ -282,7 +282,7 @@ static void scan_progress(uint32_t files, void *unused) {
   snprintf(message, sizeof(message), "Indexing game files... %u found\nPress B to cancel", files);
   screen(message);
 }
-static void run(const Nx2Game *game, int rebuild_index) {
+static void run(const Nx2Game *game, int rebuild_index, int direct_nvn) {
   FILE *f = fopen(game->is_nup ? "sdmc:/BackupLoaderMKW-nup.log" :
                           "sdmc:/BackupLoaderMKW-gameplay.log", "w");
   if (!f) {
@@ -520,6 +520,12 @@ static void run(const Nx2Game *game, int rebuild_index) {
   if(crash)row(crash,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
       game->is_nup?"nup":"folder",(unsigned long long)game->id,
       images->count,(unsigned long long)l->heap_capacity);
+  /* prepare_phase() clears Nx2Launch, so apply mode after module setup. */
+  l->nvn_driver_passthrough=direct_nvn?1U:0U;
+  row(f,"NVN_LAUNCH_MODE direct_driver_except_present=%u selected_by=%s\n",
+      l->nvn_driver_passthrough,direct_nvn?"L+A":"normal_A");
+  if(crash)row(crash,"NVN_LAUNCH_MODE direct_driver_except_present=%u\n",
+               l->nvn_driver_passthrough);
   launch_phase="GUEST_EXECUTE";
   row(f,"DIAGNOSTIC_PROFILE version=2 guest_fs_callsite=1 save_gate=1 exit_observer=existing CPU_exception_observer=libounce\n");
   if(crash)row(crash,"GUEST_EXECUTION_BEGIN phase=%s\n",launch_phase);
@@ -1113,7 +1119,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
     else if (catalog->items[selected].updates)
       printf("This selection loads base; updates are not merged.\n");
   }
-  printf("\nA: launch   Hold B+A: rebuild   Hold R+A: Horizon check\nX: refresh   +: exit\n\n%s\n",
+  printf("\nA: launch   L+A: direct NVN   B+A: rebuild index\nR+A: Horizon check   X: refresh   +: exit\n\n%s\n",
          outcome);
   consoleUpdate(NULL);
 }
@@ -1180,7 +1186,8 @@ int main(int argc, char **argv) {
         }
         snprintf(outcome,sizeof(outcome),"NUP not ready: %.95s",game->nup_status);
       } else
-        run(game, (held & HidNpadButton_B) != 0);
+        run(game, (held & HidNpadButton_B) != 0,
+            (held & HidNpadButton_L) != 0);
     }
     draw(&catalog, selected);
     svcSleepThread(16666667);
