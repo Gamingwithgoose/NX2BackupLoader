@@ -502,6 +502,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   case RPC_SAVE_RESIZE:
   case RPC_SAVE_SIZE:
   case RPC_SAVE_CLOSE:
+  case RPC_SAVE_OPERATE_RANGE:
     f = lookup(h, r->a, 1);
     if (!f)
       return NX2_INVALID;
@@ -527,6 +528,17 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       s64 size = 0;
       rc = fsFileGetSize(&f->file, &size);
       r->answer = size;
+    } else if (r->op == RPC_SAVE_OPERATE_RANGE) {
+      /* Native IFile::OperateRange (command 5): pass through the real
+       * SD-backed file service instead of returning Unsupported. The
+       * guest's 0x40-byte inline response comes from an actual query. */
+      if((r->b!=0 && r->b!=3) || r->c>INT64_MAX ||
+         r->d>INT64_MAX || r->c>INT64_MAX-r->d || !r->buffer)
+        return NX2_INVALID;
+      FsRangeInfo range={0};
+      rc=fsFileOperateRange(&f->file,(FsOperationId)r->b,
+                            (s64)r->c,(s64)r->d,&range);
+      if(R_SUCCEEDED(rc))memcpy(r->buffer,&range,sizeof(range));
     } else {
       fsFileClose(&f->file);
       f->kind = 0;
