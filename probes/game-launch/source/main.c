@@ -233,6 +233,67 @@ static void isolate_watchdog_core(FILE *f,int guest_core){
       host_core,spare,guest_core,nx2_storage_core,moved,
       (unsigned long long)allowed);
 }
+/* Walk only validated readable frame-pair locations. This runs on the host
+ * watchdog after libounce has parked the faulting thread; never from its
+ * exception stack. It is diagnostic only and must not alter guest execution. */
+static void write_fault_stack(FILE *f, const Nx2Images *images, uint64_t first_fp) {
+  uint64_t fp=first_fp;
+  uint64_t seen[24]={0};
+  unsigned depth=0;
+  for (; depth<24; ++depth) {
+    if (!fp || (fp & 15U)) {
+      row(f,"FAULT_STACK_END depth=%u reason=%s fp=%016llx\n",
+          depth,!fp?"null_frame_pointer":"unaligned_frame_pointer",
+          (unsigned long long)fp);
+      return;
+    }
+    int repeated=0;
+    for (unsigned i=0;i<depth;i++)
+      if(seen[i]==fp){repeated=1;break;}
+    if(repeated){
+      row(f,"FAULT_STACK_END depth=%u reason=cycle fp=%016llx\n",
+          depth,(unsigned long long)fp);
+      return;
+    }
+    MemoryInfo info={0};
+    u32 page_info=0;
+    Result rc=svcQueryMemory(&info,&page_info,fp);
+    if(R_FAILED(rc) || !(info.perm & Perm_R) ||
+       fp<info.addr || info.size<16 || fp-info.addr>info.size-16){
+      row(f,"FAULT_STACK_END depth=%u reason=unreadable_frame "
+            "query=%08x fp=%016llx\n",
+          depth,rc,(unsigned long long)fp);
+      return;
+    }
+    /* Standard AArch64 frame record: previous FP followed by saved LR.
+     * A nonstandard/unwound frame ends the trace safely. */
+    const volatile uint64_t *record=(const volatile uint64_t *)(uintptr_t)fp;
+    uint64_t next=record[0],return_pc=record[1];
+    int module=-1;
+    uint64_t offset=0;
+    if(images)
+      for(unsigned k=0;k<images->count;k++){
+        const Nx2Module *m=&images->modules[k];
+        uint64_t begin=(uintptr_t)m->guest;
+        uint64_t length=m->total>=4096?m->total-4096:0;
+        if(return_pc>=begin && return_pc-begin<length){
+          module=(int)k;offset=return_pc-begin;break;
+        }
+      }
+    row(f,"FAULT_STACK_FRAME depth=%u fp=%016llx return_pc=%016llx "
+          "module=%d offset=%016llx next_fp=%016llx\n",
+        depth,(unsigned long long)fp,(unsigned long long)return_pc,
+        module,(unsigned long long)offset,(unsigned long long)next);
+    seen[depth]=fp;
+    if(next<=fp){
+      row(f,"FAULT_STACK_END depth=%u reason=nonincreasing_frame_pointer\n",
+          depth+1);
+      return;
+    }
+    fp=next;
+  }
+  row(f,"FAULT_STACK_END depth=%u reason=depth_limit\n",depth);
+}
 static void write_fault_report(FILE *f, const Nx2Images *images) {
   const ThreadExceptionDump *d = &nx2_fault.dump;
   extern void _start(void);
@@ -248,6 +309,9 @@ static void write_fault_report(FILE *f, const Nx2Images *images) {
   for (unsigned i = 0; i < 29; i++)
     row(f, "FAULT_REGISTER x%u=%016llx\n", i,
         (unsigned long long)d->cpu_gprs[i].x);
+  row(f,"FAULT_CAPTURE_SCOPE host_process_only=1 "
+        "external_termination_not_observable=1 stack_unwind=frame_pointer_best_effort\n");
+  write_fault_stack(f,images,d->fp.x);
   if (images)
     for (unsigned i = 0; i < images->count; i++) {
       const Nx2Module *m = &images->modules[i];
