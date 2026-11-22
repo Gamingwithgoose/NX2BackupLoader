@@ -11,3 +11,8 @@ int nx2_guest_select_core(uint64_t allowed_mask,int host_core,
  * preference or sharing the dedicated serial SD worker's CPU. */
 int nx2_watchdog_select_core(uint64_t allowed_mask,int host_core,
                             int guest_core,int storage_core);
+
+/* Select a kernel-permitted main priority, with legacy 44 fallback. */
+int nx2_guest_select_priority(uint64_t mask,int npdm_priority,int legacy_priority);
+/* Choose the nearest permitted higher-urgency storage priority, or match. */
+int nx2_storage_select_priority(uint64_t mask,int guest_priority);

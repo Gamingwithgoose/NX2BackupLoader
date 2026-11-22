@@ -33,6 +33,33 @@ int main(void){
             "current host CPU excluded");
  bad+=check(nx2_watchdog_select_core(0,0,0,5)==-1,
             "no available allowed CPU");
- puts(bad?"Guest core policy: FAIL":"Guest core policy: PASS");
+ bad+=check(nx2_guest_select_priority(UINT64_MAX,20,44)==20,
+            "NPDM main priority honored");
+ bad+=check(nx2_guest_select_priority(UINT64_MAX,-1,44)==44,
+            "missing NPDM priority preserves legacy");
+ bad+=check(nx2_guest_select_priority(UINT64_C(1)<<44,17,44)==44,
+            "disallowed NPDM falls back to permitted legacy");
+ bad+=check(nx2_guest_select_priority((UINT64_C(1)<<18)|
+               (UINT64_C(1)<<50),17,44)==18,
+            "closest actual permitted priority");
+ bad+=check(nx2_guest_select_priority((UINT64_C(1)<<40)|
+               (UINT64_C(1)<<48),44,20)==40,
+            "deterministic tie");
+ bad+=check(nx2_guest_select_priority(0,44,44)==-1,
+            "empty mask rejected");
+ bad+=check(nx2_guest_select_priority(UINT64_MAX,255,44)==44,
+            "invalid NPDM fallback");
+ bad+=check(nx2_storage_select_priority(UINT64_MAX,44)==43,
+            "legacy storage 43 retained");
+ bad+=check(nx2_storage_select_priority(UINT64_C(1)<<44,44)==44,
+            "storage co-schedules when no higher permission");
+ bad+=check(nx2_storage_select_priority((UINT64_C(1)<<44)|
+              (UINT64_C(1)<<45),44)==44,
+            "storage not demoted unnecessarily");
+ bad+=check(nx2_storage_select_priority(UINT64_C(1)<<43,44)==-1,
+            "storage rejects guest outside mask");
+ bad+=check(nx2_storage_select_priority(UINT64_MAX,-1)==-1,
+            "storage rejects invalid guest");
+ puts(bad?"Guest core/priority policy: FAIL":"Guest core/priority policy: PASS");
  return !!bad;
 }

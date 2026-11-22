@@ -23,3 +23,29 @@ int nx2_watchdog_select_core(uint64_t allowed_mask,int host_core,
  }
  return -1;
 }
+
+/* Never request a priority outside the process's Horizon PriorityMask. */
+int nx2_guest_select_priority(uint64_t mask,int npdm_priority,int legacy_priority){
+ if(npdm_priority>=0&&npdm_priority<64&&
+    (mask&(UINT64_C(1)<<npdm_priority)))return npdm_priority;
+ if(legacy_priority>=0&&legacy_priority<64&&
+    (mask&(UINT64_C(1)<<legacy_priority)))return legacy_priority;
+ int target=npdm_priority>=0&&npdm_priority<64?npdm_priority:
+            legacy_priority>=0&&legacy_priority<64?legacy_priority:44;
+ int chosen=-1,best_delta=65;
+ for(int p=0;p<64;p++){
+  if(!(mask&(UINT64_C(1)<<p)))continue;
+  int delta=p>target?p-target:target-p;
+  if(delta<best_delta){best_delta=delta;chosen=p;}
+ }
+ return chosen;
+}
+/* Keep the serial filesystem worker responsive to guest IPC without
+ * acquiring a scheduling priority the host is not permitted to use. */
+int nx2_storage_select_priority(uint64_t mask,int guest_priority){
+ if(guest_priority<0||guest_priority>=64||
+    !(mask&(UINT64_C(1)<<guest_priority)))return -1;
+ for(int p=guest_priority-1;p>=0;p--)
+  if(mask&(UINT64_C(1)<<p))return p;
+ return guest_priority;
+}

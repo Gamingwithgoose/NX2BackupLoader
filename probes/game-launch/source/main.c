@@ -98,8 +98,33 @@ static int choose_core(FILE *f,int npdm_core) {
       chosen==npdm_core?"npdm":"fallback");
   return chosen;
 }
+/* The guest's NPDM priority can differ from homebrew's legacy 44.
+ * Honor it only within the actual Horizon process PriorityMask. Give the
+ * dedicated storage worker a permitted, slightly higher urgency so a
+ * CPU-bound guest cannot starve its own synchronous file operations. */
+static int choose_priorities(FILE *f,int declared,int *guest,int *storage){
+ if(!guest||!storage)return 0;
+ u64 mask=0;
+ Result rc=svcGetInfo(&mask,InfoType_PriorityMask,CUR_PROCESS_HANDLE,0);
+ if(R_FAILED(rc)){
+   *guest=0x2c;*storage=0x2b;
+   row(f,"WORKER_PRIORITY_POLICY query=%08x declared=%d guest=%d storage=%d "
+         "source=legacy_query_unavailable\n",rc,declared,*guest,*storage);
+   return 1;
+ }
+ int p=nx2_guest_select_priority(mask,declared,0x2c);
+ int q=nx2_storage_select_priority(mask,p);
+ row(f,"WORKER_PRIORITY_POLICY query=%08x allowed=%016llx "
+       "declared=%d guest=%d storage=%d source=%s\n",
+     rc,(unsigned long long)mask,declared,p,q,
+     p==declared?"npdm":p==0x2c?"legacy_permitted":"closest_permitted");
+ if(p<0||q<0)return 0;
+ *guest=p;*storage=q;
+ return 1;
+}
 static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game,
-                        uint32_t stack_bytes,int npdm_core,int *selected_core) {
+                        uint32_t stack_bytes,int npdm_core,int priority,
+                        int *selected_core) {
   int core = choose_core(f,npdm_core);
   if (core < 0)
     return 0;
@@ -112,8 +137,8 @@ static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game,
         stack_bytes,(unsigned long long)host_free);
     return 0;
   }
-  Result rc = threadCreate(t, game_entry, l, NULL, stack_bytes, 0x2c, core);
-  row(f, "WORKER_CREATE game=%d result=%08x\n", game, rc);
+  Result rc = threadCreate(t, game_entry, l, NULL, stack_bytes, priority, core);
+  row(f, "WORKER_CREATE game=%d priority=%d result=%08x\n",game,priority,rc);
   if (R_FAILED(rc))
     return 0;
   l->worker_handle = t->handle;
@@ -149,7 +174,7 @@ static void storage_service_entry(void *opaque){
   }
 }
 static int start_storage_service(FILE *f,Nx2Host *host,Nx2Launch *launch,
-                                 Thread *thread){
+                                 Thread *thread,int priority){
   uint64_t allowed=0;
   uint32_t self=svcGetCurrentProcessorNumber();
   int core=-1;
@@ -166,10 +191,11 @@ static int start_storage_service(FILE *f,Nx2Host *host,Nx2Launch *launch,
   nx2_storage_service.launch=launch;
   nx2_storage_service.last_poll_tick=armGetSystemTick();
   nx2_storage_service.running=0;
-  /* Slightly higher priority than guest (0x2c). */
+  /* Kernel-permitted scheduling priority selected from guest demand. */
   rc=threadCreate(thread,storage_service_entry,&nx2_storage_service,
-                  NULL,0x80000,0x2b,core);
-  row(f,"STORAGE_WORKER_CREATE core=%d priority=43 result=%08x\n",core,rc);
+                  NULL,0x80000,priority,core);
+  row(f,"STORAGE_WORKER_CREATE core=%d priority=%d result=%08x\n",
+      core,priority,rc);
   if(R_FAILED(rc))return 0;
   rc=threadStart(thread);
   row(f,"STORAGE_WORKER_START handle=%08x result=%08x\n",thread->handle,rc);
@@ -371,6 +397,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   selected_resource = game->resource;
   uint32_t declared_main_stack = game->main_stack_size;
   int declared_main_core = game->has_thread_metadata?(int)game->main_core:-1;
+  int declared_main_priority =
+      game->has_thread_metadata?(int)game->main_priority:-1;
   if(game->is_nup) {
     screen("Opening NUP game...");
     row(f,"NUP_LAUNCH_REQUEST path=%s\n",game->root);
@@ -410,6 +438,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     }
     memcpy(&selected_resource,npdm+0x14,4);
     memcpy(&declared_main_stack,npdm+0x1c,4);
+    declared_main_priority=(int)npdm[0x0e];
     declared_main_core=(int)npdm[0x0f];
     free(npdm);
     row(f,"NUP_OPEN_OK title=%016llx resource=%u\n",
@@ -435,6 +464,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       declared_main_stack,allocated_main_stack,NX2_GUEST_STACK_BASE);
   row(f,"NPDM_MAIN_THREAD_CORE requested=%d policy=metadata_if_allowed\n",
       declared_main_core);
+  row(f,"NPDM_MAIN_THREAD_PRIORITY requested=%d "
+        "policy=metadata_if_kernel_priority_mask_allows\n",declared_main_priority);
   launch_phase="RESOURCE_CHECK";
   u64 resource = 0;
   rc = svcGetInfo(&resource, 16, CUR_PROCESS_HANDLE, 0);
@@ -586,13 +617,17 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     stop(f, "Could not release launcher display");
   appletExit();
   row(f, "HOST_APPLET_PROXY_RELEASED\nGAMEPLAY_CUTOFF disabled\n");
+  int guest_priority=0x2c,storage_priority=0x2b;
+  if(!choose_priorities(f,declared_main_priority,
+                        &guest_priority,&storage_priority))
+    stop(f,"No kernel-permitted worker priority");
   Thread storage_worker;
-  if(!start_storage_service(f,host,l,&storage_worker))
+  if(!start_storage_service(f,host,l,&storage_worker,storage_priority))
     stop(f,"Storage service worker could not start");
   Thread worker;
   int guest_core=-1;
   if (!start_worker(f, l, &worker, 1, allocated_main_stack,
-                    declared_main_core,&guest_core))
+                    declared_main_core,guest_priority,&guest_core))
     stop(f, "Game worker could not start");
   isolate_watchdog_core(f,guest_core);
   row(f,"PRELAUNCH_TIMING phase=GUEST_WORKER_STARTED cumulative_ms=%llu\n",

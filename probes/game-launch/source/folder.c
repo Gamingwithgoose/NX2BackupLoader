@@ -197,6 +197,7 @@ static int catalog_entry(void *v, const char *name) {
       if (fread(h, 1, 128, f) == 128 && !memcmp(h, "META", 4)) {
         game.resource = read_le32(h + 0x14);
         game.main_stack_size = read_le32(h + 0x1c);
+        game.main_priority = h[0x0e];
         game.main_core = h[0x0f];
         game.has_thread_metadata = 1;
         uint32_t at = read_le32(h + 0x70);

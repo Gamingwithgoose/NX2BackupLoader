@@ -7,6 +7,7 @@ typedef struct {
   uint64_t id;
   uint32_t resource;
   uint32_t main_stack_size; /* NPDM META+0x1c, raw bytes */
+  uint8_t main_priority; /* NPDM META+0x0e */
   uint8_t main_core; /* NPDM META+0x0f */
   uint8_t has_thread_metadata;
   int updates;
