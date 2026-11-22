@@ -343,7 +343,9 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
  uint64_t answer=0;uint32_t rc=NX2_FS_UNSUPPORTED,op=0;
  /* Initialize the isolated guest root only when creating contents.
   * Reads and file opens retain genuine not-found behavior. */
- if((cmd==0||cmd==2)&&!obj->read_only){
+ if((cmd==0||cmd==2)&&!obj->read_only &&
+    strncmp(obj->root,"cache-storage/",14)!=0){
+  /* Cache directories are created by RPC_CACHE_CREATE, not vsave-*. */
   uint32_t prepared=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,
                             obj->root,0,0);
   if(prepared)return prepared;
@@ -503,9 +505,25 @@ static char *hex_fixed(char *dst,uint64_t n,unsigned digits){
   dst[digits-i]=hex[(n>>((i-1)*4))&15U];
  return dst+digits;
 }
+/* Native fsp-srv and SDK MountCacheStorage must resolve to one directory.
+ * This is a guest-only cache, never the Mario Kart World host cache. */
+static int cache_namespace(uint8_t space,const unsigned char *attr,
+                           char name[128]){
+ if(!attr||!name||attr[32]!=5||space!=1)return 0;
+ uint64_t app=read64(attr);
+ if(app && app!=nx2_launch->guest_program_id)return 0;
+ uint32_t index=(uint32_t)attr[34]|((uint32_t)attr[35]<<8);
+ char digits[6];unsigned n=0;
+ do{digits[n++]=(char)('0'+index%10U);index/=10U;}while(index);
+ memcpy(name,"cache-storage/",14);
+ for(unsigned i=0;i<n;i++)name[14+i]=digits[n-1-i];
+ name[14+n]=0;
+ return 1;
+}
 static int save_namespace(uint8_t space,const unsigned char *attr,
                           char name[128]){
  if(!attr||!name)return 0;
+ if(attr[32]==5)return cache_namespace(space,attr,name);
  char *p=name;
  memcpy(p,"vsave-",6);p+=6;
  p=hex_fixed(p,space,2);*p++='-';
@@ -583,7 +601,17 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
    size_t minimum=d.command==22?0x90:0x80;
    if(avail<minimum||!save_namespace(d.command==22?1:0,in,name))
     rc=NX2_INVALID;
-   else rc=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,name,0,0);
+   else if(in[32]==5){
+    /* Native CreateCacheStorage participates in the same quota and
+     * directory lifecycle as the nn::fs high-level cache adapter. */
+    uint64_t size=read64(in+0x40),journal=read64(in+0x48);
+    if(d.command!=22||size>INT64_MAX||journal>INT64_MAX||
+       size>INT64_MAX-journal)rc=NX2_INVALID;
+    else{
+     uint16_t index=(uint16_t)in[34]|((uint16_t)in[35]<<8);
+     rc=nx2_rpc(RPC_CACHE_CREATE,index,size,journal,0,0,0,0,0);
+    }
+   }else rc=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,name,0,0);
    fsp_stage(rc?6:4,d,rc,0);
   }else{
    /* OpenSaveDataFileSystem [51], BySystemSaveDataId [52], or
@@ -592,11 +620,16 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
    if(avail<0x48||!save_namespace(in[0],in+8,name))
     rc=NX2_INVALID;
    else{
-    /* Return the domain object without synchronously creating an SD
-     * directory inside the guest's intercepted IPC. Namespace creation
-     * is delayed to the first mutating filesystem operation. */
-    new_id=allocate_object(session,VFS_FS,d.command==53,0,name);
-    rc=new_id?0:NX2_LIMIT;
+    /* Real cache mounts must already exist. Unknown/foreign cache
+     * identities cannot be silently mapped to an empty vsave-* root. */
+    if(in[8+32]==5){
+     uint16_t index=(uint16_t)in[8+34]|((uint16_t)in[8+35]<<8);
+     rc=nx2_rpc(RPC_CACHE_CHECK,index,0,0,0,0,0,0,0);
+    }else rc=0;
+    if(!rc){
+     new_id=allocate_object(session,VFS_FS,d.command==53,0,name);
+     rc=new_id?0:NX2_LIMIT;
+    }
    }
    fsp_stage(rc?6:4,d,rc,new_id);
   }
