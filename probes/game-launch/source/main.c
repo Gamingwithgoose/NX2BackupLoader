@@ -351,7 +351,7 @@ static void scan_progress(uint32_t files, void *unused) {
   screen(message);
 }
 /* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
-static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
+static void run(const Nx2Game *game, int rebuild_index, int nvn_profile, int retain_applet) {
   FILE *flag=fopen("sdmc:/BackupLoaderMKW-verbose.flag","rb");
   nx2_log_verbose=flag!=NULL;
   if(flag)fclose(flag);
@@ -367,13 +367,15 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   FILE *crash = fopen("sdmc:/BackupLoaderMKW-crash.log","w");
   if(crash)
     setvbuf(crash,nx2_crash_buffer,_IOFBF,sizeof(nx2_crash_buffer));
-  row(f,"LOG_CONTEXT title=%s source=%s verbosity=%s\n",
+  row(f,"LOG_CONTEXT title=%s source=%s verbosity=%s lifecycle=%s\n",
       game->name,game->is_nup?"nup":"folder",
-      nx2_log_verbose?"full":"warnings_errors");
+      nx2_log_verbose?"full":"warnings_errors",
+      retain_applet?"retain_host_applet":"release_host_applet");
   if(crash)row(crash,"LOG_CONTEXT title=%s source=%s monitor=cpu_only "
-      "verbosity=%s\n",game->name,
+      "verbosity=%s lifecycle=%s\n",game->name,
       game->is_nup?"nup":"folder",
-      nx2_log_verbose?"full":"warnings_errors");
+      nx2_log_verbose?"full":"warnings_errors",
+      retain_applet?"retain_host_applet":"release_host_applet");
 
   const char *launch_phase="START";
   u64 launch_started=armGetSystemTick(), module_prepare_started=0;
@@ -630,8 +632,14 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   row(f, "HOST_DISPLAY_RELEASE result=%08x\n", display_release);
   if (R_FAILED(display_release))
     stop(f, "Could not release launcher display");
-  appletExit();
-  row(f, "HOST_APPLET_PROXY_RELEASED\nGAMEPLAY_CUTOFF disabled\n");
+  /* Experimental title-independent applet lifecycle: keep actual
+   * application framework initialized during guest startup. Still
+   * release the launcher VI layer. Normal A behavior is unchanged. */
+  if(!retain_applet)appletExit();
+  row(f,retain_applet?
+      "WARNING_EXPERIMENTAL_APPLET_LIFETIME retained=1 vi_layer_released=1\n":
+      "HOST_APPLET_PROXY_RELEASED\n");
+  row(f,"GAMEPLAY_CUTOFF disabled\n");
   int guest_priority=0x2c,storage_priority=0x2b;
   if(!choose_priorities(f,declared_main_priority,
                         &guest_priority,&storage_priority))
@@ -1308,6 +1316,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
       printf("This selection loads base; updates are not merged.\n");
   }
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
+         "ZL+A: retain applet session (experimental)\n"
          "B+A: rebuild index   R+A: Horizon check\n"
          "X: refresh   +: exit\n\n%s\n",
          outcome);
@@ -1380,7 +1389,8 @@ int main(int argc, char **argv) {
          * ZR+A = instrumented. ZR takes priority over L. */
         int mode = (held & HidNpadButton_ZR) ? 0 :
                    (held & HidNpadButton_L) ? 2 : 1;
-        run(game, (held & HidNpadButton_B) != 0, mode);
+        run(game, (held & HidNpadButton_B) != 0, mode,
+            (held & HidNpadButton_ZL) != 0);
       }
     }
     draw(&catalog, selected);
