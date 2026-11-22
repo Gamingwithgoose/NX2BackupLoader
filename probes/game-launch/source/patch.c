@@ -105,6 +105,46 @@ static int branch_alias_entry(unsigned char *text,uint32_t original_size,
   patch_method="absolute_branch_alias";
   return 1;
 }
+/* Rebase an unconditional AArch64 B/BL stolen from a 16-byte entry.
+ * A BL must retain the link bit: the callee returns to the next copied
+ * instruction in the trampoline, rather than into the overwritten gate.
+ * If the original destination lies inside those 16 bytes, route it into
+ * the copied instructions. For distant original targets, use a nearby
+ * 16-byte ADRP/ADD/BR veneer. This is valid for the current NSO mapping
+ * because its base is page-aligned and all these offsets share that base.
+ * IP1 (x17) is the ABI-designated linker scratch register. Unsupported
+ * PC-relative instructions still refuse the hook rather than corrupt it. */
+static int relocate_entry_branch(uint32_t ins,uint32_t from,uint32_t to,
+                                 uint32_t original_at,uint32_t copy_at,
+                                 uint32_t veneer_at,uint32_t *out,
+                                 uint32_t veneer[4],int *use_veneer) {
+  int64_t imm=(int64_t)(ins&0x3ffffff);
+  if(imm&(1LL<<25))imm-=1LL<<26;
+  int64_t dest=(int64_t)from+imm*4;
+  if(dest<0||dest>UINT32_MAX)return 0;
+  int64_t mapped=dest;
+  if(dest>=original_at && dest<(int64_t)original_at+16)
+    mapped=(int64_t)copy_at+(dest-original_at);
+  uint32_t b=0;
+  if(branch(mapped-to,&b)){
+    *out=b|(ins&0x80000000U);
+    *use_veneer=0;
+    return 1;
+  }
+  /* A branch from the copied prologue can always reach its own island.
+   * Use a base-relative ADRP, avoiding an absolute address relocation. */
+  int64_t pages=(mapped>>12)-((int64_t)veneer_at>>12);
+  if(pages<-(1LL<<20)||pages>=(1LL<<20) ||
+     !branch((int64_t)veneer_at-to,&b))return 0;
+  uint32_t bits=(uint32_t)(pages&0x1fffff);
+  veneer[0]=0x90000011|((bits&3)<<29)|((bits>>2)<<5); /* adrp x17 */
+  veneer[1]=0x91000231|(((uint32_t)mapped&4095U)<<10); /* add x17 */
+  veneer[2]=0xd61f0220; /* br x17 */
+  veneer[3]=0xd503201f; /* nop */
+  *out=b|(ins&0x80000000U);
+  *use_veneer=1;
+  return 1;
+}
 /* Common fallback for a hooked entry point beyond the immediate B range.
  * Replace the first 16 bytes with an absolute branch to the host gate.
  * Save four safe original instructions in the executable text padding,
@@ -119,15 +159,37 @@ static int absolute_entry(unsigned char *text,uint32_t original_size,
   if(original_size-at<16){patch_reason="prologue_shorter_than_16";return 0;}
   if(padded-*cursor<32){patch_reason="insufficient_executable_trampoline_padding";return 0;}
   uint32_t off=*cursor;
-  uint32_t saved[4];
+  uint32_t saved[4],islands[4][4]={{0}};
+  unsigned island_count=0,branch_count=0;
   for(unsigned i=0;i<4;i++){
     uint32_t ins=word(text+at+4*i);
-    /* A branch into this overwritten 16-byte prologue would require
-     * rewriting its internal control-flow edges. Refuse it until handled. */
-    if((ins&0x7c000000)==0x14000000) {
-      patch_reason="branch_in_16_byte_prologue";return 0;
-    }
-    if(!relocate_one(ins,at+4*i,off+4*i,&saved[i])) {
+    /* B and BL preserve control flow, with an IP1 veneer only if needed.
+     * An unsupported conditional branch, literal load or ADR variant
+     * still fails without overwriting a single instruction. */
+    if((ins&0x7c000000)==0x14000000){
+      uint64_t need=32ULL+16ULL*(island_count+1);
+      int used=0;
+      if((uint64_t)padded-off<need &&
+         !branch((int64_t)at+(int64_t)((int32_t)(ins<<6)>>4)-
+                 ((int64_t)off+4*i),&(uint32_t){0})){
+        patch_reason="insufficient_branch_veneer_padding";
+        return 0;
+      }
+      if(!relocate_entry_branch(ins,at+4*i,off+4*i,at,off,
+               off+32+16*island_count,&saved[i],islands[island_count],
+               &used)){
+        patch_reason="unsupported_entry_branch_relocation";
+        return 0;
+      }
+      if(used){
+        if((uint64_t)padded-off<need){
+          patch_reason="insufficient_branch_veneer_padding";
+          return 0;
+        }
+        island_count++;
+      }
+      branch_count++;
+    }else if(!relocate_one(ins,at+4*i,off+4*i,&saved[i])){
       patch_reason="unsupported_pc_relative_16_byte_prologue";
       return 0;
     }
@@ -137,6 +199,9 @@ static int absolute_entry(unsigned char *text,uint32_t original_size,
     patch_reason="trampoline_return_adrp_out_of_range";return 0;
   }
   for(unsigned i=0;i<4;i++)put(text+off+i*4,saved[i]);
+  for(unsigned i=0;i<island_count;i++)
+    for(unsigned j=0;j<4;j++)
+      put(text+off+32+16*i+4*j,islands[i][j]);
   uint32_t imm=(uint32_t)(pages&0x1fffff);
   put(text+off+16,0x90000010|((imm&3)<<29)|((imm>>2)<<5));
   put(text+off+20,0x91000210|(((at+16)&4095)<<10));
@@ -146,9 +211,10 @@ static int absolute_entry(unsigned char *text,uint32_t original_size,
   put(text+at+4,0xd61f0200); /* br x16 */
   put64(text+at+8,target);
   *original=guest+off;
-  *cursor+=32;
+  *cursor+=32+16*island_count;
   patch_reason="OK";
-  patch_method="absolute_entry";
+  patch_method=island_count?"absolute_entry_branch_veneer":
+                      branch_count?"absolute_entry_branch":"absolute_entry";
   return 1;
 }
 int nx2_patch_gate(unsigned char *text,uint32_t original_size,uint32_t padded,
