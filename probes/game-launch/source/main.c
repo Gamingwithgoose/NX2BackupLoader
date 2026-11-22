@@ -308,7 +308,8 @@ static void scan_progress(uint32_t files, void *unused) {
   snprintf(message, sizeof(message), "Indexing game files... %u found\nPress B to cancel", files);
   screen(message);
 }
-static void run(const Nx2Game *game, int rebuild_index, int direct_nvn) {
+/* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
+static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   FILE *f = fopen(game->is_nup ? "sdmc:/BackupLoaderMKW-nup.log" :
                           "sdmc:/BackupLoaderMKW-gameplay.log", "w");
   if (!f) {
@@ -546,18 +547,20 @@ static void run(const Nx2Game *game, int rebuild_index, int direct_nvn) {
   if(crash)row(crash,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
       game->is_nup?"nup":"folder",(unsigned long long)game->id,
       images->count,(unsigned long long)l->heap_capacity);
-  /* prepare_phase() clears Nx2Launch, so apply mode after module setup. */
-  l->nvn_driver_passthrough=direct_nvn?1U:0U;
-  row(f,"NVN_LAUNCH_MODE native_all_driver_pointers=%u getproc_intercept=%u "
+  /* A restores the best-observed compatibility baseline; other paths
+   * stay selectable for direct comparisons, independent of game title. */
+  l->nvn_driver_passthrough=(uint32_t)nvn_profile;
+  const char *profile=nvn_profile==2?"full_native":
+                      nvn_profile==1?"native_present_observed":"diagnostic_full";
+  row(f,"NVN_LAUNCH_MODE profile=%s mode=%d getproc_intercept=%u "
         "present_intercept=%u selected_by=%s\n",
-      l->nvn_driver_passthrough,!l->nvn_driver_passthrough,
-      !l->nvn_driver_passthrough,
-      direct_nvn?"native_A_or_L+A":"diagnostic_ZR+A");
-  if(crash)row(crash,"NVN_LAUNCH_MODE native_all_driver_pointers=%u "
+      profile,nvn_profile,(unsigned)(nvn_profile!=2),(unsigned)(nvn_profile!=2),
+      nvn_profile==2?"L+A":nvn_profile==1?"A":"ZR+A");
+  if(crash)row(crash,"NVN_LAUNCH_MODE profile=%s mode=%d "
                      "getproc_intercept=%u present_intercept=%u\n",
-                l->nvn_driver_passthrough,!l->nvn_driver_passthrough,
-                !l->nvn_driver_passthrough);
-  if(direct_nvn)
+               profile,nvn_profile,(unsigned)(nvn_profile!=2),
+               (unsigned)(nvn_profile!=2));
+  if(nvn_profile==2)
     row(f,"NVN_NATIVE_OBSERVABILITY bootstrap_only=1 "
           "getproc_and_present_counters_unobserved=1\n");
   launch_phase="GUEST_EXECUTE";
@@ -1156,7 +1159,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
     else if (catalog->items[selected].updates)
       printf("This selection loads base; updates are not merged.\n");
   }
-  printf("\nA: native NVN   L+A: native NVN   ZR+A: debug NVN\n"
+  printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
          "B+A: rebuild index   R+A: Horizon check\n"
          "X: refresh   +: exit\n\n%s\n",
          outcome);
@@ -1225,15 +1228,11 @@ int main(int argc, char **argv) {
         }
         snprintf(outcome,sizeof(outcome),"NUP not ready: %.95s",game->nup_status);
       } else
-        /* Normal execution now returns each NVN queue/device/window
-         * operation's native function pointer directly. Avoid using
-         * launcher-global mutable trampolines during gameplay, especially
-         * across multiple NVN queue initializations. Keep L+A as the
-         * existing native alias for scripts/users; ZR+A opts back into
-         * the fully instrumented legacy path for graphics diagnosis.
-         * Applies to all guest titles, independent of title ID or source. */
-        run(game, (held & HidNpadButton_B) != 0,
-            (held & HidNpadButton_ZR) == 0);
+        /* A = native with PresentTexture tracking; L+A = full native;
+         * ZR+A = instrumented. ZR takes priority over L. */
+        int mode=(held & HidNpadButton_ZR)?0:
+                 (held & HidNpadButton_L)?2:1;
+        run(game, (held & HidNpadButton_B)!=0, mode);
     }
     draw(&catalog, selected);
     svcSleepThread(16666667);

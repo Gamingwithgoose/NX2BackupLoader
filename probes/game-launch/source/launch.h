@@ -111,8 +111,8 @@ typedef struct {
  uint32_t guest_main_returned;
  uint64_t fsp_denied,rom_reads,save_calls,main_entered,frames;
  uint64_t handle_tags[2048];
- /* When set, all NVN pointers (including GetProcAddress and
-   * PresentTexture) are unmodified; native frame counters are unobserved. */
+ /* NVN mode: 0=diagnostic; 1=native pointers except PresentTexture gate;
+  * 2=all native pointers, per-function/frame counters unobserved. */
  uint32_t nvn_driver_passthrough;
  uint32_t nvn_bootstrap_calls,nvn_getproc_calls,nvn_present_lookups;
  uint32_t nvn_present_entered,nvn_present_returned;

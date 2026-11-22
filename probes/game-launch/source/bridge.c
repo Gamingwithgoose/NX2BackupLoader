@@ -461,7 +461,9 @@ static uintptr_t getproc_gate(void *device,const char *name){
  /* Native A/L+A bypass getproc_gate at bootstrap. This defensive check
   * prevents any retained function pointer to this gate from replacing the
   * driver's own NVN entrypoint. ZR+A keeps diagnostic instrumentation. */
- if(nx2_launch->nvn_driver_passthrough) return result;
+ if(nx2_launch->nvn_driver_passthrough==2 ||
+    (nx2_launch->nvn_driver_passthrough==1 &&
+     !equal(name,"nvnQueuePresentTexture"))) return result;
  if(result&&equal(name,"nvnQueueSubmitCommands")){
    __atomic_store_n(&nx2_launch->api.original_queue_submit,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_submit_gate;
@@ -509,7 +511,7 @@ uintptr_t nx2_bootstrap_gate(const char *name){
   * across distinct bootstrap/device lookups, which may be unsafe. Returning
   * the exact driver pointer removes this entire layer of indirection.
   * Diagnostic ZR+A still follows the existing instrumented code below. */
- if(nx2_launch->nvn_driver_passthrough) return result;
+ if(nx2_launch->nvn_driver_passthrough==2) return result;
  if(result&&equal(name,"nvnDeviceGetProcAddress")){
    __atomic_store_n(&nx2_launch->api.original_getproc,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)getproc_gate;
