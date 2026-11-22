@@ -533,7 +533,8 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       /* Native IFile::OperateRange (command 5): pass through the real
        * SD-backed file service instead of returning Unsupported. The
        * guest's 0x40-byte inline response comes from an actual query. */
-      if((r->b!=0 && r->b!=3) || r->c>INT64_MAX ||
+      if((r->b!=FsOperationId_InvalidateCache &&
+          r->b!=FsOperationId_QueryRange) || r->c>INT64_MAX ||
          r->d>INT64_MAX || r->c>INT64_MAX-r->d || !r->buffer)
         return NX2_INVALID;
       FsRangeInfo range={0};
