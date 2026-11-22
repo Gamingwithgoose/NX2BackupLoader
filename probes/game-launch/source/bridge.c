@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "launch.h"
 #include "raw_svc.h"
+#include "file_range_policy.h"
 #include <stdio.h>
 Nx2Launch *nx2_launch;
 static void copy(void *d,const void *s,uint64_t n){unsigned char *a=d;const unsigned char *b=s;for(uint64_t i=0;i<n;i++)a[i]=b[i];}
@@ -90,7 +91,25 @@ static uint32_t file_write(void *p,int64_t offset,const void *buf,uint64_t size,
 static uint32_t file_flush(void *p){return nx2_rpc(RPC_SAVE_FLUSH,((Nx2Object *)p)->handle,0,0,0,0,0,0,0);}
 static uint32_t file_resize(void *p,int64_t n){if(n<0)return NX2_INVALID;return nx2_rpc(RPC_SAVE_RESIZE,((Nx2Object *)p)->handle,n,0,0,0,0,0,0);}
 static uint32_t file_size(void *p,int64_t *n){uint64_t size=0;uint32_t rc=nx2_rpc(RPC_SAVE_SIZE,((Nx2Object *)p)->handle,0,0,0,0,0,0,&size);if(n)*n=(int64_t)size;return n?rc:NX2_INVALID;}
-static uint32_t file_range(void *p,void *out,uint64_t outsize,uint32_t op,int64_t off,int64_t n,const void *in,uint64_t insize){return storage_range(p,out,outsize,op,off,n,in,insize);}
+/* IFile::OperateRange must apply to the actual guest save/cache file,
+ * not the unrelated, read-only ROMFS virtual IStorage. */
+static uint32_t file_range(void *p,void *out,uint64_t outsize,
+                           uint32_t op,int64_t off,int64_t n,
+                           const void *in,uint64_t insize){
+ Nx2Object *o=p;
+ if(!o || !o->active ||
+    o->vtable!=(uintptr_t)&nx2_launch->file_table[2] || !o->handle)
+  return NX2_INVALID;
+ if(!nx2_file_range_allowed(op,off,n,out,outsize,in,insize))
+  return NX2_FS_UNSUPPORTED;
+ /* Use the same real SD-backed IFile range RPC as native FSP command 5.
+  * InvalidateCache does not expose the internal 64-byte ABI scratch area. */
+ unsigned char range[0x40]={0};
+ uint32_t rc=nx2_rpc(RPC_SAVE_OPERATE_RANGE,o->handle,(uint64_t)op,
+                     (uint64_t)off,(uint64_t)n,range,0,0,0);
+ if(!rc && op==3)copy(out,range,sizeof(range));
+ return rc;
+}
 static const char *path(const void *p){return nx2_launch->api.path_string(p);}
 /* Translate cache-mounted paths into an isolated, per-index SD subtree.
  * The host's save-path validator still checks all path components. */
