@@ -65,6 +65,14 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
         return 0;
       }
       p.offset -= 4;
+    } else if (svc == 0x26) {
+      /* svcBreak does not resume guest execution. Different SDK/compiler
+       * versions may put it inside an abort body, with no RET directly after
+       * the SVC instruction. Patch ONLY the decoded SVC #0x26 instruction:
+       * the existing Break gate captures the real kernel break parameters
+       * and parks the faulting thread. Since it does not return, no wrapper
+       * epilogue or LR fixup is required. Other SVCs keep their strict
+       * wrapper checks and are not treated as inline-safe. */
     } else if (off + 8 > m->file_size[0] ||
                w(m->guest + off + 4) != 0xd65f03c0) {
       snprintf(error, 160, "Unsupported simple SVC wrapper %x at %x", svc, off);
