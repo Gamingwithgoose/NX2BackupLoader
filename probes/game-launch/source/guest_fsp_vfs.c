@@ -562,7 +562,7 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  if(session_kind!=2||!d.valid||!d.domain||d.control)return 0;
  VfsObject obj=find_object(session,d.object_id);
  if(!obj.kind&&d.close_kind==0&&
-    (d.command!=22&&d.command!=23&&
+    (d.command!=22&&d.command!=23&&d.command!=34&&
      d.command!=51&&d.command!=52&&d.command!=53&&d.command!=62))
   return 0;
  if(!obj.kind&&d.close_kind)return 0;
@@ -594,7 +594,17 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  uint32_t out_size=0;unsigned char out[64]={0};
  if(!obj.kind){
   char name[128]={0};
-  if(d.command==62){
+  if(d.command==34){
+   /* GetCacheStorageSize: u16 index -> two u64 quota outputs.
+    * These belong to the current virtual guest, not the MKW host. */
+   if(avail<2)rc=NX2_INVALID;
+   else{
+    uint16_t index=(uint16_t)in[0]|((uint16_t)in[1]<<8);
+    rc=nx2_rpc(RPC_CACHE_QUERY_SIZE,index,0,16,0,out,0,0,0);
+    if(!rc)out_size=16;
+   }
+   fsp_stage(rc?6:4,d,rc,0);
+  }else if(d.command==62){
    /* Cache-storage list must not be read under the MKW host identity. */
    new_id=allocate_object(session,VFS_CACHE_READER,1,0,0);
    rc=new_id?0:NX2_LIMIT;
