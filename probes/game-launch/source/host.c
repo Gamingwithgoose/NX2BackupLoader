@@ -5,6 +5,7 @@
 #include "path_guard.h"
 #include "rom_prefetch.h"
 #include "file_range_policy.h"
+#include "log_policy.h"
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,8 +14,9 @@ _Static_assert(sizeof(FsRangeInfo) == 0x40, "SDK range-info ABI mismatch");
 _Static_assert(sizeof(FsTimeStampRaw) == 0x20, "SDK timestamp ABI mismatch");
 _Static_assert(sizeof(FsFileSystemAttribute) == 0xC0, "SDK filesystem attribute ABI mismatch");
 static void logline(Nx2Host *h, const char *fmt, ...) {
-  if (__atomic_fetch_add(&h->lines, 1, __ATOMIC_RELAXED) > 10000)
-    return;
+  if(!h->report || !nx2_log_keep(fmt))return;
+  if(nx2_log_verbose &&
+     __atomic_fetch_add(&h->lines,1,__ATOMIC_RELAXED)>10000)return;
   va_list a;
   va_start(a, fmt);
   vfprintf(h->report, fmt, a);
@@ -771,10 +773,12 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       }
     break;
   case RPC_LOG:
-    logline(h, "NATIVE_LOG a=%016llx b=%016llx c=%016llx d=%016llx text=%s detail=%s\n",
-            (unsigned long long)r->a, (unsigned long long)r->b,
-            (unsigned long long)r->c, (unsigned long long)r->d,
-            r->path, r->path2);
+    if(nx2_log_keep(r->path))
+      logline(h,"WARNING_NATIVE_EVENT a=%016llx b=%016llx c=%016llx "
+                "d=%016llx text=%s detail=%s\n",
+              (unsigned long long)r->a,(unsigned long long)r->b,
+              (unsigned long long)r->c,(unsigned long long)r->d,
+              r->path,r->path2);
     break;
   case RPC_IPC:
     logline(
@@ -799,11 +803,11 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     }
     break;
   case RPC_PHYSICAL_MEMORY:
-    logline(h,
-            "NATIVE_PHYSICAL_MEMORY operation=%s phase=%s address=%016llx "
-            "bytes=%llu result=%08x\n",
-            r->d ? "unmap" : "map", r->c == UINT32_MAX ? "begin" : "end",
-            (unsigned long long)r->a, (unsigned long long)r->b, (unsigned)r->c);
+    if(nx2_log_verbose || (r->c!=UINT32_MAX && r->c!=0))
+      logline(h,"WARNING_NATIVE_PHYSICAL_MEMORY op=%s address=%016llx "
+                "bytes=%llu result=%08x\n",
+              r->d?"unmap":"map",(unsigned long long)r->a,
+              (unsigned long long)r->b,(unsigned)r->c);
     break;
   case RPC_BREAK: {
     /* Report native SDK breaks uniformly for every guest title. */

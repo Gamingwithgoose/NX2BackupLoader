@@ -8,11 +8,13 @@
 #include "patch.h"
 #include "patch_plan.h"
 #include "resolve.h"
+#include "log_policy.h"
 #include <dirent.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 static void row(FILE *f, const char *fmt, ...) {
+  if(!f || !nx2_log_keep(fmt))return;
   va_list a;
   va_start(a, fmt);
   vfprintf(f, fmt, a);

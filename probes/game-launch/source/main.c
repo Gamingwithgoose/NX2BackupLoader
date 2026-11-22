@@ -10,6 +10,7 @@
 #include "images.h"
 #include "raw_svc.h"
 #include "vm_release.h"
+#include "log_policy.h"
 #include <malloc.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -17,6 +18,7 @@
 #include <string.h>
 #include <switch.h>
 #include <switch2/memory/heap.h>
+int nx2_log_verbose=0;
 static PadState pad;
 /* The crash report is durable at snapshot boundaries, not after every line.
  * Separate, bursty fflush() calls previously competed with game SD reads. */
@@ -27,6 +29,7 @@ static uint32_t selected_resource;
 static char selected_save[256];
 static char outcome[192] = "Mario Kart World override required.";
 static void row(FILE *f, const char *fmt, ...) {
+  if(!f || !nx2_log_keep(fmt))return;
   va_list a;
   va_start(a, fmt);
   vfprintf(f, fmt, a);
@@ -63,8 +66,7 @@ static void drain_ipc_events(FILE *f,Nx2Launch *l,uint32_t *cursor,
   const int abnormal=(v.phase==2 &&
     ((v.kernel_result!=0 && v.kernel_result!=UINT32_MAX)||
      (v.cmif_result!=0 && v.cmif_result!=UINT32_MAX)));
-  const int important=full_text||v.phase>=3||v.kind==2||v.kind==3||
-                      abnormal||(v.phase==2&&v.kind==1&&v.command==1);
+  const int important=full_text || abnormal || v.phase==4 || v.phase==5;
   if(important)
     fprintf(f,"IPC_EVENT seq=%u call=%u phase=%u service=%s kind=%u handle=%08x hipc=%u command=%u domain_object=%08x flags=%02x hdr0=%08x hdr1=%08x special=%08x kernel=%08x cmif=%08x caller=%016llx tick=%llu\n",
             expected,v.call_id,v.phase,v.service,v.kind,v.handle,
@@ -345,6 +347,9 @@ static void scan_progress(uint32_t files, void *unused) {
 }
 /* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
 static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
+  FILE *flag=fopen("sdmc:/BackupLoaderMKW-verbose.flag","rb");
+  nx2_log_verbose=flag!=NULL;
+  if(flag)fclose(flag);
   FILE *f = fopen(game->is_nup ? "sdmc:/BackupLoaderMKW-nup.log" :
                           "sdmc:/BackupLoaderMKW-gameplay.log", "w");
   if (!f) {
@@ -356,12 +361,13 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
    * This cannot capture kernel/GPU faults that never reach the CPU handler. */
   FILE *crash = fopen("sdmc:/BackupLoaderMKW-crash.log","w");
   if(crash)
-    setvbuf(crash,nx2_crash_buffer,_IOFBF,sizeof(nx2_crash_buffer));
-  if (crash)
-    row(crash,"NX2_CRASH_DIAGNOSTIC version=2 game=%s guest=%016llx host=0400c3f00006e000\n"
-              "CAPTURE_MODE libounce_cpu_exception_plus_host_snapshot_and_prelaunch\n"
-              "LIMITATION no_external_kernel_or_gpu_exception_monitor\n",
-        game->name,(unsigned long long)game->id);
+    setvbuf(crash,nx2_crash_buffer,_IOFBF,sizeof(nx2_crash_buffer));  row(f,"LOG_CONTEXT title=%s source=%s verbosity=%s\n",
+      game->name,game->is_nup?"nup":"folder",
+      nx2_log_verbose?"full":"warnings_errors");
+  if(crash)row(crash,"LOG_CONTEXT title=%s source=%s monitor=cpu_only "
+      "verbosity=%s\n",game->name,
+      game->is_nup?"nup":"folder",
+      nx2_log_verbose?"full":"warnings_errors");
 
   const char *launch_phase="START";
   u64 launch_started=armGetSystemTick(), module_prepare_started=0;
@@ -649,6 +655,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       ipc_full_text?"full_text_opt_in":"memory_plus_important_text",
       NX2_IPC_EVENT_SLOTS);
   u64 crash_sample = began;
+  u64 last_no_present_warning=0,last_storage_warning=0;
   u64 crash_detail_tick=began;
   int crash_detail_written=0;
   u32 previous_crash_ipc_next = UINT32_MAX;
@@ -769,8 +776,41 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
      * snapshots must not compete with game asset reads every 100-500ms. */
     uint64_t crash_interval=(since_start<3000000000ULL && !frames)
                           ?250000000ULL:2000000000ULL;
+    uint64_t stamp=armGetSystemTick();
+    uint32_t slot=__atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE);
+    uint64_t started=__atomic_load_n(&host->rpc_started_tick,__ATOMIC_RELAXED);
+    uint64_t age_ms=slot&&stamp>=started?
+      armTicksToNs(stamp-started)/1000000ULL:0;
+    int overdue_first=(!frames && since_start>=2500000000ULL &&
+      __atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE));
+    int warn_first=overdue_first&&
+      (!last_no_present_warning ||
+       armTicksToNs(stamp-last_no_present_warning)>=5000000000ULL);
+    int warn_io=age_ms>=1500&&
+      (!last_storage_warning ||
+       armTicksToNs(stamp-last_storage_warning)>=5000000000ULL);
+    if(warn_first){
+      last_no_present_warning=stamp;
+      row(f,"WARNING_NO_FIRST_PRESENT elapsed_ms=%llu "
+            "bootstrap=%u getproc=%u queues=%u/%u windows=%u/%u\n",
+          (unsigned long long)(since_start/1000000ULL),
+          __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE));
+    }
+    if(warn_io){
+      last_storage_warning=stamp;
+      row(f,"WARNING_STORAGE_IO_DELAY slot=%u op=%u age_ms=%llu completed=%llu\n",
+          slot,__atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED),
+          (unsigned long long)age_ms,
+          (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_RELAXED));
+    }
     int captured_snapshot=0;
-    if(crash && armTicksToNs(armGetSystemTick()-crash_sample)>=crash_interval){
+    if(crash && (nx2_log_verbose || warn_first || warn_io) &&
+       armTicksToNs(stamp-crash_sample)>=crash_interval){
       captured_snapshot=1;
       crash_sample=armGetSystemTick();
       unsigned pending=0;
