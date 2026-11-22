@@ -646,6 +646,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       ipc_full_text?"full_text_opt_in":"memory_plus_important_text",
       NX2_IPC_EVENT_SLOTS);
   u64 crash_sample = began;
+  u64 crash_detail_tick=began;
+  int crash_detail_written=0;
   u32 previous_crash_ipc_next = UINT32_MAX;
   u32 previous_stage = UINT32_MAX, previous_trace_end = UINT32_MAX, previous_trace_begin = UINT32_MAX;
   u32 previous_graphics_ipc = UINT32_MAX;
@@ -783,6 +785,18 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
             (unsigned long long)io_age_ms,
             (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_RELAXED),
             __atomic_load_n(&nx2_storage_service.running,__ATOMIC_ACQUIRE));
+        if(io_slot && io_age_ms>=1500){
+          Nx2NupReadProgress p={0};
+          nx2_nup_get_progress(&p);
+          if(p.active)
+            row(crash,"NUP_STORAGE_PROGRESS file=%u codec=%u phase=%u request=%llu sd_bytes=%llu decoded=%llu delivered=%llu active_ms=%llu\n",
+                p.file,p.codec,p.phase,
+                (unsigned long long)p.requested,
+                (unsigned long long)p.sd_bytes,
+                (unsigned long long)p.decoded_bytes,
+                (unsigned long long)p.delivered_bytes,
+                (unsigned long long)io_age_ms);
+        }
       }
       row(crash,"GUEST_FSP_ROUTE_SNAPSHOT stage=%u cmd=%u object=%08x result=%08x child=%08x\n",
           __atomic_load_n(&l->fsp_route_stage,__ATOMIC_ACQUIRE),
@@ -814,10 +828,21 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE));
     }
+    /* Keep full IPC/RPC history in RAM; avoid rewriting identical trace
+     * tails every 2 seconds while a game is actively rendering. */
+    int detailed_crash_snapshot=0;
+    if(crash && captured_snapshot &&
+       (!crash_detail_written ||
+        armTicksToNs(armGetSystemTick()-crash_detail_tick)>=
+            (frames?6000000000ULL:2000000000ULL))){
+      detailed_crash_snapshot=1;
+      crash_detail_written=1;
+      crash_detail_tick=armGetSystemTick();
+    }
     /* Include recent IPC requests in the independent crash report even for
      * untagged services such as SSL, CSRNG and NSD. No user buffers are
      * captured; only protocol metadata, caller and return status. */
-    if(crash && captured_snapshot){
+    if(crash && detailed_crash_snapshot){
       uint32_t next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
       if(next!=previous_crash_ipc_next){
         uint32_t count=next<8?next:8;
@@ -850,7 +875,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     }
     /* Independent crash report retains recent detailed requests and replies,
      * even when the full gameplay/NUP trace cannot be completely drained. */
-    if(crash && captured_snapshot){
+    if(crash && detailed_crash_snapshot){
       uint32_t total=__atomic_load_n(&l->ipc_event_next,__ATOMIC_ACQUIRE);
       uint32_t count=total<24?total:24;
       for(uint32_t back=count;back;back--){
@@ -871,7 +896,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     /* Guest-to-host RPC callsites are recorded before IPC, independently of
      * filesystem logging. Keep a short tail in the separate crash file;
      * correlate guest module offsets even if the last event has no reply. */
-    if(crash && captured_snapshot){
+    if(crash && detailed_crash_snapshot){
       uint32_t next=__atomic_load_n(&l->rpc_trace_next,__ATOMIC_ACQUIRE);
       uint32_t count=next<4?next:4;
       for(uint32_t back=count;back;back--){
@@ -901,7 +926,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     }
     /* Record real C++ guest callsites instead of generic RPC bridge callers.
      * A nonzero entry/return gap may be normal while concurrent reads run. */
-    if(crash && captured_snapshot){
+    if(crash && detailed_crash_snapshot){
       uint64_t sites[2]={
         __atomic_load_n(&l->fs_guest_read_caller,__ATOMIC_ACQUIRE),
         __atomic_load_n(&l->save_gate_caller,__ATOMIC_ACQUIRE)};
@@ -978,7 +1003,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
      * use shorter heartbeats only after the save mount succeeds. */
     uint32_t late=__atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE);
     if (armTicksToNs(armGetSystemTick() - heartbeat) >=
-        (late?1000000000ULL:5000000000ULL)) {
+        (late?2000000000ULL:5000000000ULL)) {
       heartbeat = armGetSystemTick();
       {
         uint64_t io_last=__atomic_load_n(&nx2_storage_service.last_poll_tick,__ATOMIC_ACQUIRE);
@@ -992,9 +1017,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
             (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_RELAXED),
             (unsigned long long)(io_now>=io_last?armTicksToNs(io_now-io_last)/1000000ULL:0));
       }
-      row(f,"ROM_READAHEAD fills=%llu hits=%llu\n",
-          (unsigned long long)__atomic_load_n(&host->read_ahead_fills,__ATOMIC_RELAXED),
-          (unsigned long long)__atomic_load_n(&host->read_ahead_hits,__ATOMIC_RELAXED));
       row(f,"IPC_CAPTURE_SUMMARY observed_events=%u consumed_events=%u dropped=%u full_text=%u\n",
           __atomic_load_n(&l->ipc_event_next,__ATOMIC_ACQUIRE),
           ipc_event_cursor,ipc_event_dropped,(unsigned)ipc_full_text);

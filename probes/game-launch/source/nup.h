@@ -20,3 +20,10 @@ void *nx2_nup_package_npdm(size_t *length);
 /* Error produced by the last archive entry read or checksum verification. */
 const char *nx2_nup_read_error(void);
 int nx2_nup_entry_detail(const char *path, uint64_t *stored, uint64_t *offset);
+/* Atomic diagnostic snapshot: 1 seek, 2 real SD I/O, 3 Zstd, 4 copy.
+ * This does not control guest requests or modify their return values. */
+typedef struct {
+ uint32_t active,file,codec,phase;
+ uint64_t requested,sd_bytes,decoded_bytes,delivered_bytes;
+} Nx2NupReadProgress;
+void nx2_nup_get_progress(Nx2NupReadProgress *out);

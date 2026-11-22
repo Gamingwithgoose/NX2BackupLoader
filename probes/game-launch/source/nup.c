@@ -406,6 +406,55 @@ void *nx2_nup_package_npdm(size_t *length) {
 }
 static const char *read_error="No archive read attempted";
 const char *nx2_nup_read_error(void){return read_error;}
+
+/* The worker mutates and the launcher watchdog reads this without RPC.
+ * Stalling in fread does not prevent observing the last actual I/O phase. */
+static Nx2NupReadProgress read_progress;
+static void progress_begin(uint32_t file,uint32_t codec,uint64_t n){
+ __atomic_store_n(&read_progress.active,0,__ATOMIC_RELEASE);
+ __atomic_store_n(&read_progress.file,file,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.codec,codec,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.requested,n,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.sd_bytes,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.decoded_bytes,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.delivered_bytes,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.phase,1,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.active,1,__ATOMIC_RELEASE);
+}
+static void progress_phase(uint32_t phase){
+ __atomic_store_n(&read_progress.phase,phase,__ATOMIC_RELEASE);
+}
+static void progress_done(void){
+ __atomic_store_n(&read_progress.active,0,__ATOMIC_RELEASE);
+ __atomic_store_n(&read_progress.phase,0,__ATOMIC_RELEASE);
+}
+void nx2_nup_get_progress(Nx2NupReadProgress *out){
+ if(!out)return;
+ out->active=__atomic_load_n(&read_progress.active,__ATOMIC_ACQUIRE);
+ out->file=__atomic_load_n(&read_progress.file,__ATOMIC_RELAXED);
+ out->codec=__atomic_load_n(&read_progress.codec,__ATOMIC_RELAXED);
+ out->phase=__atomic_load_n(&read_progress.phase,__ATOMIC_ACQUIRE);
+ out->requested=__atomic_load_n(&read_progress.requested,__ATOMIC_RELAXED);
+ out->sd_bytes=__atomic_load_n(&read_progress.sd_bytes,__ATOMIC_RELAXED);
+ out->decoded_bytes=__atomic_load_n(&read_progress.decoded_bytes,__ATOMIC_RELAXED);
+ out->delivered_bytes=__atomic_load_n(&read_progress.delivered_bytes,__ATOMIC_RELAXED);
+}
+/* Same real bytes as fread of the full request, but in 64 KiB SD calls.
+ * A short native read is a failure, never a fabricated successful asset. */
+static int read_exact_chunks(FILE *f,void *dst,size_t length){
+ unsigned char *p=dst;
+ size_t pos=0;
+ progress_phase(2);
+ while(pos<length){
+  size_t want=length-pos;
+  if(want>0x10000U)want=0x10000U;
+  size_t got=fread(p+pos,1,want,f);
+  if(got)__atomic_fetch_add(&read_progress.sd_bytes,(uint64_t)got,__ATOMIC_RELAXED);
+  if(got!=want)return 0;
+  pos+=got;
+ }
+ return 1;
+}
 int nx2_nup_entry_detail(const char *path,uint64_t *stored,uint64_t *offset){
   uint32_t i=lookup_file(path);
   if(i==UINT32_MAX)return 0;
@@ -477,6 +526,7 @@ static int read_large_compressed(const unsigned char *e,uint32_t file,
       size_t take=(size_t)(available<left?available:left);
       memcpy(out,s->output+(size_t)(position-s->last_output_at),take);
       out+=take;position+=take;left-=take;
+      __atomic_fetch_add(&read_progress.delivered_bytes,(uint64_t)take,__ATOMIC_RELAXED);
       continue;
     }
     if(position<s->produced || s->finished) {
@@ -489,7 +539,7 @@ static int read_large_compressed(const unsigned char *e,uint32_t file,
       if(n>128*1024)n=128*1024;
       if(s->consumed>UINT64_MAX-s->at ||
          !nup_seek_file(mounted.f,s->at+s->consumed) ||
-         fread(s->input,1,n,mounted.f)!=n) {
+         !read_exact_chunks(mounted.f,s->input,n)) {
         read_error="Zstandard large-stream packed read failed";
         large_discard(s);
         return 0;
@@ -499,6 +549,7 @@ static int read_large_compressed(const unsigned char *e,uint32_t file,
     NupIn in={s->input,s->input_size,s->input_pos};
     NupOut z={s->output,128*1024,0};
     size_t prior=in.pos;
+    progress_phase(3);
     size_t step=ZSTD_decompressStream(s->ctx,&z,&in);
     s->input_pos=in.pos;
     if(ZSTD_isError(step)) {
@@ -520,6 +571,7 @@ static int read_large_compressed(const unsigned char *e,uint32_t file,
       s->last_output_at=s->produced;
       s->last_output_size=z.pos;
       s->produced+=z.pos;
+      __atomic_fetch_add(&read_progress.decoded_bytes,(uint64_t)z.pos,__ATOMIC_RELAXED);
     }
     if(step==0) {
       if(s->produced!=s->total || wanted>s->produced) {
@@ -568,9 +620,10 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       mounted.cached_size[slot]=0;
       unsigned char *raw=malloc((size_t)packed),*out=malloc((size_t)total);
       if(!raw||!out||!nup_seek_file(mounted.f,at)||
-         fread(raw,1,(size_t)packed,mounted.f)!=(size_t)packed) {
+         !read_exact_chunks(mounted.f,raw,(size_t)packed)) {
         free(raw);free(out);return 0;
       }
+      progress_phase(3);
       size_t n=ZSTD_decompress(out,(size_t)total,raw,(size_t)packed);
       if(ZSTD_isError(n)||n!=total){
         unsigned char header[8]={0};
@@ -589,7 +642,9 @@ static int read_compressed(const unsigned char *e,uint32_t file,
         read_error=probe_details;
         free(raw);free(out);return 0;
       }
+      __atomic_fetch_add(&read_progress.decoded_bytes,(uint64_t)n,__ATOMIC_RELAXED);
       free(raw);
+      progress_phase(4);
       unsigned char hash[32];
       sha256(out,(size_t)total,hash);
       if(memcmp(hash,e+32,32)){
@@ -600,7 +655,9 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       mounted.cached_file[slot]=file;
     }
     mounted.cached_stamp[slot]=++mounted.cache_clock;
+    progress_phase(4);
     memcpy(dest,mounted.cached_bytes[slot]+offset,length);
+    __atomic_fetch_add(&read_progress.delivered_bytes,(uint64_t)length,__ATOMIC_RELAXED);
     return 1;
   }
   return read_large_compressed(e,file,offset,dest,length);
@@ -616,14 +673,21 @@ int nx2_nup_read(const char *path,uint64_t offset,void *dest,size_t length){
     read_error="NUP read exceeds entry bounds";return 0;
   }
   if(!length){read_error="OK";return 1;}
+  progress_begin(i,e[64],length);
   if(e[64]==0) {
-    int ok=nup_seek_file(mounted.f,at+offset) &&
-           fread(dest,1,length,mounted.f)==length;
+    /* Validate the absolute archive offset separately from virtual
+     * extent bounds; an overflow must not alias another NUP entry. */
+    int ok=at<=UINT64_MAX-offset &&
+           nup_seek_file(mounted.f,at+offset) &&
+           read_exact_chunks(mounted.f,dest,length);
+    if(ok)__atomic_fetch_add(&read_progress.delivered_bytes,(uint64_t)length,__ATOMIC_RELAXED);
     read_error=ok?"OK":"Raw NUP seek/read failed";
+    progress_done();
     return ok;
   }
   int ok=read_compressed(e,i,offset,dest,length);
   if(ok)read_error="OK";
+  progress_done();
   return ok;
 }
 void *nx2_nup_read_all(const char *path,size_t limit,size_t *length){
