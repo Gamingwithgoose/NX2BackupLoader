@@ -56,6 +56,7 @@ static uint32_t allocate_object(uint32_t session,uint32_t kind,
   vfs_objects[i].kind=kind;
   vfs_objects[i].read_only=read_only;
   vfs_objects[i].token=token;
+  vfs_objects[i].busy=0;
   if(root){
    unsigned j=0;
    for(;j<sizeof(vfs_objects[i].root)-1&&root[j];j++)
