@@ -226,7 +226,7 @@ static uint64_t token(Nx2Host *h, unsigned i) {
 }
 static Nx2HostFile *lookup(Nx2Host *h, uint64_t id, uint32_t kind) {
   unsigned i = (uint32_t)id;
-  if (!i || i > 128)
+  if (!i || i > NX2_HOST_HANDLE_LIMIT)
     return 0;
   Nx2HostFile *f = &h->handles[i - 1];
   return f->kind == kind && f->generation == (uint32_t)(id >> 32) ? f : 0;
@@ -480,9 +480,9 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   }
   case RPC_SAVE_OPEN: {
     unsigned i = 0;
-    for (; i < 128 && h->handles[i].kind; i++)
+    for (; i < NX2_HOST_HANDLE_LIMIT && h->handles[i].kind; i++)
       ;
-    if (i == 128)
+    if (i == NX2_HOST_HANDLE_LIMIT)
       return NX2_LIMIT;
     rc = fsFsOpenFile(h->sd, p, r->a & 7, &h->handles[i].file);
     if (R_SUCCEEDED(rc)) {
@@ -532,9 +532,9 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     if (!nx2_save_path(p, sizeof(p), h->save_root, r->path))
       return NX2_INVALID;
     unsigned i = 0;
-    for (; i < 128 && h->handles[i].kind; i++)
+    for (; i < NX2_HOST_HANDLE_LIMIT && h->handles[i].kind; i++)
       ;
-    if (i == 128)
+    if (i == NX2_HOST_HANDLE_LIMIT)
       return NX2_LIMIT;
     rc = fsFsOpenDirectory(h->sd, p, r->a & 3, &h->handles[i].dir);
     if (R_SUCCEEDED(rc)) {
@@ -570,7 +570,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     rc = fsFsGetFileTimeStampRaw(h->sd, p, r->buffer);
     break;
   case RPC_COMMIT:
-    for (unsigned i = 0; i < 128; i++)
+    for (unsigned i = 0; i < NX2_HOST_HANDLE_LIMIT; i++)
       if (h->handles[i].kind == 1 && (h->handles[i].mode & FsOpenMode_Write)) {
         Result flush = fsFileFlush(&h->handles[i].file);
         if (R_FAILED(flush))
@@ -851,7 +851,7 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
 void nx2_host_close(Nx2Host *h) {
   free(h->read_ahead_data);
   h->read_ahead_data=0;
-  for (unsigned i = 0; i < 128; i++) {
+  for (unsigned i = 0; i < NX2_HOST_HANDLE_LIMIT; i++) {
     if (h->handles[i].kind == 1)
       fsFileClose(&h->handles[i].file);
     if (h->handles[i].kind == 2)
