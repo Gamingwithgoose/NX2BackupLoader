@@ -18,6 +18,7 @@ typedef struct {
     uint64_t used;
     uint32_t index, open, logged;
   } cache[16];
+  uint64_t guest_program_id; /* provenance for guest-only cache metadata */
   uint64_t calls, bytes, save_bytes, lines;
   uint64_t nup_large_reads;
   /* 1 MiB read-ahead for shared loose-file and raw-NUP asset reads.
