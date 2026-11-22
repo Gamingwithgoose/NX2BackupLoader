@@ -7,6 +7,7 @@
 #include "guest_fsp_vfs.h"
 #include "launch.h"
 #include "cache_catalog.h"
+#include "cache_route.h"
 #include <switch.h>
 #include <stdio.h>
 #include <string.h>
@@ -507,23 +508,12 @@ static char *hex_fixed(char *dst,uint64_t n,unsigned digits){
 }
 /* Native fsp-srv and SDK MountCacheStorage must resolve to one directory.
  * This is a guest-only cache, never the Mario Kart World host cache. */
-static int cache_namespace(uint8_t space,const unsigned char *attr,
-                           char name[128]){
- if(!attr||!name||attr[32]!=5||space!=1)return 0;
- uint64_t app=read64(attr);
- if(app && app!=nx2_launch->guest_program_id)return 0;
- uint32_t index=(uint32_t)attr[34]|((uint32_t)attr[35]<<8);
- char digits[6];unsigned n=0;
- do{digits[n++]=(char)('0'+index%10U);index/=10U;}while(index);
- memcpy(name,"cache-storage/",14);
- for(unsigned i=0;i<n;i++)name[14+i]=digits[n-1-i];
- name[14+n]=0;
- return 1;
-}
 static int save_namespace(uint8_t space,const unsigned char *attr,
                           char name[128]){
  if(!attr||!name)return 0;
- if(attr[32]==5)return cache_namespace(space,attr,name);
+ if(attr[32]==5)
+  return nx2_guest_cache_path(nx2_launch->guest_program_id,space,
+                              attr,0x40,name,128);
  char *p=name;
  memcpy(p,"vsave-",6);p+=6;
  p=hex_fixed(p,space,2);*p++='-';
