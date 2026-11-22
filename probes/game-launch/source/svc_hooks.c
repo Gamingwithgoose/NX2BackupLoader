@@ -529,7 +529,11 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
   * Do not block guest service calls on repetitive success-only SD logs.
   * Error replies remain persisted by the main log's abnormal-event path. */
  if(!rc){
-   if(want_fsp)response_tags(p,scan,2);
+   /* A kernel-successful SendSyncRequest can still return a CMIF
+    * service error (e.g. 0x1015 on an unavailable service alias).
+    * Never classify a returned handle from that failed service request. */
+   if(want_fsp && reply_decoded && !service_result)
+     response_tags(p,scan,2);
    else if(kind==2 && !control && cmd==62 &&
            reply_decoded && !service_result) {
      /* On a domain session the output object ID is NOT a new kernel
@@ -548,7 +552,8 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
                "FSP_READER_NON_DOMAIN_OR_UNVERIFIED_RESPONSE",owner,0);
      }
    }
-   else if(kind&&control&&(cmd==1||cmd==2||cmd==4)){
+   else if(kind&&control&&(cmd==1||cmd==2||cmd==4)&&
+           reply_decoded&&!service_result){
      /* CopyFromCurrentDomain produces ONE moved reader handle.
       * Never retag unrelated copied handles as reader sessions. */
      if(kind==2&&cmd==1&&copied_reader){
