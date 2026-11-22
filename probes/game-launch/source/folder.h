@@ -6,6 +6,7 @@ typedef struct {
   char name[256], root[1200];
   uint64_t id;
   uint32_t resource;
+  uint32_t main_stack_size; /* NPDM META+0x1c, raw bytes */
   int updates;
   int is_nup;
   char nup_status[96];
