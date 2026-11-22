@@ -587,15 +587,6 @@ uintptr_t nx2_bootstrap_gate(const char *name){
  return result;
 }
 
-/* All guest titles execute in the host process. Initializing the host
- * ldr:ro session with guest assumptions can abort before native graphics
- * starts. Apply this process-context adapter uniformly where the guest
- * SDK exports nn::ro::Initialize; actual dynamic NRO loads still need a
- * correctly isolated, process-aware loader implementation. */
-uint32_t nx2_ro_initialize_compat(void){
- nx2_rpc(RPC_LOG,0,0,0,0,0,"RO_INIT_COMPAT","host-owned ldr:ro initialization skipped; dynamic modules not yet virtualized",0);
- return 0;
-}
 uint32_t nx2_save_sizes(int64_t *size,int64_t *journal){if(size)*size=0x20000000;if(journal)*journal=0;return 0;}
 /* Query real free bytes on this guest's isolated SD-backed archive.
  * The previous 512 MiB success was fictitious regardless of SD capacity. */

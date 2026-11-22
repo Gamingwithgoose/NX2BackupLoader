@@ -50,13 +50,17 @@ Nx2IpcDecision nx2_ipc_decide(const void *buffer,uint64_t size,uint32_t kind){
  if(kind==1&&!d.control&&d.command==1&&cmif+24<=end)d.want_fsp=name(p+cmif+16);
  return d;
 }
-/* The only FSP root methods permitted to reach the real host service
- * are process initialization and the existing non-save method 1005.
- * Cache/save reader 62 is now routed to a per-guest virtual interface,
- * never enumerated under the Mario Kart World host's native identity. */
+/* Forward real native service operations for process initialization and
+ * process-independent FSP administration, rather than inventing a reply.
+ * FSP 180 is an interface-level method observed on Switch 2. It is NOT an
+ * open/create/mount/delete save call. Preserve the guest's SD-backed
+ * filesystem virtualization for commands 22/23/34/51/52/53/62 and every
+ * known save child object. No title IDs, names or ROM formats are checked.
+ * The underlying service returns its actual CMIF status and permissions. */
 int nx2_ipc_fsp_allowed(Nx2IpcDecision d){
  return d.valid&&((d.control&&d.command<=4)||
-                  (!d.control&&(d.command==1||d.command==1005)));
+                  (!d.control&&(d.command==1||d.command==180||
+                                 d.command==1005)));
 }
 /* ISaveDataInfoReader supports a read-only enumeration call at command 0.
  * Reject other calls on this interface instead of giving it proxy access. */
