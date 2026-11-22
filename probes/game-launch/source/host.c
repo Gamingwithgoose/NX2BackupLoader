@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "host.h"
+#include "cache_catalog.h"
 #include "nup.h"
 #include "path_guard.h"
 #include <stdarg.h>
@@ -59,6 +60,7 @@ static int legacy_archive_present(FsFileSystem *sd,const char *root){
 int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
                   const char *save_key,uint64_t guest_id) {
   memset(h, 0, sizeof(*h));
+  h->guest_program_id = guest_id;
   h->report = report;
   h->sd = fsdevGetDeviceFileSystem("sdmc");
   if (!h->sd || strncmp(rom, "sdmc:", 5))
@@ -93,6 +95,73 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
       return 0;
   }
   return 1;
+}
+/* Enumerate only real virtual caches belonging to the selected guest.
+ * The kernel's fsp-srv cache list belongs to the MKW host process and must
+ * never be presented to a foreign guest as its own save metadata. Files
+ * are read-only here; creation and durable quota markers remain unchanged. */
+static int nx2_cache_index_cmp(const void *a,const void *b){
+ uint16_t x=*(const uint16_t*)a,y=*(const uint16_t*)b;
+ return x<y?-1:(x>y?1:0);
+}
+static uint32_t nx2_cache_enumerate(Nx2Host *h,uint64_t cursor,
+                                    uint64_t capacity,void *out,uint64_t *count){
+ if(!h||!out||!count||!capacity||capacity>256)return NX2_INVALID;
+ *count=0;
+ char parent[600];
+ int n=snprintf(parent,sizeof(parent),"%s/cache-storage",h->save_root);
+ if(n<0||n>=(int)sizeof(parent))return NX2_INVALID;
+ FsDir dir;
+ Result rc=fsFsOpenDirectory(h->sd,parent,FsDirOpenMode_ReadDirs,&dir);
+ if(R_FAILED(rc)){
+  FsDirEntryType type;
+  /* Before CreateCacheStorage there are no virtual caches. An absent
+   * folder is a genuine empty catalog, not a successful native call. */
+  if(R_FAILED(fsFsGetEntryType(h->sd,parent,&type)))return 0;
+  return rc;
+ }
+ uint16_t *indices=malloc(65536U*sizeof(*indices));
+ if(!indices){fsDirClose(&dir);return NX2_LIMIT;}
+ size_t used=0;FsDirectoryEntry entry; s64 read=0;
+ for(;;){
+  rc=fsDirRead(&dir,&read,1,&entry);
+  if(R_FAILED(rc)||read==0)break;
+  uint16_t index=0;
+  if(nx2_cache_parse_index(entry.name,&index) && used<65536)
+    indices[used++]=index;
+ }
+ fsDirClose(&dir);
+ if(R_FAILED(rc)){free(indices);return rc;}
+ qsort(indices,used,sizeof(*indices),nx2_cache_index_cmp);
+ uint64_t skipped=0,produced=0;
+ for(size_t i=0;i<used && produced<capacity;i++){
+  uint16_t index=indices[i];
+  if(i && index==indices[i-1])continue;
+  char marker[720];
+  n=snprintf(marker,sizeof(marker),"sdmc:%s/.nx2-capacity-%u",
+             parent,(unsigned)index);
+  if(n<0||n>=(int)sizeof(marker)){free(indices);return NX2_INVALID;}
+  FILE *f=fopen(marker,"rb");
+  if(!f)continue;
+  uint64_t quota[3]={0};
+  size_t got=fread(quota,1,sizeof(quota),f);
+  int closed=fclose(f);
+  /* An uncommitted/incomplete quota marker isn't a valid cache save. */
+  if(got!=sizeof(quota)||closed||
+     quota[0]!=NX2_CACHE_QUOTA_MAGIC||
+     quota[1]>INT64_MAX||quota[2]>INT64_MAX||
+     quota[1]>UINT64_MAX-quota[2])continue;
+  if(skipped++<cursor)continue;
+  if(!nx2_cache_pack_info((unsigned char*)out+
+         produced*NX2_CACHE_INFO_BYTES,NX2_CACHE_INFO_BYTES,
+         h->guest_program_id,index,quota[1],quota[2])){
+   free(indices);return NX2_INVALID;
+  }
+  produced++;
+ }
+ free(indices);
+ *count=produced;
+ return 0;
 }
 /* Guest save archives are logical objects, not merely directories. The
  * launcher's root directory exists before gameplay for path confinement.
@@ -291,6 +360,15 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     if(!nx2_save_path(p,sizeof(p),h->save_root,name))return NX2_INVALID;
     rc=mkdir_one(h->sd,p);
     logline(h,"GUEST_VFS_PREPARE namespace=[account-scoped] result=%08x\n",rc);
+    break;
+  }
+  case RPC_CACHE_ENUM: {
+    uint64_t produced=0;
+    rc=nx2_cache_enumerate(h,r->a,r->b,r->buffer,&produced);
+    if(R_SUCCEEDED(rc))r->answer=produced;
+    logline(h,"GUEST_CACHE_CATALOG cursor=%llu capacity=%llu entries=%llu result=%08x\n",
+            (unsigned long long)r->a,(unsigned long long)r->b,
+            (unsigned long long)produced,rc);
     break;
   }
   case RPC_CACHE_CREATE:
