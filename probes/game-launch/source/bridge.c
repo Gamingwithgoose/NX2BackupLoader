@@ -458,9 +458,14 @@ static uint32_t queue_acquire_gate(void *queue,void *window,int *index){
 static uintptr_t getproc_gate(void *device,const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_getproc(device,name);
- /* Opt-in raw NVN dispatch: bypass every device/queue/window/command
-  * wrapper. Keep PresentTexture observed as a minimal first-frame marker.
-  * NVN_INIT/STAGE counters are intentionally absent in this mode. */
+ /* Default native NVN dispatch: return each driver-provided function
+  * pointer unchanged for all device/queue/window/command operations.
+  * The prior instrumented trampolines share one mutable original pointer
+  * per function across multiple queues/devices and can alter dispatch
+  * semantics if a driver returns context-specific entry points.
+  * Keep PresentTexture observation as a minimal frame marker.
+  * ZR+A explicitly selects the old full diagnostic wrapper path.
+  * Native mode intentionally has no NVN_INIT/STAGE counters. */
  if(result && nx2_launch->nvn_driver_passthrough &&
     !equal(name,"nvnQueuePresentTexture"))
   return result;

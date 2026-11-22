@@ -549,7 +549,8 @@ static void run(const Nx2Game *game, int rebuild_index, int direct_nvn) {
   /* prepare_phase() clears Nx2Launch, so apply mode after module setup. */
   l->nvn_driver_passthrough=direct_nvn?1U:0U;
   row(f,"NVN_LAUNCH_MODE direct_driver_except_present=%u selected_by=%s\n",
-      l->nvn_driver_passthrough,direct_nvn?"L+A":"normal_A");
+      l->nvn_driver_passthrough,
+      direct_nvn?"native_A_or_L+A":"diagnostic_ZR+A");
   if(crash)row(crash,"NVN_LAUNCH_MODE direct_driver_except_present=%u\n",
                l->nvn_driver_passthrough);
   launch_phase="GUEST_EXECUTE";
@@ -1148,7 +1149,9 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
     else if (catalog->items[selected].updates)
       printf("This selection loads base; updates are not merged.\n");
   }
-  printf("\nA: launch   L+A: direct NVN   B+A: rebuild index\nR+A: Horizon check   X: refresh   +: exit\n\n%s\n",
+  printf("\nA: native NVN   L+A: native NVN   ZR+A: debug NVN\n"
+         "B+A: rebuild index   R+A: Horizon check\n"
+         "X: refresh   +: exit\n\n%s\n",
          outcome);
   consoleUpdate(NULL);
 }
@@ -1215,8 +1218,15 @@ int main(int argc, char **argv) {
         }
         snprintf(outcome,sizeof(outcome),"NUP not ready: %.95s",game->nup_status);
       } else
+        /* Normal execution now returns each NVN queue/device/window
+         * operation's native function pointer directly. Avoid using
+         * launcher-global mutable trampolines during gameplay, especially
+         * across multiple NVN queue initializations. Keep L+A as the
+         * existing native alias for scripts/users; ZR+A opts back into
+         * the fully instrumented legacy path for graphics diagnosis.
+         * Applies to all guest titles, independent of title ID or source. */
         run(game, (held & HidNpadButton_B) != 0,
-            (held & HidNpadButton_L) != 0);
+            (held & HidNpadButton_ZR) == 0);
     }
     draw(&catalog, selected);
     svcSleepThread(16666667);
