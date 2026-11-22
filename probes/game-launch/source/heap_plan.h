@@ -28,3 +28,14 @@ extern uint32_t nx2_process_heap_status;
 
 /* True for shrink/equal; growing must leave real physical headroom. */
 int nx2_heap_growth_allowed(uint64_t,uint64_t,uint64_t,uint64_t);
+
+/* The guest shares a host process. Its visible non-system-memory budget
+ * must describe what its private heap could really grow to, not every
+ * physically free page belonging to the host title. Outputs describe a
+ * coherent TotalNonSystemMemorySize / UsedNonSystemMemorySize pair.
+ * Pure arithmetic for portable regression tests. */
+int nx2_guest_memory_budget(uint64_t kernel_total,uint64_t kernel_used,
+                            uint64_t physical_free,uint64_t host_prefix,
+                            uint64_t guest_capacity,uint64_t guest_committed,
+                            uint64_t physical_floor,uint64_t *reported_total,
+                            uint64_t *reported_used);

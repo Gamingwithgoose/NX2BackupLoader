@@ -50,6 +50,43 @@ int main(void){
               "unbacked guest request is still refused");
  fails+=check(nx2_heap_plan(0,override_bytes,&plan)==NX2_HEAP_INVALID,
               "null heap address refused");
+ /* Fast Fusion originally requested the advertised free non-system memory
+  * rounded down. When host-reserved pages shrank by 512 MiB, the request
+  * grew by exactly 512 MiB, remaining 2 MiB above the guest heap span.
+  * A truthful guest budget must cap both virtual and physical availability. */
+ uint64_t reported_total=0,reported_used=0;
+ const uint64_t non_total=UINT64_C(0x230000000);
+ const uint64_t non_used=UINT64_C(0x24428000);
+ const uint64_t new_free=UINT64_C(8786903040);
+ fails+=check(nx2_guest_memory_budget(non_total,non_used,new_free,
+                 UINT64_C(538083328),UINT64_C(8782872576),0,floor,
+                 &reported_total,&reported_used),
+              "real guest budget returned");
+ fails+=check(reported_used==UINT64_C(0x4300000),
+              "guest non-system used excludes only host prefix");
+ fails+=check(reported_total-reported_used==new_free-floor,
+              "guest free budget retains real graphics headroom");
+ fails+=check(reported_total-reported_used<UINT64_C(0x20ba00000),
+              "Fast Fusion no longer sees unavailable heap as free");
+ fails+=check(nx2_guest_memory_budget(non_total,non_used,new_free,
+                 UINT64_C(538083328),UINT64_C(0x180000000),0,floor,
+                 &reported_total,&reported_used) &&
+              reported_total-reported_used==UINT64_C(0x180000000),
+              "smaller guest address span caps visible free");
+ fails+=check(nx2_guest_memory_budget(non_total,non_used,new_free,
+                 UINT64_C(538083328),UINT64_C(0x180000000),
+                 UINT64_C(0x20000000),floor,
+                 &reported_total,&reported_used) &&
+              reported_total-reported_used==UINT64_C(0x160000000),
+              "repeated heap requests report only remaining guest span");
+ fails+=check(nx2_guest_memory_budget(non_total,non_used,100,floor,
+                 UINT64_C(0x4000000),0,floor,
+                 &reported_total,&reported_used) &&
+              reported_total==reported_used,
+              "low physical memory never invents free pages");
+ fails+=check(!nx2_guest_memory_budget(1,2,0,0,0,0,floor,
+                 &reported_total,&reported_used),
+              "invalid kernel accounting refused");
  puts(fails?"Heap growth regression: FAIL":"Heap growth regression: PASS");
  return !!fails;
 }

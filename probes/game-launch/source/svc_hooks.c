@@ -34,20 +34,41 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
       (type==5 || type==6 || type==7 || type==16 ||
        type==21 || type==22)){
      uint64_t kernel_value=(!rc)?*out:0;
-     /* Only the retained host heap prefix is excluded from the
-      * guest's non-system accounting. Guest NSO backing is mapped in
-      * separate RO memory and is NOT part of this prefix; it remains
-      * counted in UsedNonSystemMemorySize. Subtract from both total and
-      * used (types 21 and 22) so the apparent free budget is unchanged.
-      * Native heap and physical allocation checks continue to use
-      * unmodified kernel values. Never underflow the reported usage. */
-     if(!rc && (type==21 || type==22) &&
-        nx2_process_heap_status==NX2_HEAP_READY &&
-        nx2_process_heap.host_bytes &&
-        kernel_value>=nx2_process_heap.host_bytes){
-       *out=kernel_value-nx2_process_heap.host_bytes;
-       nx2_rpc(RPC_LOG,kernel_value,*out,nx2_process_heap.host_bytes,type,0,
-               "GUEST_MEMORY_ACCOUNTING_EXCLUDE_HOST",0,0);
+     /* The guest shares the host process's kernel memory accounting.
+      * Merely subtracting the host prefix from BOTH total and used
+      * leaves the advertised free count unchanged: a game then requests
+      * the entire native free budget, beyond its heap span and leaving
+      * no pages for graphics. For type 21/22 produce a coherent,
+      * conservatively capped guest-specific total/used pair using the
+      * live kernel values. The real guest SetHeapSize path is unchanged
+      * and still enforces all address, ownership, physical and SVC
+      * checks. Never invent extra free pages or accept a fake heap. */
+     if(!rc && (type==21 || type==22) && l &&
+        nx2_process_heap_status==NX2_HEAP_READY){
+       uint64_t kernel_total=0,kernel_used=0,physical_total=0,physical_used=0;
+       Result a=0,b=0,c=0,d=0;
+       if(type==21)kernel_total=kernel_value;
+       else a=nx2_raw_info(&kernel_total,21,handle,sub);
+       if(type==22)kernel_used=kernel_value;
+       else b=nx2_raw_info(&kernel_used,22,handle,sub);
+       c=svcGetInfo(&physical_total,6,CUR_PROCESS_HANDLE,0);
+       d=svcGetInfo(&physical_used,7,CUR_PROCESS_HANDLE,0);
+       if(R_FAILED(a)||R_FAILED(b)||R_FAILED(c)||R_FAILED(d))
+         return R_FAILED(a)?a:R_FAILED(b)?b:R_FAILED(c)?c:d;
+       uint64_t reported_total=0,reported_used=0;
+       uint64_t physical_free=physical_total>=physical_used?
+                               physical_total-physical_used:0;
+       if(!nx2_guest_memory_budget(kernel_total,kernel_used,physical_free,
+                                  nx2_process_heap.host_bytes,
+                                  nx2_process_heap.game_bytes,
+                                  __atomic_load_n(&l->heap_size,__ATOMIC_ACQUIRE),
+                                  NX2_NATIVE_PHYSICAL_FLOOR_BYTES,
+                                  &reported_total,&reported_used))
+         return 0xd001;
+       *out=type==21?reported_total:reported_used;
+       nx2_rpc(RPC_LOG,kernel_total-kernel_used,
+               reported_total-reported_used,nx2_process_heap.game_bytes,
+               type,0,"GUEST_MEMORY_ACCOUNTING_CAPPED",0,0);
      }
      static uint32_t budget_query_count=0;
      uint32_t ordinal=__atomic_fetch_add(&budget_query_count,1,__ATOMIC_RELAXED);
