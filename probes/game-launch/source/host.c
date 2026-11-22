@@ -376,6 +376,34 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
             (unsigned long long)produced,rc);
     break;
   }
+  case RPC_CACHE_QUERY_SIZE: {
+    /* IFileSystemProxy::GetCacheStorageSize (34): u16 index,
+     * two u64 outputs. Read real per-title quota markers, not MKW saves. */
+    if(r->a>65535 || r->c!=16 || !r->buffer)return NX2_INVALID;
+    char dir[640],marker[720];
+    int dn=snprintf(dir,sizeof(dir),"%s/cache-storage/%u",
+                    h->save_root,(unsigned)r->a);
+    int mn=snprintf(marker,sizeof(marker),
+                    "sdmc:%s/cache-storage/.nx2-capacity-%u",
+                    h->save_root,(unsigned)r->a);
+    if(dn<0||dn>=(int)sizeof(dir)||mn<0||
+       mn>=(int)sizeof(marker))return NX2_INVALID;
+    FsDirEntryType type;
+    rc=fsFsGetEntryType(h->sd,dir,&type);
+    if(R_FAILED(rc))return rc;
+    if(type!=FsDirEntryType_Dir)return NX2_INVALID;
+    FILE *f=fopen(marker,"rb");
+    if(!f)return NX2_INVALID;
+    unsigned char raw[24];
+    size_t got=fread(raw,1,sizeof(raw),f);
+    int closed=fclose(f);
+    uint64_t data_size=0,journal_size=0;
+    if(got!=sizeof(raw)||closed||
+       !nx2_cache_unpack_quota(raw,sizeof(raw),&data_size,&journal_size))
+      return NX2_INVALID;
+    memcpy(r->buffer,raw+8,16);
+    break;
+  }
   case RPC_CACHE_CREATE:
   case RPC_CACHE_CHECK: {
     /* Cache indexes and quotas are properties of the virtual guest store,
