@@ -103,6 +103,15 @@ static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game,
   int core = choose_core(f,npdm_core);
   if (core < 0)
     return 0;
+  uint64_t host_free=heapGetFreeSize();
+  row(f,"WORKER_STACK_RESOURCE requested=%u host_allocator_free=%llu\n",
+      stack_bytes,(unsigned long long)host_free);
+  if((uint64_t)stack_bytes>host_free){
+    row(f,"WORKER_CREATE_REFUSED reason=insufficient_actual_host_memory "
+          "requested=%u free=%llu\n",
+        stack_bytes,(unsigned long long)host_free);
+    return 0;
+  }
   Result rc = threadCreate(t, game_entry, l, NULL, stack_bytes, 0x2c, core);
   row(f, "WORKER_CREATE game=%d result=%08x\n", game, rc);
   if (R_FAILED(rc))
@@ -408,12 +417,12 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   }
   /* NPDM META+0x1c specifies the game's real main-thread stack.
    * Previously every game got a hardcoded 1 MiB guest worker stack.
-   * Preserve that as a minimum; larger titles get a bounded, page-aligned
-   * stack instead of risking a process-ending stack guard fault. */
+   * Keep that minimum while honoring larger page-aligned stack requests.
+   * The host allocator/kernel decides whether the request can be met. */
   uint32_t allocated_main_stack=0;
   if(!nx2_guest_main_stack(declared_main_stack,&allocated_main_stack)){
-    row(f,"REFUSED NPDM main thread stack=%u exceeds safe limit=%u\n",
-        declared_main_stack,NX2_GUEST_STACK_CAP);
+    row(f,"REFUSED NPDM main thread stack=%u reason=page_alignment_overflow\n",
+        declared_main_stack);
     nx2_nup_close();
     fclose(f);
     snprintf(outcome,sizeof(outcome),
@@ -421,9 +430,9 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     if(crash){row(crash,"PRELAUNCH_STOP phase=MAIN_THREAD_STACK\n");fclose(crash);}
     return;
   }
-  row(f,"NPDM_MAIN_THREAD_STACK declared=%u allocated=%u minimum=%u cap=%u\n",
-      declared_main_stack,allocated_main_stack,
-      NX2_GUEST_STACK_BASE,NX2_GUEST_STACK_CAP);
+  row(f,"NPDM_MAIN_THREAD_STACK declared=%u allocated=%u minimum=%u "
+        "policy=real_host_allocator_no_fixed_cap\n",
+      declared_main_stack,allocated_main_stack,NX2_GUEST_STACK_BASE);
   row(f,"NPDM_MAIN_THREAD_CORE requested=%d policy=metadata_if_allowed\n",
       declared_main_core);
   launch_phase="RESOURCE_CHECK";

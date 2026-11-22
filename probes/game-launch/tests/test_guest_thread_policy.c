@@ -24,9 +24,13 @@ int main(void){
  bad+=check(nx2_guest_main_stack(0x800000,&n)&&n==0x800000U,
             "honor an 8 MiB NPDM stack");
  bad+=check(nx2_guest_main_stack(0x1000000,&n)&&n==0x1000000U,
-            "safe max accepted");
- bad+=check(!nx2_guest_main_stack(0x1000001,&n),
-            "larger than cap rejected instead of truncated");
+            "legacy 16 MiB maximum remains accepted");
+ bad+=check(nx2_guest_main_stack(0x2000000,&n)&&n==0x2000000U,
+            "larger 32 MiB stack request honored");
+ bad+=check(nx2_guest_main_stack(0xfffff000U,&n)&&n==0xfffff000U,
+            "maximum representable page-aligned request accepted");
+ bad+=check(!nx2_guest_main_stack(0xfffff001U,&n),
+            "page alignment overflow rejected");
  bad+=check(!nx2_guest_main_stack(UINT32_MAX,&n),
             "uint32 overflow prohibited");
  bad+=check(!nx2_guest_main_stack(0,0),
