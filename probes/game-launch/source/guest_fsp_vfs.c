@@ -81,7 +81,6 @@ static uint32_t allocate_object(uint32_t session,uint32_t kind,
     vfs_objects[i].root[j]=root[j];
    vfs_objects[i].root[j]=0;
   }else vfs_objects[i].root[0]=0;
-  break;
  }
  unlock_vfs();
  return id;
