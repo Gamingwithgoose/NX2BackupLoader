@@ -50,14 +50,13 @@ Nx2IpcDecision nx2_ipc_decide(const void *buffer,uint64_t size,uint32_t kind){
  if(kind==1&&!d.control&&d.command==1&&cmif+24<=end)d.want_fsp=name(p+cmif+16);
  return d;
 }
-/* FSP service access is selected by IPC interface/operation, never by
- * game ID. Commands 1/1005 are existing supported paths; 62 opens a
- * read-only cache save-data information reader. Its returned child is
- * tracked as a distinct read-only object, not an unrestricted FSP proxy. */
+/* The only FSP root methods permitted to reach the real host service
+ * are process initialization and the existing non-save method 1005.
+ * Cache/save reader 62 is now routed to a per-guest virtual interface,
+ * never enumerated under the Mario Kart World host's native identity. */
 int nx2_ipc_fsp_allowed(Nx2IpcDecision d){
  return d.valid&&((d.control&&d.command<=4)||
-                  (!d.control&&(d.command==1||d.command==1005||
-                                d.command==62)));
+                  (!d.control&&(d.command==1||d.command==1005)));
 }
 /* ISaveDataInfoReader supports a read-only enumeration call at command 0.
  * Reject other calls on this interface instead of giving it proxy access. */
