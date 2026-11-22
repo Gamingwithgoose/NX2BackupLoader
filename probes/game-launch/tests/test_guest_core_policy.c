@@ -21,6 +21,18 @@ int main(void){
  bad+=check(nx2_guest_select_core(0x01,0,-1)==0,"single allowed core permits co-schedule");
  bad+=check(nx2_guest_select_core(0,0,0)==-1,"no allowed core refused");
  bad+=check(nx2_guest_select_core(UINT64_MAX,0,255)==1,"out of range ignored");
+ bad+=check(nx2_watchdog_select_core(0x3f,0,0,5)==4,
+            "Yoshi: guest main0 storage5 watchdog4");
+ bad+=check(nx2_watchdog_select_core(0x3f,0,5,4)==3,
+            "guest and storage never share the new watchdog");
+ bad+=check(nx2_watchdog_select_core(1,0,0,-1)==-1,
+            "no spare preserves original scheduling");
+ bad+=check(nx2_watchdog_select_core(7,0,1,2)==-1,
+            "three busy cores cannot be separated");
+ bad+=check(nx2_watchdog_select_core(0x3f,4,0,5)==3,
+            "current host CPU excluded");
+ bad+=check(nx2_watchdog_select_core(0,0,0,5)==-1,
+            "no available allowed CPU");
  puts(bad?"Guest core policy: FAIL":"Guest core policy: PASS");
  return !!bad;
 }

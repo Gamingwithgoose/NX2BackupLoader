@@ -99,7 +99,7 @@ static int choose_core(FILE *f,int npdm_core) {
   return chosen;
 }
 static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game,
-                        uint32_t stack_bytes,int npdm_core) {
+                        uint32_t stack_bytes,int npdm_core,int *selected_core) {
   int core = choose_core(f,npdm_core);
   if (core < 0)
     return 0;
@@ -114,6 +114,7 @@ static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game,
     threadClose(t);
     return 0;
   }
+  if(selected_core)*selected_core=core;
   return 1;
 }
 /* Separate the filesystem host from the diagnostic main loop.
@@ -127,6 +128,7 @@ typedef struct {
   uint32_t running;
 } Nx2StorageService;
 static Nx2StorageService nx2_storage_service;
+static int nx2_storage_core = -1;
 static void storage_service_entry(void *opaque){
   Nx2StorageService *svc=(Nx2StorageService*)opaque;
   __atomic_store_n(&svc->running,1,__ATOMIC_RELEASE);
@@ -163,7 +165,31 @@ static int start_storage_service(FILE *f,Nx2Host *host,Nx2Launch *launch,
   rc=threadStart(thread);
   row(f,"STORAGE_WORKER_START handle=%08x result=%08x\n",thread->handle,rc);
   if(R_FAILED(rc)){threadClose(thread);return 0;}
+  nx2_storage_core=core;
   return 1;
+}
+/* Move only the launcher watchdog away from a guest's requested CPU.
+ * Keep guest NPDM placement and the SD worker untouched. Failure to move
+ * falls back to the original validated launch behavior. */
+static void isolate_watchdog_core(FILE *f,int guest_core){
+  u64 allowed=0;
+  Result rc=svcGetInfo(&allowed,InfoType_CoreMask,CUR_PROCESS_HANDLE,0);
+  int host_core=(int)svcGetCurrentProcessorNumber();
+  if(R_FAILED(rc)){
+    row(f,"WATCHDOG_CORE_MOVE skipped=mask_query result=%08x\n",rc);
+    return;
+  }
+  int spare=nx2_watchdog_select_core(allowed,host_core,guest_core,
+                                    nx2_storage_core);
+  if(spare<0){
+    row(f,"WATCHDOG_CORE_MOVE skipped=no_spare host=%d guest=%d storage=%d allowed=%016llx\n",
+        host_core,guest_core,nx2_storage_core,(unsigned long long)allowed);
+    return;
+  }
+  Result moved=svcSetThreadCoreMask(CUR_THREAD_HANDLE,spare,(u32)(1U<<spare));
+  row(f,"WATCHDOG_CORE_MOVE host_before=%d target=%d guest=%d storage=%d result=%08x allowed=%016llx\n",
+      host_core,spare,guest_core,nx2_storage_core,moved,
+      (unsigned long long)allowed);
 }
 static void write_fault_report(FILE *f, const Nx2Images *images) {
   const ThreadExceptionDump *d = &nx2_fault.dump;
@@ -544,8 +570,11 @@ static void run(const Nx2Game *game, int rebuild_index, int direct_nvn) {
   if(!start_storage_service(f,host,l,&storage_worker))
     stop(f,"Storage service worker could not start");
   Thread worker;
-  if (!start_worker(f, l, &worker, 1, allocated_main_stack,declared_main_core))
+  int guest_core=-1;
+  if (!start_worker(f, l, &worker, 1, allocated_main_stack,
+                    declared_main_core,&guest_core))
     stop(f, "Game worker could not start");
+  isolate_watchdog_core(f,guest_core);
   row(f,"PRELAUNCH_TIMING phase=GUEST_WORKER_STARTED cumulative_ms=%llu\n",
       (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
