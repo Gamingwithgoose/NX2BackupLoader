@@ -145,18 +145,18 @@ static uint32_t nx2_cache_enumerate(Nx2Host *h,uint64_t cursor,
   if(n<0||n>=(int)sizeof(marker)){free(indices);return NX2_INVALID;}
   FILE *f=fopen(marker,"rb");
   if(!f)continue;
-  uint64_t quota[3]={0};
-  size_t got=fread(quota,1,sizeof(quota),f);
+  unsigned char raw[24];
+  size_t got=fread(raw,1,sizeof(raw),f);
   int closed=fclose(f);
-  /* An uncommitted/incomplete quota marker isn't a valid cache save. */
-  if(got!=sizeof(quota)||closed||
-     quota[0]!=NX2_CACHE_QUOTA_MAGIC||
-     quota[1]>INT64_MAX||quota[2]>INT64_MAX||
-     quota[1]>UINT64_MAX-quota[2])continue;
+  uint64_t data_size=0,journal_size=0;
+  /* Use the same exact quota validation for enumeration and cmd 34. */
+  if(got!=sizeof(raw)||closed||
+     !nx2_cache_unpack_quota(raw,sizeof(raw),
+                             &data_size,&journal_size))continue;
   if(skipped++<cursor)continue;
   if(!nx2_cache_pack_info((unsigned char*)out+
          produced*NX2_CACHE_INFO_BYTES,NX2_CACHE_INFO_BYTES,
-         h->guest_program_id,index,quota[1],quota[2])){
+         h->guest_program_id,index,data_size,journal_size)){
    free(indices);return NX2_INVALID;
   }
   produced++;
