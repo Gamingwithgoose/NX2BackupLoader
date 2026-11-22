@@ -657,13 +657,39 @@ uint32_t nx2_async(uint32_t *out,void *p,uint64_t n,uint32_t h){
  ipc_event_emit(call_id,1,h,kind,d,type,0x40U,hdr0,hdr1,special,
                 UINT32_MAX,UINT32_MAX,caller,owner);
  if(kind){
-  /* There is no safe host-identity-agnostic async FSP/SM backend yet.
-   * Report an actual guest failure rather than aborting the whole loader
-   * or forwarding a guest operation into the MKW host service. */
-  if(out)*out=0;
-  ipc_event_emit(call_id,4,h,kind,d,type,0x40U,hdr0,hdr1,special,
-                 NX2_FS_UNSUPPORTED,UINT32_MAX,caller,owner);
-  return NX2_FS_UNSUPPORTED;
+  /* A tagged service cannot be passed to raw native async IPC without
+   * first applying the same per-guest FSP routing/SM permissions as sync.
+   * Execute the complete checked request on the caller thread and return
+   * an already signaled kernel event as the async completion handle.
+   * This is a synchronous compatibility fallback (not background I/O),
+   * but preserves the observable buffer+event completion contract and
+   * the real service result. No fake successful CMIF replies. */
+  if(!out || !p || n<8){
+    ipc_event_emit(call_id,4,h,kind,d,type,0x40U,hdr0,hdr1,special,
+                   NX2_INVALID,UINT32_MAX,caller,owner);
+    return NX2_INVALID;
+  }
+  *out=0;
+  Handle server_event=0,client_event=0;
+  uint32_t rc=svcCreateEvent(&server_event,&client_event);
+  if(rc){
+    ipc_event_emit(call_id,4,h,kind,d,type,0x40U,hdr0,hdr1,special,
+                   rc,UINT32_MAX,caller,owner);
+    return rc;
+  }
+  rc=filter_sync(p,n,h,1,caller);
+  if(!rc)rc=svcSignalEvent(server_event);
+  svcCloseHandle(server_event);
+  if(rc){
+    svcCloseHandle(client_event);
+    ipc_event_emit(call_id,4,h,kind,d,type,0x40U,hdr0,hdr1,special,
+                   rc,UINT32_MAX,caller,owner);
+    return rc;
+  }
+  *out=client_event;
+  ipc_event_emit(call_id,2,h,kind,d,type,0x40U,hdr0,hdr1,special,
+                 0,UINT32_MAX,caller,owner);
+  return 0;
  }
  uint32_t rc=nx2_raw_async(out,p,n,h);
  ipc_event_emit(call_id,2,h,kind,d,type,0x40U,hdr0,hdr1,special,
