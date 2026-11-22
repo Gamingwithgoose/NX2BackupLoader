@@ -458,17 +458,10 @@ static uint32_t queue_acquire_gate(void *queue,void *window,int *index){
 static uintptr_t getproc_gate(void *device,const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_getproc(device,name);
- /* Default native NVN dispatch: return each driver-provided function
-  * pointer unchanged for all device/queue/window/command operations.
-  * The prior instrumented trampolines share one mutable original pointer
-  * per function across multiple queues/devices and can alter dispatch
-  * semantics if a driver returns context-specific entry points.
-  * Keep PresentTexture observation as a minimal frame marker.
-  * ZR+A explicitly selects the old full diagnostic wrapper path.
-  * Native mode intentionally has no NVN_INIT/STAGE counters. */
- if(result && nx2_launch->nvn_driver_passthrough &&
-    !equal(name,"nvnQueuePresentTexture"))
-  return result;
+ /* Native A/L+A bypass getproc_gate at bootstrap. This defensive check
+  * prevents any retained function pointer to this gate from replacing the
+  * driver's own NVN entrypoint. ZR+A keeps diagnostic instrumentation. */
+ if(nx2_launch->nvn_driver_passthrough) return result;
  if(result&&equal(name,"nvnQueueSubmitCommands")){
    __atomic_store_n(&nx2_launch->api.original_queue_submit,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_submit_gate;
@@ -511,6 +504,12 @@ static uintptr_t getproc_gate(void *device,const char *name){
 uintptr_t nx2_bootstrap_gate(const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_bootstrap_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_bootstrap(name);
+ /* Full-native path: do not wrap native NVN GetProcAddress or PresentTexture.
+  * The old wrapper used one shared mutable original_getproc/original_present
+  * across distinct bootstrap/device lookups, which may be unsafe. Returning
+  * the exact driver pointer removes this entire layer of indirection.
+  * Diagnostic ZR+A still follows the existing instrumented code below. */
+ if(nx2_launch->nvn_driver_passthrough) return result;
  if(result&&equal(name,"nvnDeviceGetProcAddress")){
    __atomic_store_n(&nx2_launch->api.original_getproc,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)getproc_gate;

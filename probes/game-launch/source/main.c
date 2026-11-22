@@ -548,11 +548,18 @@ static void run(const Nx2Game *game, int rebuild_index, int direct_nvn) {
       images->count,(unsigned long long)l->heap_capacity);
   /* prepare_phase() clears Nx2Launch, so apply mode after module setup. */
   l->nvn_driver_passthrough=direct_nvn?1U:0U;
-  row(f,"NVN_LAUNCH_MODE direct_driver_except_present=%u selected_by=%s\n",
-      l->nvn_driver_passthrough,
+  row(f,"NVN_LAUNCH_MODE native_all_driver_pointers=%u getproc_intercept=%u "
+        "present_intercept=%u selected_by=%s\n",
+      l->nvn_driver_passthrough,!l->nvn_driver_passthrough,
+      !l->nvn_driver_passthrough,
       direct_nvn?"native_A_or_L+A":"diagnostic_ZR+A");
-  if(crash)row(crash,"NVN_LAUNCH_MODE direct_driver_except_present=%u\n",
-               l->nvn_driver_passthrough);
+  if(crash)row(crash,"NVN_LAUNCH_MODE native_all_driver_pointers=%u "
+                     "getproc_intercept=%u present_intercept=%u\n",
+                l->nvn_driver_passthrough,!l->nvn_driver_passthrough,
+                !l->nvn_driver_passthrough);
+  if(direct_nvn)
+    row(f,"NVN_NATIVE_OBSERVABILITY bootstrap_only=1 "
+          "getproc_and_present_counters_unobserved=1\n");
   launch_phase="GUEST_EXECUTE";
   row(f,"DIAGNOSTIC_PROFILE version=2 guest_fs_callsite=1 save_gate=1 exit_observer=existing CPU_exception_observer=libounce\n");
   if(crash)row(crash,"GUEST_EXECUTION_BEGIN phase=%s\n",launch_phase);
