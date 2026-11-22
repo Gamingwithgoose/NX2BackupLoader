@@ -43,6 +43,12 @@ int main(void){
  d=nx2_ipc_decide(p,sizeof(p),2);
  fail+=expect(d.valid&&d.command==53,
               "native FSP read-only save open");
+ put32(p+40,62);
+ d=nx2_ipc_decide(p,sizeof(p),2);
+ fail+=expect(d.valid&&d.domain&&d.command==62,
+              "native cache reader open interface");
+ fail+=expect(!nx2_ipc_fsp_allowed(d),
+              "cache enumeration never forwarded to host title fsp-srv");
  memset(p,0,sizeof(p));
  put32(p,4);put32(p+4,8);
  p[16]=2;put32(p+20,0xe0000001U);
