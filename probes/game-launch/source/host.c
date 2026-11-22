@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 _Static_assert(sizeof(FsDirectoryEntry) == 0x310, "SDK directory ABI mismatch");
+_Static_assert(sizeof(FsRangeInfo) == 0x40, "SDK range-info ABI mismatch");
 _Static_assert(sizeof(FsTimeStampRaw) == 0x20, "SDK timestamp ABI mismatch");
 static void logline(Nx2Host *h, const char *fmt, ...) {
   if (__atomic_fetch_add(&h->lines, 1, __ATOMIC_RELAXED) > 10000)
