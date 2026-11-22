@@ -6,6 +6,7 @@
  */
 #include "guest_fsp_vfs.h"
 #include "launch.h"
+#include "cache_catalog.h"
 #include <switch.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,9 +15,11 @@
 #define VFS_FS 1
 #define VFS_FILE 2
 #define VFS_DIR 3
+#define VFS_CACHE_READER 4
 typedef struct {
  uint32_t session,object_id,kind,read_only;
  uint64_t token;
+ uint32_t busy;
  char root[128];
 } VfsObject;
 static VfsObject vfs_objects[VFS_MAX_OBJECTS];
@@ -76,6 +79,41 @@ static int forget_object(uint32_t session,uint32_t id,VfsObject *old){
   }
  unlock_vfs();
  return found;
+}
+/* Serialize each virtual cache reader cursor across guest threads. */
+static int cache_reader_begin(uint32_t id,uint64_t *cursor){
+ if(!id||!cursor)return 0;
+ for(;;){
+  int found=0;
+  lock_vfs();
+  for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
+   if(vfs_objects[i].kind==VFS_CACHE_READER &&
+      vfs_objects[i].object_id==id){
+    found=1;
+    if(!vfs_objects[i].busy){
+     vfs_objects[i].busy=1;
+     *cursor=vfs_objects[i].token;
+     unlock_vfs();
+     return 1;
+    }
+    break;
+   }
+  unlock_vfs();
+  if(!found)return 0;
+  __asm__ volatile("yield");
+ }
+}
+static void cache_reader_end(uint32_t id,uint64_t count,int valid){
+ lock_vfs();
+ for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
+  if(vfs_objects[i].kind==VFS_CACHE_READER &&
+     vfs_objects[i].object_id==id && vfs_objects[i].busy){
+   if(valid && count<=UINT64_MAX-vfs_objects[i].token)
+    vfs_objects[i].token+=count;
+   vfs_objects[i].busy=0;
+   break;
+  }
+ unlock_vfs();
 }
 static uint32_t read32(const void *p){
  const unsigned char *b=p;
@@ -403,6 +441,29 @@ static uint32_t do_dir(const VfsObject *obj,uint32_t cmd,
  }
  return NX2_FS_UNSUPPORTED;
 }
+/* ISaveDataInfoReader::Read: command 0, an output array of
+ * 0x60-byte SaveDataInfo records, and an inline u64 read count.
+ * Only the current guest's SD-backed caches are enumerated. */
+static uint32_t do_cache_reader(const VfsObject *obj,uint32_t cmd,
+                                const HipcParsedRequest *rq,
+                                unsigned char out[64],uint32_t *out_size){
+ if(cmd!=0)return NX2_FS_UNSUPPORTED;
+ void *buf=0;uint64_t n=0;
+ if(!data_buffer(rq,1,&buf,&n)||n%NX2_CACHE_INFO_BYTES)
+  return NX2_INVALID;
+ uint64_t capacity=n/NX2_CACHE_INFO_BYTES;
+ if(capacity>256)capacity=256;
+ if(!capacity)return NX2_INVALID;
+ uint64_t cursor=0;
+ if(!cache_reader_begin(obj->object_id,&cursor))return NX2_INVALID;
+ uint64_t actual=0;
+ uint32_t rc=nx2_rpc(RPC_CACHE_ENUM,cursor,capacity,0,0,buf,0,0,&actual);
+ int valid=!rc&&actual<=capacity;
+ cache_reader_end(obj->object_id,actual,valid);
+ if(!valid)return rc?rc:NX2_INVALID;
+ memcpy(out,&actual,8);*out_size=8;
+ return 0;
+}
 /* A native SaveDataAttribute is exactly 0x40 bytes. Canonicalize the
  * resulting subdirectory once, for both explicit creation and opening.
  * This namespace never escapes the selected guest title's SD root. */
@@ -448,7 +509,7 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  VfsObject obj=find_object(session,d.object_id);
  if(!obj.kind&&d.close_kind==0&&
     (d.command!=22&&d.command!=23&&
-     d.command!=51&&d.command!=52&&d.command!=53))
+     d.command!=51&&d.command!=52&&d.command!=53&&d.command!=62))
   return 0;
  if(!obj.kind&&d.close_kind)return 0;
  if(size<64)return 0;
@@ -479,7 +540,12 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  uint32_t out_size=0;unsigned char out[64]={0};
  if(!obj.kind){
   char name[128]={0};
-  if(d.command==22||d.command==23){
+  if(d.command==62){
+   /* Cache-storage list must not be read under the MKW host identity. */
+   new_id=allocate_object(session,VFS_CACHE_READER,1,0,0);
+   rc=new_id?0:NX2_LIMIT;
+   fsp_stage(rc?6:4,d,rc,new_id);
+  }else if(d.command==22||d.command==23){
    /* IFileSystemProxy::CreateSaveDataFileSystem [22] and
     * CreateSaveDataFileSystemBySystemSaveDataId [23] carry a 0x40-byte
     * attribute followed by 0x40-byte creation metadata and a 0x10-byte
@@ -516,6 +582,8 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
    rc=do_file(&obj,d.command,in,avail,&rq,out,&out_size);
   else if(obj.kind==VFS_DIR)
    rc=do_dir(&obj,d.command,&rq,out,&out_size);
+  else if(obj.kind==VFS_CACHE_READER)
+   rc=do_cache_reader(&obj,d.command,&rq,out,&out_size);
  }
  if(!write_reply(buffer,size,1,rc,rc?0:new_id,
                  rc?0:out,rc?0:out_size,token)){
