@@ -384,6 +384,12 @@ static uint32_t queue_acquire_gate(void *queue,void *window,int *index){
 static uintptr_t getproc_gate(void *device,const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_getproc(device,name);
+ /* Opt-in raw NVN dispatch: bypass every device/queue/window/command
+  * wrapper. Keep PresentTexture observed as a minimal first-frame marker.
+  * NVN_INIT/STAGE counters are intentionally absent in this mode. */
+ if(result && nx2_launch->nvn_driver_passthrough &&
+    !equal(name,"nvnQueuePresentTexture"))
+  return result;
  if(result&&equal(name,"nvnQueueSubmitCommands")){
    __atomic_store_n(&nx2_launch->api.original_queue_submit,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_submit_gate;
