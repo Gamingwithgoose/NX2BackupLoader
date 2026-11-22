@@ -2,6 +2,12 @@
 #include "ipc_policy.h"
 static uint32_t word(const unsigned char *p){return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 static int name(const unsigned char *p){static const unsigned char s[8]={'f','s','p','-','s','r','v',0};for(unsigned i=0;i<8;i++)if(p[i]!=s[i])return 0;return 1;}
+/* A destroyed IPC session is no longer a valid service capability.
+ * HIPC Close usually reports ConnectionClosed (0xF601) even though it
+ * successfully destroys the server side. */
+int nx2_ipc_session_closed(Nx2IpcDecision d,uint32_t result){
+ return d.valid&&d.close_kind==2&&(result==0||result==0xF601U);
+}
 /* Decode the declared HIPC data area; bytes left over in a reused TLS buffer
  * must never affect service acquisition or the FSP allow-list. */
 Nx2IpcDecision nx2_ipc_decide(const void *buffer,uint64_t size,uint32_t kind){
