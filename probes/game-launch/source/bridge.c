@@ -202,7 +202,12 @@ static uint32_t timestamp(void *self,void *out,const void *p){
  char temp[NX2_PATH_MAX];const char *name=routed_path(self,p,temp);
  return name?nx2_rpc(RPC_SAVE_TIMESTAMP,0,0,0,0,out,name,0,0):NX2_INVALID;
 }
-static uint32_t fs_attribute(void *self,void *out){(void)self;if(!out)return NX2_INVALID;zero(out,192);unsigned char *p=out;p[0]=p[1]=1;uint32_t *w=(void *)(p+40);w[0]=w[1]=0x300;return 0;}
+/* Report real backing filesystem capabilities instead of fabricated limits. */
+static uint32_t fs_attribute(void *self,void *out){
+ (void)self;
+ if(!out)return NX2_INVALID;
+ return nx2_rpc(RPC_SAVE_ATTRIBUTE,0,0,0,0,out,0,0,0);
+}
 void nx2_bridge_init(Nx2Launch *l){
  nx2_launch=l;
  uintptr_t storage[]={0,l->api.storage_rtti,(uintptr_t)noop,(uintptr_t)noop,(uintptr_t)storage_read,(uintptr_t)storage_write,(uintptr_t)storage_flush,(uintptr_t)storage_resize,(uintptr_t)storage_size,(uintptr_t)storage_range};copy(l->storage_table,storage,sizeof(storage));l->storage.vtable=(uintptr_t)&l->storage_table[2];

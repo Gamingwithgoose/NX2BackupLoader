@@ -11,6 +11,7 @@
 _Static_assert(sizeof(FsDirectoryEntry) == 0x310, "SDK directory ABI mismatch");
 _Static_assert(sizeof(FsRangeInfo) == 0x40, "SDK range-info ABI mismatch");
 _Static_assert(sizeof(FsTimeStampRaw) == 0x20, "SDK timestamp ABI mismatch");
+_Static_assert(sizeof(FsFileSystemAttribute) == 0xC0, "SDK filesystem attribute ABI mismatch");
 static void logline(Nx2Host *h, const char *fmt, ...) {
   if (__atomic_fetch_add(&h->lines, 1, __ATOMIC_RELAXED) > 10000)
     return;
@@ -735,6 +736,10 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     if (!r->buffer || !nx2_save_path(p, sizeof(p), h->save_root, r->path))
       return NX2_INVALID;
     rc = fsFsGetFileTimeStampRaw(h->sd, p, r->buffer);
+    break;
+  case RPC_SAVE_ATTRIBUTE:
+    if(!r->buffer)return NX2_INVALID;
+    rc=fsFsGetFileSystemAttribute(h->sd,(FsFileSystemAttribute *)r->buffer);
     break;
   case RPC_COMMIT:
     for (unsigned i = 0; i < NX2_HOST_HANDLE_LIMIT; i++)

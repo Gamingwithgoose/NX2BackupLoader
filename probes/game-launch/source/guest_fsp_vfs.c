@@ -152,7 +152,7 @@ static int valid_memory(const void *ptr,uint64_t bytes,int writable){
 static int write_reply(void *buffer,uint64_t size,int domain,
                        uint32_t result,uint32_t object_id,
                        const void *out,uint32_t out_size,uint32_t token){
- if(out_size>64)return 0;
+ if(out_size>192)return 0;
  uint32_t count=domain&&object_id?1U:0U;
  uint32_t words=(16+(domain?16:0)+16+out_size+count*4+3)/4;
  uint32_t bytes=8+words*4;
@@ -324,7 +324,7 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
                       const unsigned char *in,uint64_t len,
                       const HipcParsedRequest *rq,
                       uint32_t session,uint32_t *new_id,
-                      unsigned char out[64],uint32_t *out_size){
+                      unsigned char out[192],uint32_t *out_size){
  char pa[NX2_PATH_MAX],pb[NX2_PATH_MAX];
  char a[NX2_PATH_MAX],b[NX2_PATH_MAX];
  int needs_path=cmd<=9||cmd==11||cmd==12||cmd==13||cmd==14;
@@ -373,6 +373,11 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
   case 14:
    rc=nx2_rpc(RPC_SAVE_TIMESTAMP,0,0,0,0,out,a,0,0);
    if(!rc)*out_size=32;
+   return rc;
+  case 16:
+   /* Query native SD backing filesystem; do not invent 0xc0-byte limits. */
+   rc=nx2_rpc(RPC_SAVE_ATTRIBUTE,0,0,0,0,out,0,0,0);
+   if(!rc)*out_size=192;
    return rc;
   default:return NX2_FS_UNSUPPORTED;
  }
@@ -591,7 +596,7 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  if(!obj.kind)
   fsp_stage(2,d,UINT32_MAX,0);
  uint32_t rc=NX2_FS_UNSUPPORTED,new_id=0;
- uint32_t out_size=0;unsigned char out[64]={0};
+ uint32_t out_size=0;unsigned char out[192]={0};
  if(!obj.kind){
   char name[128]={0};
   if(d.command==34){
