@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <switch.h>
 
 static uint32_t rd32(const unsigned char *p) {
   return (uint32_t)p[0] | (uint32_t)p[1]<<8 |
@@ -160,6 +161,10 @@ done:
  * offset rather than unpacking its siblings onto the SD card. */
 typedef struct {
   FILE *f;
+  /* Native FS handle avoids devoptab/stdio buffering for archive payload.
+   * Keep original FILE* for validated TOC and fallback compatibility. */
+  FsFile native_file;
+  uint32_t native_active;
   unsigned char *toc;
   size_t toc_size;
   uint64_t blob_start, file_length;
@@ -264,6 +269,7 @@ static uint32_t lookup_file(const char *path) {
   return UINT32_MAX;
 }
 void nx2_nup_close(void) {
+  if(mounted.native_active)fsFileClose(&mounted.native_file);
   if(mounted.f)fclose(mounted.f);
   free(mounted.toc);
   for(unsigned j=0;j<2;j++){
@@ -274,6 +280,7 @@ void nx2_nup_close(void) {
   memset(&mounted,0,sizeof(mounted));
 }
 int nx2_nup_active(void) {return mounted.f!=NULL;}
+int nx2_nup_native_fs_active(void) {return mounted.native_active!=0;}
 int nx2_nup_open(const char *path) {
   nx2_nup_close();
   probe_error="NUP mount not started";
@@ -367,6 +374,17 @@ int nx2_nup_open(const char *path) {
        (codec==0 && stored!=size))goto fail;
   }
   mounted=m;
+  /* Once the archive TOC and extents are verified, open the SAME SD file
+   * through the real Horizon filesystem interface. This is title-neutral
+   * and does not change the archive's contents or private save namespace.
+   * If the native open is unavailable, retain the previously working
+   * devoptab stdio read path rather than failing the entire launch. */
+  if(!strncmp(path,"sdmc:",5)){
+    FsFileSystem *sd=fsdevGetDeviceFileSystem("sdmc");
+    if(sd && R_SUCCEEDED(fsFsOpenFile(sd,path+5,FsOpenMode_Read,
+                                    &mounted.native_file)))
+      mounted.native_active=1;
+  }
   probe_error="NUP mounted successfully";
   return 1;
 fail:
@@ -439,18 +457,51 @@ void nx2_nup_get_progress(Nx2NupReadProgress *out){
  out->decoded_bytes=__atomic_load_n(&read_progress.decoded_bytes,__ATOMIC_RELAXED);
  out->delivered_bytes=__atomic_load_n(&read_progress.delivered_bytes,__ATOMIC_RELAXED);
 }
-/* Same real bytes as fread of the full request, but in 64 KiB SD calls.
- * A short native read is a failure, never a fabricated successful asset. */
-static int read_exact_chunks(FILE *f,void *dst,size_t length){
+static int nup_seek_file(FILE *f,uint64_t offset);
+/* The native FS service accepts absolute file offsets and returns an actual
+ * transferred count. Bypass stdio/devoptab for payload reads when possible.
+ * Fallback remains the original exact stdio bytes; neither path returns
+ * success for short data or missing bytes. */
+static int read_exact_chunks(FILE *f,uint64_t absolute,void *dst,size_t length){
  unsigned char *p=dst;
  size_t pos=0;
+ if(absolute>INT64_MAX || length>(uint64_t)INT64_MAX-absolute){
+  read_error="NUP absolute read offset exceeds signed filesystem range";
+  return 0;
+ }
+ if(!mounted.native_active && !nup_seek_file(f,absolute)){
+  read_error="NUP stdio seek failed";
+  return 0;
+ }
  progress_phase(2);
  while(pos<length){
   size_t want=length-pos;
   if(want>0x10000U)want=0x10000U;
-  size_t got=fread(p+pos,1,want,f);
+  size_t got=0;
+  if(mounted.native_active){
+   u64 transferred=0;
+   Result rc=fsFileRead(&mounted.native_file,(s64)(absolute+pos),
+                        p+pos,want,FsReadOption_None,&transferred);
+   if(R_FAILED(rc)){
+    snprintf(probe_details,sizeof(probe_details),
+             "Native NUP fsFileRead failed result=%08x offset=%llu",
+             (unsigned)rc,(unsigned long long)(absolute+pos));
+    read_error=probe_details;
+    return 0;
+   }
+   if(transferred>want){
+    read_error="Native NUP fsFileRead returned excessive byte count";
+    return 0;
+   }
+   got=(size_t)transferred;
+  }else got=fread(p+pos,1,want,f);
   if(got)__atomic_fetch_add(&read_progress.sd_bytes,(uint64_t)got,__ATOMIC_RELAXED);
-  if(got!=want)return 0;
+  if(got!=want){
+   read_error=mounted.native_active?
+     "Native NUP fsFileRead returned short data":
+     "NUP stdio fread returned short data";
+   return 0;
+  }
   pos+=got;
  }
  return 1;
@@ -538,8 +589,7 @@ static int read_large_compressed(const unsigned char *e,uint32_t file,
       size_t n=(size_t)(s->packed-s->consumed);
       if(n>128*1024)n=128*1024;
       if(s->consumed>UINT64_MAX-s->at ||
-         !nup_seek_file(mounted.f,s->at+s->consumed) ||
-         !read_exact_chunks(mounted.f,s->input,n)) {
+         !read_exact_chunks(mounted.f,s->at+s->consumed,s->input,n)) {
         read_error="Zstandard large-stream packed read failed";
         large_discard(s);
         return 0;
@@ -619,8 +669,8 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       mounted.cached_file[slot]=UINT32_MAX;
       mounted.cached_size[slot]=0;
       unsigned char *raw=malloc((size_t)packed),*out=malloc((size_t)total);
-      if(!raw||!out||!nup_seek_file(mounted.f,at)||
-         !read_exact_chunks(mounted.f,raw,(size_t)packed)) {
+      if(!raw||!out||
+         !read_exact_chunks(mounted.f,at,raw,(size_t)packed)) {
         free(raw);free(out);return 0;
       }
       progress_phase(3);
@@ -678,8 +728,7 @@ int nx2_nup_read(const char *path,uint64_t offset,void *dest,size_t length){
     /* Validate the absolute archive offset separately from virtual
      * extent bounds; an overflow must not alias another NUP entry. */
     int ok=at<=UINT64_MAX-offset &&
-           nup_seek_file(mounted.f,at+offset) &&
-           read_exact_chunks(mounted.f,dest,length);
+           read_exact_chunks(mounted.f,at+offset,dest,length);
     if(ok)__atomic_fetch_add(&read_progress.delivered_bytes,(uint64_t)length,__ATOMIC_RELAXED);
     read_error=ok?"OK":"Raw NUP seek/read failed";
     progress_done();
