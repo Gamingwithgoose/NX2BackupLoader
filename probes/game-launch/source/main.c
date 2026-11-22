@@ -1018,6 +1018,86 @@ done:
   free(host);
   free(images);
 }
+/* The native CodeFS preflight is intentionally read-only. It tests the
+ * actual HEN fsp-ldr root and a known-running host title before the selected
+ * guest. No game process is started; no Loader global identity is changed.
+ * This remains separate from legacy A and B+A and writes its own report. */
+static Result horizon_probe_codefs(FILE *report,Service *loader,
+                                   const char *role,u64 title){
+  const u8 stores[]={
+    NcmStorageId_BuiltInUser,NcmStorageId_SdCard,NcmStorageId_GameCard
+  };
+  Result last=0x2f5e02;
+  for(unsigned i=0;i<sizeof(stores)/sizeof(stores[0]);i++){
+    const struct {
+      u8 attributes,storage_id,padding[6];
+      u64 program_id;
+    } request={1,stores[i],{0},title};
+    unsigned char code_info[0x1a4]={0};
+    FsFileSystem codefs={0};
+    Result rc=serviceDispatchIn(loader,0,request,
+       .buffer_attrs={SfBufferAttr_HipcMapAlias|SfBufferAttr_Out},
+       .buffers={{code_info,sizeof(code_info)}},
+       .out_num_objects=1,.out_objects=&codefs.s);
+    row(report,"CODEFS role=%s title=%016llx storage=%u result=%08x\n",
+        role,(unsigned long long)title,(unsigned)stores[i],rc);
+    if(R_SUCCEEDED(rc)){
+      fsFsClose(&codefs);
+      return 0;
+    }
+    last=rc;
+  }
+  return last;
+}
+static void horizon_preflight(const Nx2Game *game){
+  FILE *report=fopen("sdmc:/BackupLoaderMKW-horizon.log","w");
+  if(!report){
+    snprintf(outcome,sizeof(outcome),"R+A: cannot open Horizon preflight log");
+    return;
+  }
+  row(report,"HORIZON_PREFLIGHT version=1 source=%s game=%s title=%016llx\n"
+      "MODE=read_only_codefs_probe NOT_A_GAME_LAUNCH=1\n",
+      game->is_nup?"nup":"folder",game->name,(unsigned long long)game->id);
+  u64 host=0;
+  Result rc=svcGetInfo(&host,InfoType_ProgramId,CUR_PROCESS_HANDLE,0);
+  row(report,"HOST_ID result=%08x title=%016llx\n",rc,(unsigned long long)host);
+  if(R_FAILED(rc))goto failed;
+  Service ro={0},hen={0};
+  rc=kaihenGetRoSession(&ro);
+  row(report,"RO_SESSION result=%08x\n",rc);
+  if(R_FAILED(rc))goto failed;
+  rc=kaihenOpenHomebrewSession(&ro,&hen);
+  row(report,"HEN_SESSION result=%08x\n",rc);
+  if(R_FAILED(rc))goto failed;
+  Handle loader_handle=INVALID_HANDLE;
+  rc=henGetLoaderRoot(&hen,&loader_handle);
+  row(report,"HEN_GET_FSP_LDR_ROOT result=%08x\n",rc);
+  serviceClose(&hen);
+  if(R_FAILED(rc))goto failed;
+  Service loader={0};
+  serviceCreate(&loader,loader_handle);
+  Result host_rc=horizon_probe_codefs(report,&loader,"host",host);
+  Result guest_rc=horizon_probe_codefs(report,&loader,"selected",game->id);
+  serviceClose(&loader);
+  row(report,"RESULT host_codefs=%08x selected_codefs=%08x\n",
+      host_rc,guest_rc);
+  if(R_FAILED(host_rc)){
+    snprintf(outcome,sizeof(outcome),
+      "R+A: Horizon CodeFS unavailable for host (%08x); see horizon.log",host_rc);
+  }else if(R_FAILED(guest_rc)){
+    snprintf(outcome,sizeof(outcome),
+      "R+A: host CodeFS works; selected title not available (%08x)",guest_rc);
+  }else{
+    snprintf(outcome,sizeof(outcome),
+      "R+A: selected title CodeFS available; native guest launch NOT implemented");
+  }
+  fclose(report);
+  return;
+failed:
+  row(report,"RESULT native_probe_unavailable=%08x\n",rc);
+  snprintf(outcome,sizeof(outcome),"R+A: Horizon probe unavailable (%08x)",rc);
+  fclose(report);
+}
 static void draw(const Nx2Catalog *catalog, size_t selected) {
   consoleClear();
   printf("BackupLoaderMKW 0.14\n\n");
@@ -1033,7 +1113,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
     else if (catalog->items[selected].updates)
       printf("This selection loads base; updates are not merged.\n");
   }
-  printf("\nUp/Down: select   A: launch   Hold B+A: rebuild index   X: refresh   +: exit\n\n%s\n",
+  printf("\nA: launch   Hold B+A: rebuild   Hold R+A: Horizon check\nX: refresh   +: exit\n\n%s\n",
          outcome);
   consoleUpdate(NULL);
 }
@@ -1076,7 +1156,9 @@ int main(int argc, char **argv) {
                           : (selected + 1) % catalog.count;
     if (catalog.count && (down & HidNpadButton_A)) {
       const Nx2Game *game=&catalog.items[selected];
-      if (game->is_nup == 2) {
+      if(held & HidNpadButton_R){
+        horizon_preflight(game);
+      }else if (game->is_nup == 2) {
         /* A catalog rejection is still a launch attempt. Give it the same
          * independent diagnostic file as every normal folder/NUP run. */
         FILE *rejected=fopen("sdmc:/BackupLoaderMKW-nup.log","w");
