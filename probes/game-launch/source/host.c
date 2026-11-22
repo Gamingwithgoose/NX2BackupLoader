@@ -655,17 +655,25 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       rc = fsFileRead(&f->file, r->b, r->buffer, r->c, 0, &read);
       r->answer = read;
     } else if (r->op == RPC_SAVE_WRITE) {
-      if (r->b > 0x40000000 || r->c > 0x40000000 - r->b)
-        return NX2_LIMIT;
-      rc = fsFileWrite(&f->file, r->b, r->buffer, r->c,
-                       (r->d & 1) ? FsWriteOption_Flush : FsWriteOption_None);
-      h->save_bytes += r->c;
+      /* Let the real SD filesystem enforce capacity and permissions.
+       * Validate signed ABI arithmetic, buffer presence, and options. */
+      if (!nx2_save_write_request_valid(r->b,r->c,r->d) ||
+          (r->c && !r->buffer))
+        return NX2_INVALID;
+      rc=fsFileWrite(&f->file,(s64)r->b,r->buffer,r->c,
+                     (r->d & 1) ? FsWriteOption_Flush : FsWriteOption_None);
+      if(R_SUCCEEDED(rc))h->save_bytes+=r->c;
+      else logline(h,"SAVE_WRITE_NATIVE_ERROR offset=%llu bytes=%llu result=%08x\n",
+                   (unsigned long long)r->b,
+                   (unsigned long long)r->c,rc);
     } else if (r->op == RPC_SAVE_FLUSH)
       rc = fsFileFlush(&f->file);
     else if (r->op == RPC_SAVE_RESIZE) {
-      if (r->b > 0x40000000)
-        return NX2_LIMIT;
-      rc = fsFileSetSize(&f->file, r->b);
+      if(!nx2_save_resize_request_valid(r->b))return NX2_INVALID;
+      rc=fsFileSetSize(&f->file,(s64)r->b);
+      if(R_FAILED(rc))
+        logline(h,"SAVE_RESIZE_NATIVE_ERROR size=%llu result=%08x\n",
+                (unsigned long long)r->b,rc);
     } else if (r->op == RPC_SAVE_SIZE) {
       s64 size = 0;
       rc = fsFileGetSize(&f->file, &size);

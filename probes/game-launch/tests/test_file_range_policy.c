@@ -36,7 +36,27 @@ int main(void){
  bad+=check(!nx2_save_create_request_valid(512,2),"reject unsupported flag");
  bad+=check(!nx2_save_create_request_valid(512,UINT64_MAX),
             "reject invalid flag bitfield");
- puts(bad?"Guest IFile and create policy: FAIL":
-          "Guest IFile and create policy: PASS");
+ bad+=check(nx2_save_write_request_valid(UINT64_C(0x40000001),4096,0),
+            "write above previous 1 GiB cap");
+ bad+=check(nx2_save_write_request_valid(UINT64_C(0x200000000),65536,1),
+            "8 GiB write with Flush option");
+ bad+=check(nx2_save_write_request_valid((uint64_t)INT64_MAX-1,1,0),
+            "largest signed write endpoint");
+ bad+=check(nx2_save_write_request_valid((uint64_t)INT64_MAX,0,0),
+            "zero-length write at max offset");
+ bad+=check(!nx2_save_write_request_valid((uint64_t)INT64_MAX,1,0),
+            "write endpoint overflow");
+ bad+=check(!nx2_save_write_request_valid((uint64_t)INT64_MAX+1,0,0),
+            "write offset beyond signed ABI");
+ bad+=check(!nx2_save_write_request_valid(16,10,2),
+            "reject invalid write option");
+ bad+=check(nx2_save_resize_request_valid(UINT64_C(0x200000000)),
+            "8 GiB file resize allowed by loader");
+ bad+=check(nx2_save_resize_request_valid((uint64_t)INT64_MAX),
+            "max signed file resize");
+ bad+=check(!nx2_save_resize_request_valid((uint64_t)INT64_MAX+1),
+            "reject resize beyond signed ABI");
+ puts(bad?"Guest IFile large-file policy: FAIL":
+          "Guest IFile large-file policy: PASS");
  return !!bad;
 }

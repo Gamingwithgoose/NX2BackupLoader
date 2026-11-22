@@ -16,3 +16,11 @@ int nx2_save_create_request_valid(uint64_t size,uint64_t flags){
   * its only supported option is the BigFile bit. */
  return size<=INT64_MAX && (flags & ~UINT64_C(1))==0;
 }
+
+int nx2_save_write_request_valid(uint64_t offset,uint64_t size,uint64_t options){
+ return offset<=INT64_MAX && size<=INT64_MAX-offset &&
+        (options & ~UINT64_C(1))==0;
+}
+int nx2_save_resize_request_valid(uint64_t size){
+ return size<=INT64_MAX;
+}
