@@ -309,7 +309,17 @@ static void trace_reply_handles(const unsigned char *p,uint64_t n,
              "IPC_RETURNED_HANDLE",owner,0);
  }
 }
-static void response_tags(const unsigned char *p,uint64_t n,uint32_t kind){if(n<12||!(word(p+4)&0x80000000))return;uint32_t s=word(p+8),copy=(s>>1)&15,move=(s>>5)&15;uint64_t off=12+((s&1)?8:0);if(off+4*(copy+move)>n)return;for(uint32_t i=0;i<copy+move;i++)set_tag(word(p+off+4*i),kind);}
+/* Only MOVED handles returned by an IPC method become child sessions.
+ * A COPY handle is not automatically a newly acquired service interface
+ * and must never inherit FSP/SM permissions on the basis of its neighbor. */
+static void response_tags(const unsigned char *p,uint64_t n,uint32_t kind){
+ if(!p||n<12||!(word(p+4)&0x80000000U))return;
+ uint32_t sh=word(p+8),copy=(sh>>1)&15U,move=(sh>>5)&15U;
+ uint64_t off=12U+((sh&1U)?8U:0U);
+ if(off>n||(uint64_t)(copy+move)*4U>n-off)return;
+ off+=(uint64_t)copy*4U;
+ for(uint32_t i=0;i<move;i++)set_tag(word(p+off+4U*i),kind);
+}
 /* Every guest SVC gets request and completion records, including untagged
  * services and virtual filesystem replies. Payloads and UID data are excluded.
  * Publication never blocks on SD logging or an RPC from the guest thread. */
@@ -493,8 +503,16 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
   * Release the associated local capability after the kernel processes them. */
  if(kind && d.close_kind==1 && !rc)
    domain_cap_forget_object(h,d.object_id);
- if(kind && d.close_kind==2 && (!rc||rc==0xF601))
+ /* HIPC type 2 destroys the remote session. A successful close or
+  * ConnectionClosed result invalidates its service identity even if the
+  * guest does not follow up with svcCloseHandle. Retaining stale tags
+  * allows a recycled handle to inherit an unrelated service's FSP rights.
+  * SSL close (0xF601) in the Minecraft hardware trace exercises this. */
+ if(d.close_kind==2 && (!rc||rc==0xF601)){
+   set_tag(h,0);
+   trace_forget(h);
    domain_cap_forget_handle(h);
+ }
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
  ipc_event_emit(call_id,2,h,kind,d,request_type,flags,hdr0,hdr1,
