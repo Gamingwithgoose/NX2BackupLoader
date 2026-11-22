@@ -508,7 +508,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
   * guest does not follow up with svcCloseHandle. Retaining stale tags
   * allows a recycled handle to inherit an unrelated service's FSP rights.
   * SSL close (0xF601) in the Minecraft hardware trace exercises this. */
- if(d.close_kind==2 && (!rc||rc==0xF601)){
+ if(nx2_ipc_session_closed(d,rc)){
    set_tag(h,0);
    trace_forget(h);
    domain_cap_forget_handle(h);
