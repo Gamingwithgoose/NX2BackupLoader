@@ -162,8 +162,42 @@ static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
       all->deferred[n].offset = original;
     }
   }
+  /* A shared branch is valid here because svcBreak is nonreturning. Each
+   * guest SVC #0x26 remains hooked, but only one 16-byte thunk is needed
+   * regardless of how many inline abort sites the game contains. This is
+   * independent of game ID, executable name, and archive format. */
+  unsigned break_sites=0;
+  uint32_t break_trampoline=0;
+  if (role != 0) {
+    for (uint32_t off=0; off+4<=m->file_size[0]; off+=4) {
+      unsigned char *site=m->guest+off;
+      uint32_t instruction=(uint32_t)site[0] |
+          ((uint32_t)site[1]<<8) | ((uint32_t)site[2]<<16) |
+          ((uint32_t)site[3]<<24);
+      if (instruction!=0xd40004c1U) continue;
+      if (!break_sites) {
+        break_trampoline=cursor;
+        if(!gate(f,m,&cursor,off,(uintptr_t)nx2_break,NULL,
+                 "Shared inline svcBreak"))
+          return 0;
+      } else if (!nx2_patch_shared_break(
+                     m->guest,m->file_size[0],m->address[1],
+                     off,break_trampoline)) {
+        row(f,"SHARED_BREAK_REFUSED module=%u site=%x trampoline=%x "
+              "reason=invalid_opcode_or_out_of_branch_range\n",
+            module,off,break_trampoline);
+        return 0;
+      }
+      break_sites++;
+    }
+  }
+  if (break_sites)
+    row(f,"SHARED_BREAK_READY module=%u sites=%u trampoline=%x "
+          "trampoline_bytes=16\n",
+        module,break_sites,break_trampoline);
   row(f, "THUNK_SPACE module=%u used=%u available=%u resolved_hooks=%u\n",
-      module, cursor - m->file_size[0], m->address[1] - m->file_size[0], count);
+      module, cursor - m->file_size[0], m->address[1] - m->file_size[0],
+      count+break_sites);
   return 1;
 }
 static int bind(FILE *f, Nx2Images *all, Nx2Launch *l) {

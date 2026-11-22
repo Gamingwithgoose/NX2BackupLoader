@@ -87,6 +87,28 @@ int main(void){
        "unsupported literal load rejected");
  check(cursor==base&&rd(text+at)==0x90055600,
        "failed relocation does not modify original entry");
+ /* Large guest modules can contain many inline nonreturning Break SVCs.
+  * Multiple call sites branch to the same bridge without modifying their
+  * adjacent instructions or allocating additional trampolines. */
+ unsigned char fixture[512]={0};
+ wr(fixture+0x40,0xd40004c1U);
+ wr(fixture+0x80,0xd40004c1U);
+ wr(fixture+0x84,0xd503201fU);
+ check(nx2_patch_shared_break(fixture,0x100,0x200,0x40,0x100),
+       "first inline Break shares trampoline");
+ check(nx2_patch_shared_break(fixture,0x100,0x200,0x80,0x100),
+       "second inline Break shares trampoline");
+ check(dest(0x40,rd(fixture+0x40))==0x100 &&
+       dest(0x80,rd(fixture+0x80))==0x100 &&
+       rd(fixture+0x84)==0xd503201fU,
+       "shared Break branches retain adjacent instructions");
+ check(!nx2_patch_shared_break(fixture,0x100,0x200,0x84,0x100),
+       "reject non-Break instruction");
+ wr(fixture+0x80,0xd40004c1U);
+ check(!nx2_patch_shared_break(fixture,0x100,0x200,0x80,0x80),
+       "reject trampoline inside original text");
+ check(!nx2_patch_shared_break(fixture,0x100,0x200,0x80,0x201),
+       "reject unaligned trampoline");
  free(text);
  puts(fail?"Patch branch relocation fixtures: FAIL":
            "Patch branch relocation fixtures: PASS");

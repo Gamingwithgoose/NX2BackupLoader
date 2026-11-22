@@ -261,3 +261,25 @@ int nx2_patch_gate(unsigned char *text,uint32_t original_size,uint32_t padded,
   patch_method="short_branch";
   return 1;
 }
+
+/* All inline SVC #0x26 sites can tail-branch to the same nonreturning gate.
+ * Unlike returning SVC wrappers, Break does not need a per-callsite return
+ * trampoline. This avoids exhausting the finite text alignment padding on
+ * large programs with many abort sites. The target trampoline is generated
+ * by nx2_patch_gate for the first such site. Refuse a branch that cannot be
+ * encoded instead of overwriting adjacent guest instructions. */
+int nx2_patch_shared_break(unsigned char *text, uint32_t text_size,
+                           uint32_t padded_size, uint32_t site,
+                           uint32_t trampoline) {
+  if (!text || (site & 3) || (trampoline & 15) ||
+      site > text_size || text_size-site < 4 ||
+      trampoline < text_size || trampoline > padded_size ||
+      padded_size-trampoline < 16 ||
+      word(text+site) != 0xd40004c1U)
+    return 0;
+  uint32_t ins=0;
+  if (!branch((int64_t)trampoline - site, &ins))
+    return 0;
+  put(text+site, ins);
+  return 1;
+}

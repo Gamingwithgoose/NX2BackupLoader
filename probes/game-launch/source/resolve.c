@@ -6,12 +6,23 @@ static uint32_t w(const unsigned char *p) {
   return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 |
          (uint32_t)p[3] << 24;
 }
-static int add(Nx2PatchSpec *out, unsigned *n, const Nx2PatchSpec *p) {
-  if (*n >= NX2_RESOLVED_MAX)
+static int add(Nx2PatchSpec *out, unsigned *n, const Nx2PatchSpec *p,
+               char error[160]) {
+  for (unsigned i = 0; i < *n; i++) {
+    if (out[i].offset != p->offset) continue;
+    if (out[i].gate == p->gate) return 1;
+    snprintf(error,160,"Conflicting hooks at %llx: %s versus %s",
+             (unsigned long long)p->offset,
+             out[i].label ? out[i].label : "unnamed",
+             p->label ? p->label : "unnamed");
     return 0;
-  for (unsigned i = 0; i < *n; i++)
-    if (out[i].offset == p->offset)
-      return out[i].gate == p->gate;
+  }
+  if (*n >= NX2_RESOLVED_MAX) {
+    snprintf(error,160,"Patch plan capacity exceeded: count=%u max=%u next=%s at %llx",
+             *n,(unsigned)NX2_RESOLVED_MAX,p->label ? p->label : "unnamed",
+             (unsigned long long)p->offset);
+    return 0;
+  }
   out[(*n)++] = *p;
   return 1;
 }
@@ -47,6 +58,12 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
       }
       continue;
     }
+    /* A nonreturning guest svcBreak can occur inline hundreds of times in
+     * one large NSO. The images loader patches ALL of them through one
+     * shared executable bridge. Skip their individual plan entries here:
+     * they otherwise exhaust the bounded relocation/trampoline budget.
+     * The rtld keeps its existing dedicated, verified Break wrapper. */
+    if (svc == 0x26 && role != 0) continue;
     Nx2PatchSpec p = *spec;
     p.offset = p.svc_offset = off;
     p.symbol = NULL;
@@ -65,20 +82,12 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
         return 0;
       }
       p.offset -= 4;
-    } else if (svc == 0x26) {
-      /* svcBreak does not resume guest execution. Different SDK/compiler
-       * versions may put it inside an abort body, with no RET directly after
-       * the SVC instruction. Patch ONLY the decoded SVC #0x26 instruction:
-       * the existing Break gate captures the real kernel break parameters
-       * and parks the faulting thread. Since it does not return, no wrapper
-       * epilogue or LR fixup is required. Other SVCs keep their strict
-       * wrapper checks and are not treated as inline-safe. */
     } else if (off + 8 > m->file_size[0] ||
                w(m->guest + off + 4) != 0xd65f03c0) {
       snprintf(error, 160, "Unsupported simple SVC wrapper %x at %x", svc, off);
       return 0;
     }
-    if (!add(out, count, &p))
+    if (!add(out, count, &p, error))
       return 0;
   }
   for (uint64_t i = 0; i < nx2_patch_spec_count; i++) {
@@ -102,7 +111,7 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
     Nx2PatchSpec q = *p;
     q.offset = (uint32_t)(address - (uintptr_t)m->guest);
     q.symbol = NULL;
-    if (!add(out, count, &q))
+    if (!add(out, count, &q, error))
       return 0;
   }
   if (role == 1) {
