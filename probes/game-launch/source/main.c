@@ -266,8 +266,8 @@ static int prepare_phase(FILE *f, const char *root, Nx2Images *images,
         (unsigned long long)heapGetTotalSize(),
         (unsigned long long)heapGetFreeSize());
     if (nx2_process_heap_status != NX2_HEAP_READY) {
-      row(f, "GAME_HEAP_UNAVAILABLE: startup reservation requires at least 1 "
-             "GiB host plus 4 GiB game memory and alignment.\n");
+      row(f, "GAME_HEAP_UNAVAILABLE: startup reservation requires at least 768 "
+             "MiB host plus 4 GiB game memory and alignment.\n");
       nx2_host_close(host);
       free((void *)(uintptr_t)l->arena_base);
       l->arena_base = 0;

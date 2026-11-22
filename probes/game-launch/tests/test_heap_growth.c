@@ -39,6 +39,12 @@ int main(void){
               "host allocator receives at least safe committed prefix");
  fails+=check(plan.game_bytes>=large_request,
               "large guest request fits reserved native heap span");
+ fails+=check(NX2_HOST_MIN_BYTES==UINT64_C(0x30000000) &&
+              plan.host_bytes>=NX2_HOST_MIN_BYTES &&
+              plan.host_bytes<NX2_HOST_MIN_BYTES+NX2_GAME_ALIGNMENT,
+              "768 MiB host prefix plus only alignment overhead");
+ fails+=check(plan.game_bytes>=UINT64_C(0x1fb800000),
+              "768 MiB host still permits 8120 MiB native guest span");
  const uint64_t retained=plan.game_begin-kernel_heap_base;
  fails+=check(retained<old_retained,
               "release genuine additional host heap pages");
@@ -87,6 +93,18 @@ int main(void){
  fails+=check(!nx2_guest_memory_budget(1,2,0,0,0,0,floor,
                  &reported_total,&reported_used),
               "invalid kernel accounting refused");
+ /* The 768 MiB host must not reintroduce Fast Fusion's pre-accounting
+  * 2 MiB overrequest. Both VM span and real physical headroom cap the
+  * reported free pages, even when the host retains an extra 256 MiB. */
+ const uint64_t physical_768=new_free-UINT64_C(0x10000000);
+ fails+=check(nx2_guest_memory_budget(non_total,non_used,physical_768,
+                 plan.host_bytes,plan.game_bytes,0,floor,
+                 &reported_total,&reported_used) &&
+              reported_total>=reported_used &&
+              reported_total-reported_used<=plan.game_bytes &&
+              reported_total-reported_used<=physical_768-floor &&
+              reported_total-reported_used<large_request,
+              "768 MiB host advertises only real allocatable guest heap");
  puts(fails?"Heap growth regression: FAIL":"Heap growth regression: PASS");
  return !!fails;
 }

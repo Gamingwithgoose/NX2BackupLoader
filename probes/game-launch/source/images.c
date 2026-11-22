@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "images.h"
+#include <switch2/memory/heap.h>
 #include "folder.h"
 #include "nso.h"
 #include "nup.h"
@@ -210,6 +211,13 @@ int nx2_images_load(FILE *f, const char *root, Nx2Images *all, Nx2Launch *l,
     row(f,"EXEFS_SOURCE module=%s type=%s found=%u bytes=%llu codec=%u\n",
         names[i],nx2_nup_active()?"nup":"folder",source_found,
         (unsigned long long)source_bytes,source_codec);
+    /* The native RO module mapping retains each prior image's backing
+     * pages. Read the allocator once before preparing the next NSO so a
+     * genuine capacity failure is distinct from bad NUP compression. */
+    row(f,"EXEFS_HOST_HEAP module=%s total=%llu free=%llu\n",
+        names[i],
+        (unsigned long long)heapGetTotalSize(),
+        (unsigned long long)heapGetFreeSize());
     int ok = nx2_prepare_nso(path, NULL, hash, &im->backing, &im->image,
                              &im->bss, error);
     row(f, "PREPARE %s status=%s\n", names[i], ok ? "OK" : error);
