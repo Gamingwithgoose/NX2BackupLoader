@@ -49,6 +49,33 @@ int main(void){
               "native cache reader open interface");
  fail+=expect(!nx2_ipc_fsp_allowed(d),
               "cache enumeration never forwarded to host title fsp-srv");
+ put32(p+40,27);
+ d=nx2_ipc_decide(p,sizeof(p),2);
+ fail+=expect(nx2_ipc_fsp_allowed(d),"native filesystem feature query");
+ put32(p+40,400);
+ d=nx2_ipc_decide(p,sizeof(p),2);
+ fail+=expect(nx2_ipc_fsp_allowed(d),"real device operator");
+ put32(p+40,500);
+ d=nx2_ipc_decide(p,sizeof(p),2);
+ fail+=expect(nx2_ipc_fsp_allowed(d),"real card notification event");
+ put32(p+40,19);
+ d=nx2_ipc_decide(p,sizeof(p),2);
+ fail+=expect(!nx2_ipc_fsp_allowed(d),"never format native SD");
+ put32(p+40,21);
+ d=nx2_ipc_decide(p,sizeof(p),2);
+ fail+=expect(!nx2_ipc_fsp_allowed(d),"never delete host title save");
+ put32(p+40,200);
+ d=nx2_ipc_decide(p,sizeof(p),2);
+ fail+=expect(!nx2_ipc_fsp_allowed(d),"never mount host title RomFS");
+ d.command=0;
+ fail+=expect(nx2_ipc_fsp_native_child_allowed(d,4),"native device status");
+ fail+=expect(nx2_ipc_fsp_native_child_allowed(d,5),"native event getter");
+ d.command=110;
+ fail+=expect(!nx2_ipc_fsp_native_child_allowed(d,4),"reject MMC erase");
+ d.command=201;
+ fail+=expect(!nx2_ipc_fsp_native_child_allowed(d,4),"reject card erase");
+ d.command=1;
+ fail+=expect(!nx2_ipc_fsp_native_child_allowed(d,5),"reject notifier mutation");
  put32(p+40,34);
  d=nx2_ipc_decide(p,sizeof(p),2);
  fail+=expect(d.valid&&d.domain&&d.object_id==0xc8&&d.command==34,

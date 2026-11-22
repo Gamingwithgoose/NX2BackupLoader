@@ -239,7 +239,8 @@ static unsigned domain_cap_clone_handle(uint32_t source,uint32_t clone){
  unsigned copied=0;
  trace_lock();
  for(unsigned i=0;i<512;i++){
-  if(domain_caps[i].handle!=source||domain_caps[i].kind!=3)continue;
+  if(domain_caps[i].handle!=source||
+    (domain_caps[i].kind!=3&&domain_caps[i].kind!=4&&domain_caps[i].kind!=5))continue;
   uint32_t object=domain_caps[i].object;
   unsigned free_slot=512,already=0;
   for(unsigned j=0;j<512;j++){
@@ -248,7 +249,7 @@ static unsigned domain_cap_clone_handle(uint32_t source,uint32_t clone){
    if(free_slot==512&&!domain_caps[j].handle)free_slot=j;
   }
   if(!already&&free_slot<512){
-   domain_caps[free_slot]=(Nx2DomainCapability){clone,object,3};
+   domain_caps[free_slot]=(Nx2DomainCapability){clone,object,domain_caps[i].kind};
    copied++;
   }
  }
@@ -403,10 +404,11 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  /* Apply service permissions to the target domain object, not just the
   * underlying session handle. Do not grant command 0 globally to FSP. */
  int reader_domain=(kind==2 && d.domain && domain_kind==3);
+ int native_domain=(kind==2 && d.domain && (domain_kind==4||domain_kind==5));
  int closing=d.valid && d.close_kind!=0;
  /* Route native FS-domain interfaces to this title's private SD backend.
   * No guest save objects are ever sent to the host title's fsp-srv. */
- if(kind==2 && !reader_domain &&
+ if(kind==2 && !reader_domain && !native_domain &&
     nx2_guest_fsp_route(p,n,h,kind,d)){
    uint32_t guest_rc=UINT32_MAX;
    (void)nx2_ipc_reply_result(p,n,request_type,&guest_rc);
@@ -422,6 +424,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            "FSP_IPC_CLOSE_FORWARDED",owner,0);
  if(kind==2 && !closing &&
     !(reader_domain?nx2_ipc_save_reader_allowed(d):
+      native_domain?nx2_ipc_fsp_native_child_allowed(d,domain_kind):
                     nx2_ipc_fsp_allowed(d))){
    nx2_rpc(RPC_LOG,((uint64_t)hdr0<<32)|hdr1,
            ((uint64_t)special<<32)|request_type,
@@ -449,7 +452,8 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
                   special,fail,UINT32_MAX,caller,trace_label);
    return fail;
  }
- if(kind==3&&!closing&&!nx2_ipc_save_reader_allowed(d)){
+ if(!closing && ((kind==3&&!nx2_ipc_save_reader_allowed(d)) ||
+    ((kind==4||kind==5)&&!nx2_ipc_fsp_native_child_allowed(d,kind)))){
    if(nx2_guest_fsp_unsupported(p,n,d)){
      ipc_event_emit(call_id,4,h,kind,d,request_type,flags,hdr0,hdr1,
                     special,0,NX2_FS_UNSUPPORTED,caller,trace_label);
@@ -464,11 +468,11 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  }
  /* HIPC Control 1 exports a domain object as a standalone handle.
   * Preserve its verified reader kind before native IPC overwrites TLS. */
- uint32_t copied_reader=0;
+ uint32_t copied_kind=0;
  if(kind==2&&control&&cmd==1){
   uint32_t copied_object=0;
   if(nx2_ipc_control_copy_domain_object(p,n,&copied_object))
-   copied_reader=domain_cap_kind(h,copied_object)==3;
+   copied_kind=domain_cap_kind(h,copied_object);
  }
  /* Avoid two synchronous host RPCs around every game IPC SVC.
   * Record the pre/post state in shared memory instead, including the
@@ -579,6 +583,14 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
     * Never classify a returned handle from that failed service request. */
    if(want_fsp && reply_decoded && !service_result)
      response_tags(p,scan,2);
+   else if(kind==2 && !control && !native_domain &&
+           (cmd==400||cmd==500||cmd==501||cmd==502||cmd==503) &&
+           reply_decoded && !service_result){
+     uint32_t child=0,child_kind=cmd==400?4:5;
+     if(d.domain && nx2_ipc_domain_response_first_object(p,n,&child))
+       domain_cap_set(h,child,child_kind);
+     else if(!d.domain)response_tags(p,scan,child_kind);
+   }
    else if(kind==2 && !control && cmd==62 &&
            reply_decoded && !service_result) {
      /* On a domain session the output object ID is NOT a new kernel
@@ -601,13 +613,13 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            reply_decoded&&!service_result){
      /* CopyFromCurrentDomain produces ONE moved reader handle.
       * Never retag unrelated copied handles as reader sessions. */
-     if(kind==2&&cmd==1&&copied_reader){
+     if(kind==2&&cmd==1&&copied_kind){
        /* A malformed/failed reader export must never be promoted to
         * a general-purpose fsp-srv session as a fallback. */
        if(reply_decoded&&!service_result){
          uint32_t reader=0;
          if(nx2_ipc_reply_first_moved_handle(p,scan,&reader))
-           set_tag(reader,3);
+           set_tag(reader,copied_kind);
        }
      }else response_tags(p,scan,kind);
      /* Session clones inherit only previously validated reader objects. */
@@ -696,8 +708,10 @@ uint32_t nx2_async(uint32_t *out,void *p,uint64_t n,uint32_t h){
  uintptr_t caller=(uintptr_t)__builtin_return_address(0);
  ipc_event_emit(call_id,1,h,kind,d,type,0x40U,hdr0,hdr1,special,
                 UINT32_MAX,UINT32_MAX,caller,owner);
- if(kind){
-  /* A tagged service cannot be passed to raw native async IPC without
+ if(kind==1||kind==2||kind==3||kind==4||kind==5){
+  /* SM and FSP need checked response routing; other native services
+   * use the real asynchronous kernel request and completion event.
+   * A tagged service cannot be passed to raw native async IPC without
    * first applying the same per-guest FSP routing/SM permissions as sync.
    * Execute the complete checked request on the caller thread and return
    * an already signaled kernel event as the async completion handle.

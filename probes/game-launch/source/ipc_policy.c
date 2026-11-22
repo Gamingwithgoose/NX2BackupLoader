@@ -58,9 +58,31 @@ Nx2IpcDecision nx2_ipc_decide(const void *buffer,uint64_t size,uint32_t kind){
  * known save child object. No title IDs, names or ROM formats are checked.
  * The underlying service returns its actual CMIF status and permissions. */
 int nx2_ipc_fsp_allowed(Nx2IpcDecision d){
- return d.valid&&((d.control&&d.command<=4)||
-                  (!d.control&&(d.command==1||d.command==180||
-                                 d.command==1005)));
+ if(!d.valid)return 0;
+ if(d.control)return d.command<=4;
+ if(d.close_kind)return 1;
+ /* Only non-mutating system-state operations or real device/notifier
+  * interface constructors are safe under the launcher's native PID. */
+ switch(d.command){
+ case 1: case 27: case 29: case 180: case 400:
+ case 500: case 501: case 502: case 503: case 1005:return 1;
+ default:return 0;
+ }
+}
+int nx2_ipc_fsp_native_child_allowed(Nx2IpcDecision d,uint32_t kind){
+ if(!d.valid||(kind!=4&&kind!=5))return 0;
+ if(d.control)return d.command<=4;
+ if(d.close_kind)return 1;
+ if(kind==5)return d.command==0; /* Native notifier kernel event */
+ switch(d.command){
+ case 0: case 1: case 2: case 3: case 4: case 5: case 6:
+ case 100: case 101: case 111: case 112: case 114:
+ case 200: case 202: case 203: case 205: case 206:
+ case 207: case 208: case 211: case 212: case 214:
+ case 216: case 217: case 218: case 220: case 221:
+ case 222: case 224: case 226: case 301: case 402:return 1;
+ default:return 0;
+ }
 }
 /* ISaveDataInfoReader supports a read-only enumeration call at command 0.
  * Reject other calls on this interface instead of giving it proxy access. */
