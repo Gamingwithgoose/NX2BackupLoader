@@ -416,11 +416,14 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
                     special,0,NX2_FS_UNSUPPORTED,caller,trace_label);
      return 0;
    }
+   /* An unsupported HIPC control or malformed CMIF cannot safely
+    * receive a fabricated reply. Return a genuine kernel-level error
+    * to the guest instead of permanently parking its thread here.
+    * The game/SDK may handle that error; no host FSP access is granted. */
+   uint32_t fail=has?NX2_FS_UNSUPPORTED:NX2_INVALID;
    ipc_event_emit(call_id,5,h,kind,d,request_type,flags,hdr0,hdr1,
-                  special,NX2_INVALID,UINT32_MAX,caller,trace_label);
-   nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
-           "Malformed or unroutable native FSP request",0,0);
-   for(;;)__asm__ volatile("wfe");
+                  special,fail,UINT32_MAX,caller,trace_label);
+   return fail;
  }
  if(kind==3&&!closing&&!nx2_ipc_save_reader_allowed(d)){
    if(nx2_guest_fsp_unsupported(p,n,d)){
@@ -428,11 +431,12 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
                     special,0,NX2_FS_UNSUPPORTED,caller,trace_label);
      return 0;
    }
+   /* Keep the read-only iterator isolated from host saves. A bad
+    * command is a recoverable guest-visible error, not a loader hang. */
+   uint32_t fail=has?NX2_FS_UNSUPPORTED:NX2_INVALID;
    ipc_event_emit(call_id,5,h,kind,d,request_type,flags,hdr0,hdr1,
-                  special,NX2_INVALID,UINT32_MAX,caller,trace_label);
-   nx2_rpc(RPC_ABORT,h,cmd,has,control,0,
-           "Malformed read-only FSP iterator request",0,0);
-   for(;;)__asm__ volatile("wfe");
+                  special,fail,UINT32_MAX,caller,trace_label);
+   return fail;
  }
  /* HIPC Control 1 exports a domain object as a standalone handle.
   * Preserve its verified reader kind before native IPC overwrites TLS. */
