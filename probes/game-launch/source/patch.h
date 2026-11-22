@@ -12,3 +12,9 @@ const char *nx2_patch_method(void);
 int nx2_patch_shared_break(unsigned char *text, uint32_t text_size,
                            uint32_t padded_size, uint32_t site,
                            uint32_t trampoline);
+
+/* Same safe 4-byte patch as the shared Break gate, but for direct
+ * nonreturning SVC #7 (ExitProcess) within any guest NSO. */
+int nx2_patch_shared_exit(unsigned char *text,uint32_t text_size,
+                          uint32_t padded_size,uint32_t site,
+                          uint32_t trampoline);

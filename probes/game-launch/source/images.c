@@ -210,9 +210,38 @@ static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
     row(f,"SHARED_BREAK_READY module=%u sites=%u trampoline=%x "
           "trampoline_bytes=16\n",
         module,break_sites,break_trampoline);
+  /* The usual SDK ExitProcess wrapper has already been patched above.
+   * Catch any remaining direct inline SVC #7 in rtld, main, subsdks, or
+   * SDK modules. One 16-byte per-module thunk handles every callsite.
+   * A guest must never silently kill the entire host kernel process. */
+  unsigned exit_sites=0;
+  uint32_t exit_trampoline=0;
+  for(uint32_t off=0;off+4<=m->file_size[0];off+=4){
+    unsigned char *site=m->guest+off;
+    uint32_t ins=(uint32_t)site[0]|((uint32_t)site[1]<<8)|
+                 ((uint32_t)site[2]<<16)|((uint32_t)site[3]<<24);
+    if(ins!=0xd40000e1U)continue;
+    if(!exit_sites){
+      exit_trampoline=cursor;
+      if(!gate(f,m,&cursor,off,(uintptr_t)nx2_exit_gate,NULL,
+               "Shared inline svcExitProcess"))goto fail;
+    }else if(!nx2_patch_shared_exit(
+                 m->guest,m->file_size[0],m->address[1],
+                 off,exit_trampoline)){
+      row(f,"SHARED_EXIT_REFUSED module=%u site=%x trampoline=%x "
+            "reason=invalid_opcode_or_out_of_branch_range\n",
+          module,off,exit_trampoline);
+      goto fail;
+    }
+    exit_sites++;
+  }
+  if(exit_sites)
+    row(f,"SHARED_EXIT_READY module=%u sites=%u trampoline=%x "
+          "trampoline_bytes=16\n",
+        module,exit_sites,exit_trampoline);
   row(f,"THUNK_SPACE module=%u used=%u available=%u resolved_hooks=%u\n",
       module,cursor-m->file_size[0],m->address[1]-m->file_size[0],
-      count+break_sites);
+      count+break_sites+exit_sites);
   free(plan);
   return 1;
 fail:

@@ -66,6 +66,12 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
      * they otherwise exhaust the bounded relocation/trampoline budget.
      * The rtld keeps its existing dedicated, verified Break wrapper. */
     if (svc == 0x26 && role != 0) continue;
+    /* A normal SVC #7; RET wrapper stays on the proven resolver path.
+     * Any other inline nonreturning ExitProcess belongs to the shared
+     * per-module exit guard below, not an unsafe simple-wrapper hook. */
+    if (svc == 7 && role != 0 &&
+        (off + 8 > m->file_size[0] ||
+         w(m->guest + off + 4) != 0xd65f03c0U)) continue;
     Nx2PatchSpec p = *spec;
     p.offset = p.svc_offset = off;
     p.symbol = NULL;

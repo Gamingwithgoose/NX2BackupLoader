@@ -109,6 +109,33 @@ int main(void){
        "reject trampoline inside original text");
  check(!nx2_patch_shared_break(fixture,0x100,0x200,0x80,0x201),
        "reject unaligned trampoline");
+ /* Separate guest direct ExitProcess calls must be contained without
+  * executing the host process's native SVC. First one establishes the
+  * island and the others share it with a one-instruction branch. */
+ unsigned char exits[512]={0};
+ wr(exits+0x30,0xd40000e1U);
+ wr(exits+0x34,0xd503201fU);
+ wr(exits+0x70,0xd40000e1U);
+ wr(exits+0x74,0xd503201fU);
+ cursor=0x100;
+ check(nx2_patch_gate(exits,0x100,0x200,&cursor,0x30,gate,0,NULL),
+       "first ExitProcess redirected to nonreturning gate");
+ check(cursor==0x110 && dest(0x30,rd(exits+0x30))==0x100,
+       "first exit uses exactly one 16-byte trampoline");
+ check(nx2_patch_shared_exit(exits,0x100,0x200,0x70,0x100),
+       "second ExitProcess redirected to shared gate");
+ check(dest(0x70,rd(exits+0x70))==0x100 &&
+       rd(exits+0x34)==0xd503201fU &&
+       rd(exits+0x74)==0xd503201fU,
+       "exit branches preserve neighbor instructions");
+ check(!nx2_patch_shared_exit(exits,0x100,0x200,0x34,0x100),
+       "do not rewrite non-ExitProcess instruction");
+ wr(exits+0x70,0xd40004c1U);
+ check(!nx2_patch_shared_exit(exits,0x100,0x200,0x70,0x100),
+       "do not treat svcBreak as svcExitProcess");
+ wr(exits+0x70,0xd40000e1U);
+ check(!nx2_patch_shared_exit(exits,0x100,0x200,0x70,0x201),
+       "reject unreachable or invalid exit trampoline");
  free(text);
  puts(fail?"Patch branch relocation fixtures: FAIL":
            "Patch branch relocation fixtures: PASS");
