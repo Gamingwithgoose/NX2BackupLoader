@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stddef.h>
-#define VFS_MAX_OBJECTS 96
+#define VFS_MAX_OBJECTS 512
 #define VFS_FS 1
 #define VFS_FILE 2
 #define VFS_DIR 3
