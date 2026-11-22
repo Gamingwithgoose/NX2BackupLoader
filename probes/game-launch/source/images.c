@@ -125,80 +125,99 @@ static int gate(FILE *f, Nx2Module *m, uint32_t *cursor, uint32_t offset,
 }
 static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
                       unsigned role, int game, const Nx2Launch *launch) {
-  if (!game)
-    return 0;
+  if (!game) return 0;
   (void)launch;
-  Nx2PatchSpec plan[NX2_RESOLVED_MAX];
-  unsigned count = 0;
-  char error[160];
-  if (!nx2_resolve_plan(m, role, plan, &count, error)) {
-    row(f, "RESOLVE_REFUSED module=%u reason=%s\n", module, error);
+  /* Every hook consumes >=16 bytes of real executable padding. Size the
+   * plan from what the mapped NSO actually provides, rather than an
+   * arbitrary 128-entry launcher limit. The patcher performs stricter
+   * per-hook checks (32-byte originals, veneers, branch range, etc.). */
+  uint64_t aligned=(((uint64_t)m->file_size[0])+15ULL)&~15ULL;
+  if(aligned>m->address[1]){
+    row(f,"RESOLVE_REFUSED module=%u reason=invalid_executable_padding\n",module);
     return 0;
   }
-  uint32_t cursor = (m->file_size[0] + 15) & ~15U;
-  for (unsigned i = 0; i < count; i++) {
-    Nx2PatchSpec *p = &plan[i];
-    /* Service compatibility is selected by resolved SDK symbol,
-     * not by title ID, game name, container format or known title list. */
-    uintptr_t original = 0;
-    int preserve = p->original_field != UINT64_MAX;
-    if (!gate(f, m, &cursor, (uint32_t)p->offset, p->gate,
-              preserve ? &original : 0, p->label)) {
-      /* This one experimental compatibility hook must never turn a
-       * previously launchable title into a preflight rejection if its SDK
-       * entry point is not safely patchable. Keep the original path. */
-      if (p->gate == (uintptr_t)nx2_ro_initialize_compat) {
-        row(f, "RO_INIT_COMPAT_SKIPPED unsafe_or_unpatchable_prologue=1\n");
+  size_t capacity=((size_t)m->address[1]-(size_t)aligned)/16U;
+  if(capacity>SIZE_MAX/sizeof(Nx2PatchSpec)){
+    row(f,"RESOLVE_REFUSED module=%u reason=plan_capacity_overflow\n",module);
+    return 0;
+  }
+  Nx2PatchSpec *plan=calloc(capacity?capacity:1U,sizeof(*plan));
+  if(!plan){
+    row(f,"RESOLVE_REFUSED module=%u reason=host_plan_allocation_failed slots=%llu\n",
+        module,(unsigned long long)capacity);
+    return 0;
+  }
+  row(f,"PATCH_PLAN_CAPACITY module=%u slots=%llu source=executable_padding\n",
+      module,(unsigned long long)capacity);
+  unsigned count=0;
+  char error[160];
+  if(!nx2_resolve_plan(m,role,plan,capacity,&count,error)){
+    row(f,"RESOLVE_REFUSED module=%u reason=%s\n",module,error);
+    goto fail;
+  }
+  uint32_t cursor=(uint32_t)aligned;
+  for(unsigned i=0;i<count;i++){
+    Nx2PatchSpec *p=&plan[i];
+    uintptr_t original=0;
+    int preserve=p->original_field!=UINT64_MAX;
+    if(!gate(f,m,&cursor,(uint32_t)p->offset,p->gate,
+             preserve?&original:0,p->label)){
+      /* Preserve existing compatibility for this optional RO hook. */
+      if(p->gate==(uintptr_t)nx2_ro_initialize_compat){
+        row(f,"RO_INIT_COMPAT_SKIPPED unsafe_or_unpatchable_prologue=1\n");
         continue;
       }
-      return 0;
+      goto fail;
     }
-    if (preserve) {
-      if (all->deferred_count >= 16)
-        return 0;
-      unsigned n = all->deferred_count++;
-      all->deferred[n].field = p->original_field;
-      all->deferred[n].module = module;
-      all->deferred[n].offset = original;
+    if(preserve){
+      if(all->deferred_count>=16){
+        row(f,"RESOLVE_REFUSED module=%u reason=original_callsite_bookkeeping_full\n",
+            module);
+        goto fail;
+      }
+      unsigned n=all->deferred_count++;
+      all->deferred[n].field=p->original_field;
+      all->deferred[n].module=module;
+      all->deferred[n].offset=original;
     }
   }
-  /* A shared branch is valid here because svcBreak is nonreturning. Each
-   * guest SVC #0x26 remains hooked, but only one 16-byte thunk is needed
-   * regardless of how many inline abort sites the game contains. This is
-   * independent of game ID, executable name, and archive format. */
+  /* A single shared gate handles all nonreturning SVC Break callsites.
+   * This remains independent of the hook plan's own variable capacity. */
   unsigned break_sites=0;
   uint32_t break_trampoline=0;
-  if (role != 0) {
-    for (uint32_t off=0; off+4<=m->file_size[0]; off+=4) {
+  if(role!=0){
+    for(uint32_t off=0;off+4<=m->file_size[0];off+=4){
       unsigned char *site=m->guest+off;
-      uint32_t instruction=(uint32_t)site[0] |
-          ((uint32_t)site[1]<<8) | ((uint32_t)site[2]<<16) |
-          ((uint32_t)site[3]<<24);
-      if (instruction!=0xd40004c1U) continue;
-      if (!break_sites) {
+      uint32_t ins=(uint32_t)site[0]|((uint32_t)site[1]<<8)|
+                   ((uint32_t)site[2]<<16)|((uint32_t)site[3]<<24);
+      if(ins!=0xd40004c1U)continue;
+      if(!break_sites){
         break_trampoline=cursor;
         if(!gate(f,m,&cursor,off,(uintptr_t)nx2_break,NULL,
-                 "Shared inline svcBreak"))
-          return 0;
-      } else if (!nx2_patch_shared_break(
-                     m->guest,m->file_size[0],m->address[1],
-                     off,break_trampoline)) {
+                 "Shared inline svcBreak"))goto fail;
+      }else if(!nx2_patch_shared_break(
+                   m->guest,m->file_size[0],m->address[1],
+                   off,break_trampoline)){
         row(f,"SHARED_BREAK_REFUSED module=%u site=%x trampoline=%x "
               "reason=invalid_opcode_or_out_of_branch_range\n",
             module,off,break_trampoline);
-        return 0;
+        goto fail;
       }
       break_sites++;
     }
   }
-  if (break_sites)
+  if(break_sites)
     row(f,"SHARED_BREAK_READY module=%u sites=%u trampoline=%x "
           "trampoline_bytes=16\n",
         module,break_sites,break_trampoline);
-  row(f, "THUNK_SPACE module=%u used=%u available=%u resolved_hooks=%u\n",
-      module, cursor - m->file_size[0], m->address[1] - m->file_size[0],
+  row(f,"THUNK_SPACE module=%u used=%u available=%u resolved_hooks=%u\n",
+      module,cursor-m->file_size[0],m->address[1]-m->file_size[0],
       count+break_sites);
+  free(plan);
   return 1;
+fail:
+  free(plan);
+  return 0;
 }
 static int bind(FILE *f, Nx2Images *all, Nx2Launch *l) {
   Nx2Module *sdk=&all->modules[all->count-1];

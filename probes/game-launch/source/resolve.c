@@ -6,8 +6,8 @@ static uint32_t w(const unsigned char *p) {
   return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 |
          (uint32_t)p[3] << 24;
 }
-static int add(Nx2PatchSpec *out, unsigned *n, const Nx2PatchSpec *p,
-               char error[160]) {
+static int add(Nx2PatchSpec *out, unsigned *n, size_t capacity,
+               const Nx2PatchSpec *p, char error[160]) {
   for (unsigned i = 0; i < *n; i++) {
     if (out[i].offset != p->offset) continue;
     if (out[i].gate == p->gate) return 1;
@@ -17,9 +17,11 @@ static int add(Nx2PatchSpec *out, unsigned *n, const Nx2PatchSpec *p,
              p->label ? p->label : "unnamed");
     return 0;
   }
-  if (*n >= NX2_RESOLVED_MAX) {
-    snprintf(error,160,"Patch plan capacity exceeded: count=%u max=%u next=%s at %llx",
-             *n,(unsigned)NX2_RESOLVED_MAX,p->label ? p->label : "unnamed",
+  if ((size_t)*n >= capacity) {
+    snprintf(error,160,
+             "Executable trampoline slots exhausted: count=%u available=%llu next=%s at %llx",
+             *n,(unsigned long long)capacity,
+             p->label ? p->label : "unnamed",
              (unsigned long long)p->offset);
     return 0;
   }
@@ -28,7 +30,7 @@ static int add(Nx2PatchSpec *out, unsigned *n, const Nx2PatchSpec *p,
 }
 /* role 0=rtld, 1=main, 2=SDK, 3=other. No title IDs, hashes or code offsets. */
 int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
-                     unsigned *count, char error[160]) {
+                     size_t capacity, unsigned *count, char error[160]) {
   *count = 0;
   error[0] = 0;
   for (uint32_t off = 0; off + 4 <= m->file_size[0]; off += 4) {
@@ -87,7 +89,7 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
       snprintf(error, 160, "Unsupported simple SVC wrapper %x at %x", svc, off);
       return 0;
     }
-    if (!add(out, count, &p, error))
+    if (!add(out, count, capacity, &p, error))
       return 0;
   }
   for (uint64_t i = 0; i < nx2_patch_spec_count; i++) {
@@ -111,7 +113,7 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
     Nx2PatchSpec q = *p;
     q.offset = (uint32_t)(address - (uintptr_t)m->guest);
     q.symbol = NULL;
-    if (!add(out, count, &q, error))
+    if (!add(out, count, capacity, &q, error))
       return 0;
   }
   if (role == 1) {
