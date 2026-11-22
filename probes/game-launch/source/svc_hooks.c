@@ -240,7 +240,7 @@ static unsigned domain_cap_clone_handle(uint32_t source,uint32_t clone){
  trace_lock();
  for(unsigned i=0;i<512;i++){
   if(domain_caps[i].handle!=source||
-    (domain_caps[i].kind!=3&&domain_caps[i].kind!=4&&domain_caps[i].kind!=5))continue;
+    (domain_caps[i].kind!=3&&domain_caps[i].kind!=4&&domain_caps[i].kind!=5&&domain_caps[i].kind!=6))continue;
   uint32_t object=domain_caps[i].object;
   unsigned free_slot=512,already=0;
   for(unsigned j=0;j<512;j++){
@@ -404,7 +404,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  /* Apply service permissions to the target domain object, not just the
   * underlying session handle. Do not grant command 0 globally to FSP. */
  int reader_domain=(kind==2 && d.domain && domain_kind==3);
- int native_domain=(kind==2 && d.domain && (domain_kind==4||domain_kind==5));
+ int native_domain=(kind==2 && d.domain && (domain_kind==4||domain_kind==5||domain_kind==6));
  int closing=d.valid && d.close_kind!=0;
  /* Route native FS-domain interfaces to this title's private SD backend.
   * No guest save objects are ever sent to the host title's fsp-srv. */
@@ -453,7 +453,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    return fail;
  }
  if(!closing && ((kind==3&&!nx2_ipc_save_reader_allowed(d)) ||
-    ((kind==4||kind==5)&&!nx2_ipc_fsp_native_child_allowed(d,kind)))){
+    ((kind==4||kind==5||kind==6)&&!nx2_ipc_fsp_native_child_allowed(d,kind)))){
    if(nx2_guest_fsp_unsupported(p,n,d)){
      ipc_event_emit(call_id,4,h,kind,d,request_type,flags,hdr0,hdr1,
                     special,0,NX2_FS_UNSUPPORTED,caller,trace_label);
@@ -521,23 +521,6 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
   * every tagged guest IPC synchronously waited for a storage-worker RPC
   * solely to print IPC_BEGIN. That extra guest/SD dependency is unnecessary
   * and can postpone service initialization or graphics work. */
- /* ldr:ro command 4 consumes a copied process handle. The HIPC
-  * kernel marshaler resolves CUR_PROCESS_HANDLE to the real caller process
-  * when copying a special-header handle. No DuplicateHandle SVC exists in
-  * this libounce ABI; never close the pseudo handle. This still invokes
-  * the real RO service and preserves its result (including errors). */
- if(kind==0 && !external && has && !control && !d.domain &&
-    cmd==4 && request_type==6 && n>=24 && special==3 &&
-    (hdr1&0x80000000U) &&
-    owner[0]=='l' && owner[1]=='d' && owner[2]=='r' &&
-    owner[3]==':' && owner[4]=='r' && owner[5]=='o' && !owner[6]){
-   const uint32_t process=(uint32_t)CUR_PROCESS_HANDLE;
-   /* HIPC special header +8, PID descriptor +12, copy handle +20. */
-   p[20]=(unsigned char)process;
-   p[21]=(unsigned char)(process>>8);
-   p[22]=(unsigned char)(process>>16);
-   p[23]=(unsigned char)(process>>24);
- }
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
  if(crumb){
    crumb->result=rc;
@@ -584,9 +567,9 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    if(want_fsp && reply_decoded && !service_result)
      response_tags(p,scan,2);
    else if(kind==2 && !control && !native_domain &&
-           (cmd==400||cmd==500||cmd==501||cmd==502||cmd==503) &&
+           (cmd==201||cmd==202||cmd==400||cmd==500||cmd==501||cmd==502||cmd==503) &&
            reply_decoded && !service_result){
-     uint32_t child=0,child_kind=cmd==400?4:5;
+     uint32_t child=0,child_kind=(cmd==201||cmd==202)?6:(cmd==400?4:5);
      if(d.domain && nx2_ipc_domain_response_first_object(p,n,&child))
        domain_cap_set(h,child,child_kind);
      else if(!d.domain)response_tags(p,scan,child_kind);
@@ -708,7 +691,7 @@ uint32_t nx2_async(uint32_t *out,void *p,uint64_t n,uint32_t h){
  uintptr_t caller=(uintptr_t)__builtin_return_address(0);
  ipc_event_emit(call_id,1,h,kind,d,type,0x40U,hdr0,hdr1,special,
                 UINT32_MAX,UINT32_MAX,caller,owner);
- if(kind==1||kind==2||kind==3||kind==4||kind==5){
+ if(kind==1||kind==2||kind==3){
   /* SM and FSP need checked response routing; other native services
    * use the real asynchronous kernel request and completion event.
    * A tagged service cannot be passed to raw native async IPC without
@@ -744,6 +727,14 @@ uint32_t nx2_async(uint32_t *out,void *p,uint64_t n,uint32_t h){
   ipc_event_emit(call_id,2,h,kind,d,type,0x40U,hdr0,hdr1,special,
                  0,UINT32_MAX,caller,owner);
   return 0;
+ }
+ /* The real native child service is allowed to determine completion.
+  * Enforce read-only child capability BEFORE native asynchronous IPC. */
+ if((kind==4||kind==5||kind==6) &&
+    !nx2_ipc_fsp_native_child_allowed(d,kind)){
+   ipc_event_emit(call_id,4,h,kind,d,type,0x40U,hdr0,hdr1,special,
+                  NX2_FS_UNSUPPORTED,UINT32_MAX,caller,owner);
+   return NX2_FS_UNSUPPORTED;
  }
  uint32_t rc=nx2_raw_async(out,p,n,h);
  ipc_event_emit(call_id,2,h,kind,d,type,0x40U,hdr0,hdr1,special,

@@ -64,16 +64,18 @@ int nx2_ipc_fsp_allowed(Nx2IpcDecision d){
  /* Only non-mutating system-state operations or real device/notifier
   * interface constructors are safe under the launcher's native PID. */
  switch(d.command){
- case 1: case 27: case 29: case 180: case 400:
+ case 1: case 13: case 26: case 27: case 29: case 180:
+ case 201: case 202: case 400:
  case 500: case 501: case 502: case 503: case 1005:return 1;
  default:return 0;
  }
 }
 int nx2_ipc_fsp_native_child_allowed(Nx2IpcDecision d,uint32_t kind){
- if(!d.valid||(kind!=4&&kind!=5))return 0;
+ if(!d.valid||(kind!=4&&kind!=5&&kind!=6))return 0;
  if(d.control)return d.command<=4;
  if(d.close_kind)return 1;
  if(kind==5)return d.command==0; /* Native notifier kernel event */
+ if(kind==6)return d.command==0||d.command==4; /* IStorage Read/GetSize */
  switch(d.command){
  case 0: case 1: case 2: case 3: case 4: case 5: case 6:
  case 100: case 101: case 111: case 112: case 114:
