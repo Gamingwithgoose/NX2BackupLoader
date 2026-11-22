@@ -18,3 +18,6 @@ typedef struct {
 uint32_t nx2_heap_plan(uint64_t begin, uint64_t bytes, Nx2HeapPlan *out);
 extern Nx2HeapPlan nx2_process_heap;
 extern uint32_t nx2_process_heap_status;
+
+/* True for shrink/equal; growing must leave real physical headroom. */
+int nx2_heap_growth_allowed(uint64_t,uint64_t,uint64_t,uint64_t);
