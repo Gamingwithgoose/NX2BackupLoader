@@ -63,7 +63,12 @@ static void drain_ipc_events(FILE *f,Nx2Launch *l,uint32_t *cursor,
   /* Normal HID, applet and NVN polling dominates the IPC stream.
    * Keep those calls in RAM and in crash-tail snapshots. Disk records
    * focus on FSP interfaces, service acquisition and any error. */
-  const int abnormal=(v.phase==2 &&
+  /* HIPC type-2 close can report ConnectionClosed (0xF601)
+    * after the session has already been destroyed. This is not an
+    * actionable failed service command and must not flood quiet logs. */
+   const int normal_close=(v.request_type==2 &&
+                            v.kernel_result==0xF601U);
+   const int abnormal=(v.phase==2 && !normal_close &&
     ((v.kernel_result!=0 && v.kernel_result!=UINT32_MAX)||
      (v.cmif_result!=0 && v.cmif_result!=UINT32_MAX)));
   const int important=full_text || abnormal || v.phase==4 || v.phase==5;
@@ -782,11 +787,15 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     uint64_t started=__atomic_load_n(&host->rpc_started_tick,__ATOMIC_RELAXED);
     uint64_t age_ms=slot&&stamp>=started?
       armTicksToNs(stamp-started)/1000000ULL:0;
-    int overdue_first=(!frames && since_start>=2500000000ULL &&
+    /* The system can terminate before 2.5 s. Commit a compact warning
+     * checkpoint early enough to retain a recent state even without a
+     * libounce CPU exception. This is evidence of incomplete startup,
+     * not proof the renderer is faulty. */
+    int overdue_first=(!frames && since_start>=650000000ULL &&
       __atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE));
     int warn_first=overdue_first&&
       (!last_no_present_warning ||
-       armTicksToNs(stamp-last_no_present_warning)>=5000000000ULL);
+       armTicksToNs(stamp-last_no_present_warning)>=750000000ULL);
     int warn_io=age_ms>=1500&&
       (!last_storage_warning ||
        armTicksToNs(stamp-last_storage_warning)>=5000000000ULL);
@@ -801,6 +810,35 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE));
+      /* Main log writes alone were not enough: kernel closure can erase
+       * the chance to produce a crash report. Persist one bounded state
+       * line now; this is a checkpoint of an unfinished launch, not an
+       * assertion that a timeout has already happened. */
+      if(crash){
+        row(crash,"WARNING_STARTUP_CHECKPOINT elapsed_ms=%llu "
+                  "main=%llu frames=%llu rpc=%llu rom_bytes=%llu "
+                  "pending_slot=%u pending_op=%u pending_age_ms=%llu "
+                  "nvn_bootstrap=%u getproc=%u window=%u/%u "
+                  "queue=%u/%u present=%u/%u ipc=%u/%u\n",
+            (unsigned long long)(since_start/1000000ULL),
+            (unsigned long long)__atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE),
+            (unsigned long long)frames,
+            (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE),
+            (unsigned long long)__atomic_load_n(&host->bytes,__ATOMIC_ACQUIRE),
+            slot,__atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED),
+            (unsigned long long)age_ms,
+            __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE));
+        fflush(crash);
+      }
     }
     if(warn_io){
       last_storage_warning=stamp;

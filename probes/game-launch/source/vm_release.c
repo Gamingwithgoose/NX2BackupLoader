@@ -3,8 +3,12 @@
 #include <switch2/memory/heap.h>
 #include <stdarg.h>
 #include "vm_release.h"
+#include "log_policy.h"
 
-static void row(FILE *f,const char *fmt,...){va_list a;va_start(a,fmt);vfprintf(f,fmt,a);va_end(a);fflush(f);}
+static void row(FILE *f,const char *fmt,...){
+    if(!f||!nx2_log_keep(fmt))return;
+    va_list a;va_start(a,fmt);vfprintf(f,fmt,a);va_end(a);fflush(f);
+}
 int nx2_release_heap_for_vm(FILE *f,const Nx2HeapPlan *p,uint64_t min_resource,
                            uint64_t min_alias,uint64_t min_free,uint64_t *budget){
     uint64_t heap=0,reserved=0,resource=0,alias=0,alias_size=0,total=0,used=0;
