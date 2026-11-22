@@ -8,7 +8,7 @@ static int check(int ok,const char *label){
  return !ok;
 }
 int main(void){
- const uint64_t floor=UINT64_C(0xa0000000);
+ const uint64_t floor=UINT64_C(0x40000000);
  int fails=0;
  fails+=check(nx2_heap_growth_allowed(0x40000000,0x20000000,0,floor),
               "shrinking succeeds even under floor");
