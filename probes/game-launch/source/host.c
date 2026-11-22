@@ -270,6 +270,20 @@ static Result profile_scope(Nx2Host *h,Nx2UserId uid,int create,
  rc=mkdir_one(h->sd,parent);if(R_FAILED(rc))return rc;
  return mkdir_one(h->sd,root);
 }
+/* Storage requests run on one worker; preserve token index/generation and
+ * grow only when another native file/directory handle is really needed. */
+static int host_next_free_handle(Nx2Host *h,unsigned *out){
+ if(!h||!out)return 0;
+ for(size_t i=0;i<h->handle_capacity;i++)
+  if(!h->handles[i].kind){*out=(unsigned)i;return 1;}
+ size_t old=h->handle_capacity,cap=old?old*2U:64U;
+ if(cap<=old||cap>UINT32_MAX||cap>SIZE_MAX/sizeof(*h->handles))return 0;
+ Nx2HostFile *p=realloc(h->handles,cap*sizeof(*p));
+ if(!p)return 0;
+ memset(p+old,0,(cap-old)*sizeof(*p));
+ h->handles=p;h->handle_capacity=cap;*out=(unsigned)old;
+ return 1;
+}
 static uint64_t token(Nx2Host *h, unsigned i) {
   if (!++h->handles[i].generation)
     h->handles[i].generation++;
@@ -277,7 +291,7 @@ static uint64_t token(Nx2Host *h, unsigned i) {
 }
 static Nx2HostFile *lookup(Nx2Host *h, uint64_t id, uint32_t kind) {
   unsigned i = (uint32_t)id;
-  if (!i || i > NX2_HOST_HANDLE_LIMIT)
+  if (!i || i > h->handle_capacity)
     return 0;
   Nx2HostFile *f = &h->handles[i - 1];
   return f->kind == kind && f->generation == (uint32_t)(id >> 32) ? f : 0;
@@ -626,11 +640,8 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     break;
   }
   case RPC_SAVE_OPEN: {
-    unsigned i = 0;
-    for (; i < NX2_HOST_HANDLE_LIMIT && h->handles[i].kind; i++)
-      ;
-    if (i == NX2_HOST_HANDLE_LIMIT)
-      return NX2_LIMIT;
+    unsigned i=0;
+    if(!host_next_free_handle(h,&i))return NX2_LIMIT;
     rc = fsFsOpenFile(h->sd, p, r->a & 7, &h->handles[i].file);
     if (R_SUCCEEDED(rc)) {
       h->handles[i].kind = 1;
@@ -712,11 +723,8 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   case RPC_DIR_OPEN: {
     if (!nx2_save_path(p, sizeof(p), h->save_root, r->path))
       return NX2_INVALID;
-    unsigned i = 0;
-    for (; i < NX2_HOST_HANDLE_LIMIT && h->handles[i].kind; i++)
-      ;
-    if (i == NX2_HOST_HANDLE_LIMIT)
-      return NX2_LIMIT;
+    unsigned i=0;
+    if(!host_next_free_handle(h,&i))return NX2_LIMIT;
     rc = fsFsOpenDirectory(h->sd, p, r->a & 3, &h->handles[i].dir);
     if (R_SUCCEEDED(rc)) {
       h->handles[i].kind = 2;
@@ -755,7 +763,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     rc=fsFsGetFileSystemAttribute(h->sd,(FsFileSystemAttribute *)r->buffer);
     break;
   case RPC_COMMIT:
-    for (unsigned i = 0; i < NX2_HOST_HANDLE_LIMIT; i++)
+    for (unsigned i = 0; i < h->handle_capacity; i++)
       if (h->handles[i].kind == 1 && (h->handles[i].mode & FsOpenMode_Write)) {
         Result flush = fsFileFlush(&h->handles[i].file);
         if (R_FAILED(flush))
@@ -1066,13 +1074,15 @@ void nx2_host_close(Nx2Host *h) {
     h->rom_windows[i].data=0;
     h->rom_windows[i].valid=0;
   }
-  for (unsigned i = 0; i < NX2_HOST_HANDLE_LIMIT; i++) {
+  for (unsigned i = 0; i < h->handle_capacity; i++) {
     if (h->handles[i].kind == 1)
       fsFileClose(&h->handles[i].file);
     if (h->handles[i].kind == 2)
       fsDirClose(&h->handles[i].dir);
     h->handles[i].kind = 0;
   }
+  free(h->handles);
+  h->handles=0;h->handle_capacity=0;
   for (unsigned i = 0; i < 16; i++)
     if (h->cache[i].open) {
       fsFileClose(&h->cache[i].file);

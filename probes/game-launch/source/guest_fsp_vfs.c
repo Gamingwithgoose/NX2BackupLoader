@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stddef.h>
-#define VFS_MAX_OBJECTS 512
+#include <stdlib.h>
 #define VFS_FS 1
 #define VFS_FILE 2
 #define VFS_DIR 3
@@ -23,7 +23,10 @@ typedef struct {
  uint32_t busy;
  char root[128];
 } VfsObject;
-static VfsObject vfs_objects[VFS_MAX_OBJECTS];
+/* The table grows under the existing lock; all lookups return copies,
+ * never pointers which could be invalidated by realloc. */
+static VfsObject *vfs_objects;
+static size_t vfs_capacity;
 static volatile uint32_t vfs_lock;
 static uint32_t vfs_next_id=0xe0000000U;
 static void lock_vfs(void){
@@ -35,7 +38,7 @@ static VfsObject find_object(uint32_t session,uint32_t id){
  (void)session;
  VfsObject v={0};
  lock_vfs();
- for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
+ for(unsigned i=0;i<vfs_capacity;i++)
   if(vfs_objects[i].kind && vfs_objects[i].object_id==id){
    /* Cloned fsp-srv domain sessions reuse the same object IDs. Our
     * generated IDs are process-global and never overlap kernel IDs. */
@@ -49,7 +52,21 @@ static uint32_t allocate_object(uint32_t session,uint32_t kind,
                                 const char *root){
  uint32_t id=0;
  lock_vfs();
- for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)if(!vfs_objects[i].kind){
+ size_t slot=vfs_capacity;
+ for(size_t j=0;j<vfs_capacity;j++)
+  if(!vfs_objects[j].kind){slot=j;break;}
+ if(slot==vfs_capacity){
+  size_t old=vfs_capacity,cap=old?old*2U:64U;
+  if(cap>old&&cap<=UINT32_MAX&&cap<=SIZE_MAX/sizeof(*vfs_objects)){
+   VfsObject *grown=realloc(vfs_objects,cap*sizeof(*grown));
+   if(grown){
+    memset(grown+old,0,(cap-old)*sizeof(*grown));
+    vfs_objects=grown;vfs_capacity=cap;slot=old;
+   }
+  }
+ }
+ if(slot<vfs_capacity){
+  size_t i=slot;
   id=++vfs_next_id;
   if(!id||id<0xe0000000U)id=vfs_next_id=0xe0000001U;
   vfs_objects[i].session=session;
@@ -73,7 +90,7 @@ static int forget_object(uint32_t session,uint32_t id,VfsObject *old){
  (void)session;
  int found=0;
  lock_vfs();
- for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
+ for(unsigned i=0;i<vfs_capacity;i++)
   if(vfs_objects[i].kind && vfs_objects[i].object_id==id){
    if(old)*old=vfs_objects[i];
    vfs_objects[i]=(VfsObject){0};
@@ -88,7 +105,7 @@ static int cache_reader_begin(uint32_t id,uint64_t *cursor){
  for(;;){
   int found=0;
   lock_vfs();
-  for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
+  for(unsigned i=0;i<vfs_capacity;i++)
    if(vfs_objects[i].kind==VFS_CACHE_READER &&
       vfs_objects[i].object_id==id){
     found=1;
@@ -107,7 +124,7 @@ static int cache_reader_begin(uint32_t id,uint64_t *cursor){
 }
 static void cache_reader_end(uint32_t id,uint64_t count,int valid){
  lock_vfs();
- for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
+ for(unsigned i=0;i<vfs_capacity;i++)
   if(vfs_objects[i].kind==VFS_CACHE_READER &&
      vfs_objects[i].object_id==id && vfs_objects[i].busy){
    if(valid && count<=UINT64_MAX-vfs_objects[i].token)

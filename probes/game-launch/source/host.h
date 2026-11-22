@@ -8,13 +8,13 @@ typedef struct {
   FsFile file;
   FsDir dir;
 } Nx2HostFile;
-/* Virtual guest object capacity is intentionally larger than lightweight SDK needs. */
-#define NX2_HOST_HANDLE_LIMIT 512U
+/* Native guest file/directory handles grow with available memory. */
 typedef struct {
   FsFileSystem *sd;
   FILE *report;
   char rom_root[1200], save_root[512];
-  Nx2HostFile handles[NX2_HOST_HANDLE_LIMIT];
+  Nx2HostFile *handles;
+  size_t handle_capacity;
   struct {
     FsFile file;
     uint64_t used;
