@@ -3,6 +3,7 @@
 #include "cache_catalog.h"
 #include "nup.h"
 #include "path_guard.h"
+#include "rom_prefetch.h"
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -307,6 +308,9 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     rc = fsFileRead(&h->cache[slot].file, r->b, r->buffer, r->c,
                     FsReadOption_None, &read);
     __atomic_fetch_add(&h->bytes, read, __ATOMIC_RELAXED);
+    /* A successful-but-short ROMFS IStorage read would expose stale bytes
+     * from the guest buffer or cache. Report actual invalid data instead. */
+    if(R_SUCCEEDED(rc)&&read!=r->c)rc=NX2_INVALID;
     /* Startup may read hundreds of files in parallel. Every successful
      * asset log is an SD-card flush on the host and a blocking guest RPC.
      * Keep initial examples, periodic samples and every failure, but stop
@@ -751,79 +755,105 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   }
   return rc;
 }
-/* Detect adjacent small reads of large assets, using ONE 1-MiB window
- * across both the loose-folder and RAW NUP backend. A compressed NUP
- * extent is intentionally excluded: a random access can require decoding
- * the whole Zstandard frame. Never speculative-read random small assets. */
+/* Demand-first streaming across loose folders and raw NUP extents.
+ * Four 512 KiB windows prevent unrelated asset streams from evicting a
+ * single 1 MiB speculative cache. No game-specific content assumptions. */
 static uint64_t rom_extent_length(const Nx2RomView *v,uint32_t file){
-  const unsigned char *p=v->entries+32*(size_t)file+8;
-  uint64_t n=0;
-  for(unsigned j=0;j<8;j++)n|=(uint64_t)p[j]<<(8*j);
-  return n;
+ const unsigned char *p=v->entries+32*(size_t)file+8;
+ uint64_t n=0;
+ for(unsigned j=0;j<8;j++)n|=(uint64_t)p[j]<<(8*j);
+ return n;
+}
+static unsigned rom_select_window(Nx2Host *h,uint32_t file){
+ unsigned slot=4;
+ for(unsigned i=0;i<4;i++)
+  if((h->rom_windows[i].previous||h->rom_windows[i].valid) &&
+     h->rom_windows[i].file==file){slot=i;break;}
+ if(slot==4){
+  for(unsigned i=0;i<4;i++)
+   if(!h->rom_windows[i].previous && !h->rom_windows[i].valid){
+    slot=i;break;
+   }
+  if(slot==4){
+   slot=0;
+   for(unsigned i=1;i<4;i++)
+    if(h->rom_windows[i].stamp<h->rom_windows[slot].stamp)slot=i;
+  }
+  h->rom_windows[slot].file=file;
+  h->rom_windows[slot].valid=0;
+  h->rom_windows[slot].previous=0;
+  h->rom_windows[slot].streak=0;
+  h->rom_windows[slot].length=0;
+ }
+ h->rom_windows[slot].stamp=++h->rom_window_clock;
+ return slot;
 }
 static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
-  if(r->a>=l->rom.count || r->c>0x10000000U ||
-     !r->c || (!r->buffer&&r->c))
-    return serve(h,l,r);
-  const uint32_t file=(uint32_t)r->a;
-  const uint64_t offset=r->b, bytes=r->c;
-  const uint64_t length=rom_extent_length(&l->rom,file);
-  if(offset>length || bytes>length-offset)
-    return serve(h,l,r);
-  uint32_t result=NX2_INVALID;
-  if(h->read_ahead_valid && h->read_ahead_file==file &&
-     offset>=h->read_ahead_offset &&
-     offset-h->read_ahead_offset<=h->read_ahead_length &&
-     bytes<=h->read_ahead_length-(offset-h->read_ahead_offset)){
-    memcpy(r->buffer,h->read_ahead_data+
-           (size_t)(offset-h->read_ahead_offset),(size_t)bytes);
-    __atomic_fetch_add(&h->calls,1,__ATOMIC_RELAXED);
-    __atomic_fetch_add(&h->bytes,bytes,__ATOMIC_RELAXED);
-    __atomic_fetch_add(&h->read_ahead_hits,1,__ATOMIC_RELAXED);
-    result=0;
-  }else{
-    int sequential=h->read_ahead_previous &&
-        h->read_ahead_last_file==file &&
-        h->read_ahead_last_end==offset;
-    int prefetch=sequential && bytes>=0x10000 && bytes<=0x40000 &&
-        length>=0x1000000 && length-offset>=bytes*2;
-    if(prefetch && nx2_nup_active()){
-      char name[1200];unsigned codec=UINT32_MAX;uint64_t unpacked=0;
-      const char *relative=nx2_rom_path(&l->rom,file);
-      if(!relative ||
-         snprintf(name,sizeof(name),"romfs/%s",relative)>=(int)sizeof(name) ||
-         !nx2_nup_file_info(name,&unpacked,&codec) || codec!=0)
-        prefetch=0;
-    }
-    if(prefetch && !h->read_ahead_data)
-      h->read_ahead_data=malloc(0x100000);
-    if(prefetch && h->read_ahead_data){
-      const uint64_t amount=length-offset<0x100000
-                           ?length-offset:0x100000;
-      Nx2Request temp=*r;
-      temp.buffer=h->read_ahead_data;
-      temp.c=amount;
-      result=serve(h,l,&temp);
-      if(!result){
-        memcpy(r->buffer,h->read_ahead_data,(size_t)bytes);
-        h->read_ahead_file=file;
-        h->read_ahead_offset=offset;
-        h->read_ahead_length=amount;
-        h->read_ahead_valid=1;
-        __atomic_fetch_add(&h->read_ahead_fills,1,__ATOMIC_RELAXED);
-        /* Counters remain logical bytes returned to the guest. */
-        __atomic_fetch_sub(&h->bytes,amount-bytes,__ATOMIC_RELAXED);
-      }else h->read_ahead_valid=0;
-    }else{
-      result=serve(h,l,r);
-    }
+ if(r->a>=l->rom.count || r->c>0x10000000U ||
+    !r->c || (!r->buffer&&r->c))return serve(h,l,r);
+ const uint32_t file=(uint32_t)r->a;
+ const uint64_t offset=r->b,bytes=r->c;
+ const uint64_t length=rom_extent_length(&l->rom,file);
+ if(offset>length || bytes>length-offset)return serve(h,l,r);
+ unsigned slot=rom_select_window(h,file);
+ unsigned streak=h->rom_windows[slot].previous &&
+                 h->rom_windows[slot].last_end==offset
+    ?h->rom_windows[slot].streak+1:0;
+ if(streak>64)streak=64;
+ uint32_t result=NX2_INVALID;
+ if(h->rom_windows[slot].valid && h->rom_windows[slot].data &&
+    offset>=h->rom_windows[slot].offset &&
+    offset-h->rom_windows[slot].offset<=h->rom_windows[slot].length &&
+    bytes<=h->rom_windows[slot].length-
+           (offset-h->rom_windows[slot].offset)){
+  memcpy(r->buffer,h->rom_windows[slot].data+
+         (size_t)(offset-h->rom_windows[slot].offset),(size_t)bytes);
+  __atomic_fetch_add(&h->calls,1,__ATOMIC_RELAXED);
+  __atomic_fetch_add(&h->bytes,bytes,__ATOMIC_RELAXED);
+  __atomic_fetch_add(&h->read_ahead_hits,1,__ATOMIC_RELAXED);
+  result=0;
+ }else{
+  uint64_t amount=nx2_rom_prefetch_bytes(bytes,length-offset,streak);
+  if(amount && nx2_nup_active()){
+   /* Random-seek speculative reads are unsafe for compressed NUP extents. */
+   char name[1200];unsigned codec=UINT32_MAX;uint64_t unpacked=0;
+   const char *relative=nx2_rom_path(&l->rom,file);
+   int n=relative?snprintf(name,sizeof(name),"romfs/%s",relative):-1;
+   if(n<0||n>=(int)sizeof(name) ||
+      !nx2_nup_file_info(name,&unpacked,&codec)||codec!=0)
+    amount=0;
   }
-  if(!result){
-    h->read_ahead_last_file=file;
-    h->read_ahead_last_end=offset+bytes;
-    h->read_ahead_previous=1;
-  }else h->read_ahead_previous=0;
-  return result;
+  if(amount && !h->rom_windows[slot].data)
+   h->rom_windows[slot].data=malloc(0x80000);
+  if(amount && h->rom_windows[slot].data){
+   Nx2Request temp=*r;
+   temp.buffer=h->rom_windows[slot].data;
+   temp.c=amount;
+   result=serve(h,l,&temp);
+   if(!result){
+    memcpy(r->buffer,h->rom_windows[slot].data,(size_t)bytes);
+    h->rom_windows[slot].offset=offset;
+    h->rom_windows[slot].length=amount;
+    h->rom_windows[slot].valid=1;
+    __atomic_fetch_add(&h->read_ahead_fills,1,__ATOMIC_RELAXED);
+    /* The guest received bytes, not the speculative suffix. */
+    __atomic_fetch_sub(&h->bytes,amount-bytes,__ATOMIC_RELAXED);
+   }else{
+    /* Failed speculative suffix is never an error for a valid prefix. */
+    h->rom_windows[slot].valid=0;
+    result=serve(h,l,r);
+   }
+  }else result=serve(h,l,r);
+ }
+ if(!result){
+  h->rom_windows[slot].last_end=offset+bytes;
+  h->rom_windows[slot].previous=1;
+  h->rom_windows[slot].streak=streak;
+ }else{
+  h->rom_windows[slot].previous=0;
+  h->rom_windows[slot].streak=0;
+ }
+ return result;
 }
 int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   int served = 0;
@@ -849,8 +879,11 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   return served;
 }
 void nx2_host_close(Nx2Host *h) {
-  free(h->read_ahead_data);
-  h->read_ahead_data=0;
+  for(unsigned i=0;i<4;i++){
+    free(h->rom_windows[i].data);
+    h->rom_windows[i].data=0;
+    h->rom_windows[i].valid=0;
+  }
   for (unsigned i = 0; i < NX2_HOST_HANDLE_LIMIT; i++) {
     if (h->handles[i].kind == 1)
       fsFileClose(&h->handles[i].file);
