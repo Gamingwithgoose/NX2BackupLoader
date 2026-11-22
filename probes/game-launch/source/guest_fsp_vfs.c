@@ -449,6 +449,23 @@ static uint32_t do_file(const VfsObject *obj,uint32_t cmd,
    if(!rc){memcpy(out,&answer,8);*out_size=8;}
    return rc;
   }
+  case 5:{
+   /* Native IFile::OperateRange: u32 operation (padding 4),
+    * s64 offset, s64 length -> inline FsRangeInfo[0x40].
+    * Only known non-mutating InvalidateCache / QueryRange IDs route.
+    * No invented successful response: return host service status. */
+   if(len<24)return NX2_INVALID;
+   uint32_t operation=read32(in);
+   uint64_t offset=read64(in+8),amount=read64(in+16);
+   if((operation!=0 && operation!=3)||offset>INT64_MAX||
+      amount>INT64_MAX||offset>INT64_MAX-amount)
+    return NX2_FS_UNSUPPORTED;
+   memset(out,0,64);
+   uint32_t rc=nx2_rpc(RPC_SAVE_OPERATE_RANGE,obj->token,
+                       operation,offset,amount,out,0,0,0);
+   if(!rc)*out_size=64;
+   return rc;
+  }
   default:return NX2_FS_UNSUPPORTED;
  }
 }
