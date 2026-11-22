@@ -110,6 +110,8 @@ typedef struct {
  uint32_t guest_main_returned;
  uint64_t fsp_denied,rom_reads,save_calls,main_entered,frames;
  uint64_t handle_tags[2048];
+ /* When set, non-Present NVN function pointers go directly to the driver. */
+ uint32_t nvn_driver_passthrough;
  uint32_t nvn_bootstrap_calls,nvn_getproc_calls,nvn_present_lookups;
  uint32_t nvn_present_entered,nvn_present_returned;
  uint32_t nvn_device_entered,nvn_device_returned,nvn_device_result;
