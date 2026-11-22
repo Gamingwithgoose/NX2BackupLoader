@@ -2,6 +2,7 @@
 #include "launch.h"
 #include "raw_svc.h"
 #include "file_range_policy.h"
+#include "cache_catalog.h"
 #include <stdio.h>
 Nx2Launch *nx2_launch;
 static void copy(void *d,const void *s,uint64_t n){unsigned char *a=d;const unsigned char *b=s;for(uint64_t i=0;i<n;i++)a[i]=b[i];}
@@ -238,9 +239,20 @@ uint32_t nx2_create_cache_storage(int index,int64_t size,int64_t journal){
          (uint64_t)journal,rc,0,"VIRTUAL_CACHE_STORAGE_CREATE",0,0);
  return rc;
 }
+/* Shared by SDK MountCacheStorage and direct FSP cache-open commands.
+ * Horizon normally provisions a title's cache during installation;
+ * since the guest has no install phase, provision on explicit first mount.
+ * RPC_CACHE_PROVISION runs atomically on the serialized host storage worker
+ * and preserves all existing cache contents and quota markers. */
+uint32_t nx2_ensure_guest_cache_storage(int index){
+ if(index<0||index>65535)return NX2_INVALID;
+ return nx2_rpc(RPC_CACHE_PROVISION,(uint32_t)index,
+                NX2_CACHE_INSTALL_DATA_BYTES,
+                NX2_CACHE_INSTALL_JOURNAL_BYTES,0,0,0,0,0);
+}
 uint32_t nx2_mount_cache_storage_index(const char *name,int index){
  if(!name||index<0||index>65535)return NX2_INVALID;
- uint32_t rc=nx2_rpc(RPC_CACHE_CHECK,(uint32_t)index,0,0,0,0,0,0,0);
+ uint32_t rc=nx2_ensure_guest_cache_storage(index);
  if(rc)return rc;
  Nx2Object *fs=object((uintptr_t)&nx2_launch->fs_table[2],0,(uint64_t)index+1);
  if(!fs)return NX2_LIMIT;

@@ -405,9 +405,13 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     break;
   }
   case RPC_CACHE_CREATE:
-  case RPC_CACHE_CHECK: {
+  case RPC_CACHE_CHECK:
+  case RPC_CACHE_PROVISION: {
     /* Cache indexes and quotas are properties of the virtual guest store,
-     * not permissions or quotas of the Mario Kart World host title. */
+     * not permissions or quotas of the Mario Kart World host title.
+     * A native installed title may have pre-provisioned cache archives;
+     * NUP execution has no install pass. First-mount provisioning is real,
+     * private SD creation, never an invented successful filesystem open. */
     if(r->a>65535 || r->b>INT64_MAX || r->c>INT64_MAX ||
        r->b>INT64_MAX-r->c)return NX2_INVALID;
     char parent[600],dir[640],marker[700];
@@ -419,13 +423,40 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
                    parent,(unsigned long long)r->a);
     if(x<0||x>=(int)sizeof(parent)||y<0||y>=(int)sizeof(dir)||
        z<0||z>=(int)sizeof(marker))return NX2_INVALID;
-    if(r->op==RPC_CACHE_CHECK){
+    if(r->op==RPC_CACHE_CHECK||r->op==RPC_CACHE_PROVISION){
       FsDirEntryType type;
       rc=fsFsGetEntryType(h->sd,dir,&type);
       if(R_SUCCEEDED(rc) && type!=FsDirEntryType_Dir)rc=NX2_INVALID;
-      logline(h,"VIRTUAL_CACHE_CHECK index=%llu result=%08x path=%s\n",
-              (unsigned long long)r->a,rc,dir);
-      break;
+      if(r->op==RPC_CACHE_CHECK){
+        logline(h,"VIRTUAL_CACHE_CHECK index=%llu result=%08x path=%s\n",
+                (unsigned long long)r->a,rc,dir);
+        break;
+      }
+      if(R_SUCCEEDED(rc)){
+        /* Preserve existing data and its original per-title quota.
+         * A directory without a valid metadata marker is not silently
+         * repaired or overwritten; it may contain valuable user data. */
+        FILE *f=fopen(marker,"rb");
+        unsigned char raw[24];size_t got=0;int closed=-1;
+        if(f){got=fread(raw,1,sizeof(raw),f);closed=fclose(f);}
+        uint64_t data_size=0,journal_size=0;
+        if(!f||got!=sizeof(raw)||closed||
+           !nx2_cache_unpack_quota(raw,sizeof(raw),&data_size,&journal_size))
+          rc=NX2_INVALID;
+        logline(h,"VIRTUAL_CACHE_PROVISION_REUSE index=%llu result=%08x path=%s\n",
+                (unsigned long long)r->a,rc,dir);
+        break;
+      }
+      /* Only a genuinely missing cache receives install-style provisioning.
+       * Propagate permissions, damaged filesystem and all other errors. */
+      if(rc!=NX2_CACHE_NOT_FOUND_RESULT){
+        logline(h,"VIRTUAL_CACHE_PROVISION_REFUSED index=%llu result=%08x path=%s\n",
+                (unsigned long long)r->a,rc,dir);
+        break;
+      }
+      logline(h,"VIRTUAL_CACHE_PROVISION_MISSING index=%llu data=%llu journal=%llu path=%s\n",
+              (unsigned long long)r->a,(unsigned long long)r->b,
+              (unsigned long long)r->c,dir);
     }
     s64 free_bytes=0;
     rc=fsFsGetFreeSpace(h->sd,h->save_root,&free_bytes);
@@ -454,7 +485,9 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
         if(fclose(f))rc=NX2_INVALID;
       }
     }
-    logline(h,"VIRTUAL_CACHE_CREATE index=%llu size=%llu journal=%llu free=%lld result=%08x path=%s\n",
+    logline(h,r->op==RPC_CACHE_PROVISION?
+            "VIRTUAL_CACHE_INSTALL_PROVISION index=%llu size=%llu journal=%llu free=%lld result=%08x path=%s\n":
+            "VIRTUAL_CACHE_CREATE index=%llu size=%llu journal=%llu free=%lld result=%08x path=%s\n",
             (unsigned long long)r->a,(unsigned long long)r->b,
             (unsigned long long)r->c,(long long)free_bytes,rc,dir);
     break;

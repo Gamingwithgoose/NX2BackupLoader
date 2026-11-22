@@ -646,7 +646,7 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
      * identities cannot be silently mapped to an empty vsave-* root. */
     if(in[8+32]==5){
      uint16_t index=(uint16_t)in[8+34]|((uint16_t)in[8+35]<<8);
-     rc=nx2_rpc(RPC_CACHE_CHECK,index,0,0,0,0,0,0,0);
+     rc=nx2_ensure_guest_cache_storage(index);
     }else rc=0;
     if(!rc){
      new_id=allocate_object(session,VFS_FS,d.command==53,0,name);
