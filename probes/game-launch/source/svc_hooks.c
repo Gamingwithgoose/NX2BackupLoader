@@ -517,7 +517,27 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
   * every tagged guest IPC synchronously waited for a storage-worker RPC
   * solely to print IPC_BEGIN. That extra guest/SD dependency is unnecessary
   * and can postpone service initialization or graphics work. */
+ /* ldr:ro command 4 registers a process using a copied process handle.
+  * Guest code executes inside the launcher Horizon process; a virtual or
+  * stale guest process handle cannot be passed to the native RO server.
+  * Supply a genuine duplicated host-process handle in the existing copied
+  * HIPC handle slot. Keep the real kernel PID and service result intact. */
+ Handle ro_process_copy=0;
+ int ro_handle_substituted=0;
+ if(kind==0 && !external && has && !control && !d.domain &&
+    cmd==4 && request_type==6 && n>=24 && special==3 &&
+    (hdr1&0x80000000U) &&
+    owner[0]=='l' && owner[1]=='d' && owner[2]=='r' &&
+    owner[3]==':' && owner[4]=='r' && owner[5]=='o' && !owner[6]){
+   Result duplicate_rc=svcDuplicateHandle(&ro_process_copy,CUR_PROCESS_HANDLE);
+   if(R_SUCCEEDED(duplicate_rc)){
+     /* HIPC special header +8, PID descriptor +12, copy handle +20. */
+     memcpy(p+20,&ro_process_copy,sizeof(uint32_t));
+     ro_handle_substituted=1;
+   }
+ }
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
+ if(ro_handle_substituted)svcCloseHandle(ro_process_copy);
  if(crumb){
    crumb->result=rc;
    __atomic_store_n(&crumb->phase,2,__ATOMIC_RELEASE);
