@@ -4,6 +4,7 @@
 #include "nup.h"
 #include "path_guard.h"
 #include "rom_prefetch.h"
+#include "file_range_policy.h"
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -565,13 +566,20 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     break;
   }
   case RPC_SAVE_CREATE:
-    if (r->a > 0x40000000)
-      return NX2_LIMIT;
-    /* Keep guest file-create options intact for both the SDK adapter and
-     * direct IFileSystem IPC path, rather than silently dropping BigFile. */
-    if (r->b & ~UINT64_C(1))
+    /* Honor every representable guest file size, subject to actual SD
+     * permissions, available space, and filesystem rules. Never silently
+     * accept an allocation that did not succeed. */
+    if(!nx2_save_create_request_valid(r->a,r->b)){
+      logline(h,"SAVE_CREATE_REFUSED reason=invalid_size_or_flags "
+                "size=%llu flags=%llx\n",
+              (unsigned long long)r->a,(unsigned long long)r->b);
       return NX2_INVALID;
-    rc = fsFsCreateFile(h->sd, p, r->a, (uint32_t)r->b);
+    }
+    rc=fsFsCreateFile(h->sd,p,(int64_t)r->a,(uint32_t)r->b);
+    if(R_FAILED(rc))
+      logline(h,"SAVE_CREATE_FILESYSTEM_REFUSED size=%llu flags=%llx "
+                "result=%08x\n",
+              (unsigned long long)r->a,(unsigned long long)r->b,rc);
     break;
   case RPC_SAVE_DELETE:
     rc = fsFsDeleteFile(h->sd, p);

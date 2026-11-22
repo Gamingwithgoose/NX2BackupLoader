@@ -10,3 +10,9 @@ int nx2_file_range_allowed(uint32_t operation,int64_t offset,int64_t length,
    return out && out_size==0x40 && !in && in_size==0;
  return 0;
 }
+
+int nx2_save_create_request_valid(uint64_t size,uint64_t flags){
+ /* The underlying fsFsCreateFile accepts a signed 64-bit file size and
+  * its only supported option is the BigFile bit. */
+ return size<=INT64_MAX && (flags & ~UINT64_C(1))==0;
+}

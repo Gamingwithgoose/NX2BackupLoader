@@ -24,6 +24,19 @@ int main(void){
  bad+=check(!nx2_file_range_allowed(3,0,1,range,64,range,0),"unexpected query input");
  bad+=check(!nx2_file_range_allowed(2,0,1,range,64,0,0),"invalidate unexpected output");
  bad+=check(!nx2_file_range_allowed(2,0,1,0,0,range,1),"invalidate unexpected input");
- puts(bad?"Guest IFile range policy: FAIL":"Guest IFile range policy: PASS");
+ bad+=check(nx2_save_create_request_valid(0,0),"zero-length file");
+ bad+=check(nx2_save_create_request_valid(UINT64_C(0x40000001),0),
+            "file larger than old 1 GiB launcher cap");
+ bad+=check(nx2_save_create_request_valid(UINT64_C(0x200000000),1),
+            "8 GiB BigFile forwarded to real filesystem");
+ bad+=check(nx2_save_create_request_valid((uint64_t)INT64_MAX,1),
+            "signed 64-bit API maximum");
+ bad+=check(!nx2_save_create_request_valid((uint64_t)INT64_MAX+1,1),
+            "reject size exceeding signed API");
+ bad+=check(!nx2_save_create_request_valid(512,2),"reject unsupported flag");
+ bad+=check(!nx2_save_create_request_valid(512,UINT64_MAX),
+            "reject invalid flag bitfield");
+ puts(bad?"Guest IFile and create policy: FAIL":
+          "Guest IFile and create policy: PASS");
  return !!bad;
 }
