@@ -1227,12 +1227,13 @@ int main(int argc, char **argv) {
           fclose(crash_rejected);
         }
         snprintf(outcome,sizeof(outcome),"NUP not ready: %.95s",game->nup_status);
-      } else
+      } else {
         /* A = native with PresentTexture tracking; L+A = full native;
          * ZR+A = instrumented. ZR takes priority over L. */
-        int mode=(held & HidNpadButton_ZR)?0:
-                 (held & HidNpadButton_L)?2:1;
-        run(game, (held & HidNpadButton_B)!=0, mode);
+        int mode = (held & HidNpadButton_ZR) ? 0 :
+                   (held & HidNpadButton_L) ? 2 : 1;
+        run(game, (held & HidNpadButton_B) != 0, mode);
+      }
     }
     draw(&catalog, selected);
     svcSleepThread(16666667);

@@ -395,3 +395,9 @@ Source audit shows normal A previously returned launcher-owned NVN wrapper stubs
 - Prior hybrid A reached 186 completed presents with 396,954,348 ROM bytes; full-native experiment did NOT resolve the deadlock and possibly regressed progress.
 - Updated A to prior compatibility baseline (native driver calls except PresentTexture frame wrapper). L+A still provides full-native; ZR+A full diagnostic. Mode selection independent of game IDs and NUP/folder, with explicit profile label in main/crash logs. RO rollover and shared Break improvements unchanged. This is a regression rollback, NOT a claimed root-cause fix for GPU/VI synchronization stalls.
 - No full Switch 2 build or console execution performed by assistant.
+
+### 2026-11-22 — Fix three-mode launch compilation regression
+- The user's build of commit 93e2bc7 failed at `main.c:1233` with `expected expression before 'int'` and `mode undeclared`, plus `-Wmisleading-indentation`. Cause: mode declaration and run invocation followed a single-statement unbraced `else`.
+- Added an explicit `else { ... }` compound statement, retaining the three universal button profiles (A=hybrid native/present, L+A=fully native, ZR+A=diagnostic); formatted the selection cleanly. This specifically removes the shown syntax errors and indentation warning.
+- Corrected stale explanatory comments in bridge.c; NVN driver dispatch behavior is unchanged from commit 93e2bc7.
+- Locally compiled a standalone copy of the corrected launch-mode conditional using host GCC strict `-std=c11 -Wall -Wextra -Werror -pedantic -fsyntax-only`, PASS. Full ounce-devkit Switch 2 build could not be run here because the toolchain is unavailable; user rebuild required to confirm full clean build.

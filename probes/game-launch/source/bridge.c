@@ -458,9 +458,9 @@ static uint32_t queue_acquire_gate(void *queue,void *window,int *index){
 static uintptr_t getproc_gate(void *device,const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_getproc(device,name);
- /* Native A/L+A bypass getproc_gate at bootstrap. This defensive check
-  * prevents any retained function pointer to this gate from replacing the
-  * driver's own NVN entrypoint. ZR+A keeps diagnostic instrumentation. */
+ /* Mode 1 (A) passes native NVN pointers except observed PresentTexture.
+  * Mode 2 (L+A) passes all native pointers; ZR+A instruments all stages.
+  * Keep this check safe even for a retained GetProcAddress wrapper. */
  if(nx2_launch->nvn_driver_passthrough==2 ||
     (nx2_launch->nvn_driver_passthrough==1 &&
      !equal(name,"nvnQueuePresentTexture"))) return result;
@@ -506,11 +506,9 @@ static uintptr_t getproc_gate(void *device,const char *name){
 uintptr_t nx2_bootstrap_gate(const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_bootstrap_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_bootstrap(name);
- /* Full-native path: do not wrap native NVN GetProcAddress or PresentTexture.
-  * The old wrapper used one shared mutable original_getproc/original_present
-  * across distinct bootstrap/device lookups, which may be unsafe. Returning
-  * the exact driver pointer removes this entire layer of indirection.
-  * Diagnostic ZR+A still follows the existing instrumented code below. */
+ /* L+A passes through the native GetProcAddress and all subsequent NVN
+  * driver pointers. A retains lightweight PresentTexture observation;
+  * ZR+A retains the fully instrumented diagnostic path below. */
  if(nx2_launch->nvn_driver_passthrough==2) return result;
  if(result&&equal(name,"nvnDeviceGetProcAddress")){
    __atomic_store_n(&nx2_launch->api.original_getproc,(void *)result,__ATOMIC_RELEASE);
