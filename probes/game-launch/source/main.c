@@ -351,7 +351,7 @@ static void scan_progress(uint32_t files, void *unused) {
   screen(message);
 }
 /* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
-static void run(const Nx2Game *game, int rebuild_index, int nvn_profile, int retain_applet) {
+static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   FILE *flag=fopen("sdmc:/BackupLoaderMKW-verbose.flag","rb");
   nx2_log_verbose=flag!=NULL;
   if(flag)fclose(flag);
@@ -375,7 +375,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile, int ret
       "verbosity=%s lifecycle=%s\n",game->name,
       game->is_nup?"nup":"folder",
       nx2_log_verbose?"full":"warnings_errors",
-      retain_applet?"retain_host_applet":"release_host_applet");
+      "release_host_applet");
 
   const char *launch_phase="START";
   u64 launch_started=armGetSystemTick(), module_prepare_started=0;
@@ -647,7 +647,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile, int ret
   /* The ZL retained-applet experiment reproducibly caused SDK Break
    * (appletOE command 10 -> 0x3e880) for OOT and Sports Resort.
    * Always restore the verified ordinary application-proxy release. */
-  (void)retain_applet;
   appletExit();
   row(f,"HOST_APPLET_PROXY_RELEASED\n");
   row(f,"GAMEPLAY_CUTOFF disabled\n");
@@ -1327,7 +1326,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
       printf("This selection loads base; updates are not merged.\n");
   }
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
-         "ZL+A: no longer retains applet (failed experiment)\n"
+
          "B+A: rebuild index   R+A: Horizon check\n"
          "X: refresh   +: exit\n\n%s\n",
          outcome);
@@ -1400,8 +1399,7 @@ int main(int argc, char **argv) {
          * ZR+A = instrumented. ZR takes priority over L. */
         int mode = (held & HidNpadButton_ZR) ? 0 :
                    (held & HidNpadButton_L) ? 2 : 1;
-        run(game, (held & HidNpadButton_B) != 0, mode,
-            (held & HidNpadButton_ZL) != 0);
+        run(game, (held & HidNpadButton_B) != 0, mode);
       }
     }
     draw(&catalog, selected);
