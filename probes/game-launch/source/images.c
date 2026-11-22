@@ -162,11 +162,6 @@ static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
     int preserve=p->original_field!=UINT64_MAX;
     if(!gate(f,m,&cursor,(uint32_t)p->offset,p->gate,
              preserve?&original:0,p->label)){
-      /* Preserve existing compatibility for this optional RO hook. */
-      if(p->gate==(uintptr_t)nx2_ro_initialize_compat){
-        row(f,"RO_INIT_COMPAT_SKIPPED unsafe_or_unpatchable_prologue=1\n");
-        continue;
-      }
       goto fail;
     }
     if(preserve){
