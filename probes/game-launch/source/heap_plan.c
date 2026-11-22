@@ -21,3 +21,14 @@ uint32_t nx2_heap_plan(uint64_t begin, uint64_t bytes, Nx2HeapPlan *out) {
     out->host_bytes = out->game_begin-begin;
     return NX2_HEAP_READY;
 }
+
+/* Preserve actual kernel resource accounting, but only charge the physical
+ * headroom guard when the guest is asking for MORE committed heap pages.
+ * An unchanged or smaller heap request cannot consume additional pages. */
+int nx2_heap_growth_allowed(uint64_t old_size,uint64_t requested_size,
+                            uint64_t free_bytes,uint64_t physical_floor){
+    if(requested_size<=old_size)return 1;
+    uint64_t growth=requested_size-old_size;
+    return growth<=free_bytes &&
+           free_bytes-growth>=physical_floor;
+}
