@@ -49,6 +49,12 @@ int main(void){
               "native cache reader open interface");
  fail+=expect(!nx2_ipc_fsp_allowed(d),
               "cache enumeration never forwarded to host title fsp-srv");
+ put32(p+40,34);
+ d=nx2_ipc_decide(p,sizeof(p),2);
+ fail+=expect(d.valid&&d.domain&&d.object_id==0xc8&&d.command==34,
+              "native GetCacheStorageSize is decoded as FSP command 34");
+ fail+=expect(!nx2_ipc_fsp_allowed(d),
+              "native cache sizes never forwarded to MKW host fsp-srv");
  memset(p,0,sizeof(p));
  put32(p,4);put32(p+4,8);
  p[16]=2;put32(p+20,0xe0000001U);
