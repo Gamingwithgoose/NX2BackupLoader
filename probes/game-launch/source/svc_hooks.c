@@ -137,7 +137,8 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
  const uint64_t increase=size>previous_guest?size-previous_guest:0;
  nx2_rpc(RPC_LOG,previous_guest,size,kernel_size,NX2_NATIVE_PHYSICAL_FLOOR,0,
          "GUEST_HEAP_RESIZE_GUARD",0,0);
- if(increase>available || available-increase<NX2_NATIVE_PHYSICAL_FLOOR) {
+ if(!nx2_heap_growth_allowed(previous_guest,size,available,
+                             NX2_NATIVE_PHYSICAL_FLOOR)) {
    nx2_rpc(RPC_LOG,size,kernel_size,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
            "GUEST_HEAP_BUDGET_REFUSED",0,0);
    return 0xd001;
@@ -679,8 +680,12 @@ static uint32_t physical(uint64_t address,uint64_t bytes,int unmap){
  uint32_t active=__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE);
  uint64_t begin=nx2_native_alias_begin,size=nx2_native_alias_bytes;
  if(!active||!bytes||((address|bytes)&4095)||address<begin||address-begin>size||bytes>size-(address-begin)){
-  nx2_rpc(RPC_ABORT,address,bytes,unmap,0,0,"Physical-memory request outside active native alias region",0,0);
-  for(;;)__asm__ volatile("wfe");
+  /* Reject only this guest SVC and keep the host alive. A legitimate
+   * SDK allocator may recover or retry after an invalid alias request.
+   * Never forward an out-of-region mapping into the host address space. */
+  nx2_rpc(RPC_LOG,address,bytes,unmap,begin,0,
+          "PHYSICAL_ALIAS_RANGE_REFUSED",0,0);
+  return NX2_INVALID;
  }
  uint64_t *counter=unmap?&nx2_native_unmap_calls:&nx2_native_map_calls;
  uint64_t count=__atomic_add_fetch(counter,1,__ATOMIC_RELAXED);
