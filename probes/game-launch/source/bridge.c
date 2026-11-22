@@ -80,7 +80,7 @@ static uint32_t storage_range(void *self,void *out,uint64_t outsize,
  }
  return NX2_FS_UNSUPPORTED;
 }
-static Nx2Object *object(uintptr_t vt,uint64_t handle,uint64_t mode){for(unsigned i=0;i<NX2_OBJECTS;i++){uint64_t expected=0;if(__atomic_compare_exchange_n(&nx2_launch->objects[i].active,&expected,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)){Nx2Object *o=&nx2_launch->objects[i];o->vtable=vt;o->handle=handle;o->mode=mode;return o;}}return 0;}
+static Nx2Object *object(uintptr_t vt,uint64_t handle,uint64_t mode){for(unsigned i=0;i<NX2_OBJECTS;i++){uint64_t expected=0;if(__atomic_compare_exchange_n(&nx2_launch->objects[i].active,&expected,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)){Nx2Object *o=&nx2_launch->objects[i];o->vtable=vt;o->handle=handle;o->mode=mode;o->profile_high=0;return o;}}return 0;}
 static void release_fs(void *p){
  Nx2Object *o=p;
  if(o!=&nx2_launch->save_fs)__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);
@@ -121,6 +121,14 @@ static const char *routed_path(void *self,const void *p,char out[NX2_PATH_MAX]){
  Nx2Object *fs=self;
  if(!fs->active || fs->vtable!=(uintptr_t)&nx2_launch->fs_table[2] ||
     !fs->mode)return 0;
+ if(fs->mode & NX2_PROFILE_FS_MODE){
+  if(fs->mode & NX2_PROFILE_PRIMARY_FLAG)return raw;
+  Nx2UserId uid={fs->handle,fs->profile_high};char prefix[80];
+  if(!nx2_profile_relative(prefix,sizeof(prefix),uid))return 0;
+  while(*raw=='/')raw++;
+  int n=snprintf(out,NX2_PATH_MAX,"%s%s%s",prefix,*raw?"/":"",raw);
+  return n>=0&&n<NX2_PATH_MAX?out:0;
+ }
  while(*raw=='/')raw++;
  int n=snprintf(out,NX2_PATH_MAX,"cache-storage/%llu%s%s",
                 (unsigned long long)(fs->mode-1),*raw?"/":"",raw);
@@ -211,6 +219,39 @@ uint32_t nx2_mount_rom(const char *name,void *cache,uint64_t bytes){void *owned=
 uint32_t nx2_mount_rom_default(const char *name){uint64_t size=0;uint32_t rc=nx2_query_rom(&size);if(rc)return rc;void *cache=arena_alloc(size);if(!cache)return NX2_LIMIT;return nx2_mount_rom(name,cache,size);}
 uint32_t nx2_mount_rom_app(const char *name,uint64_t app,void *p,uint64_t n){(void)app;return nx2_mount_rom(name,p,n);}
 uint32_t nx2_mount_rom_index(const char *name,int index,void *p,uint64_t n){(void)index;return nx2_mount_rom(name,p,n);}
+/* Each game-selected user has an immutable, distinct mounted filesystem.
+ * Preserve the original shared data for one persistently bound UID. */
+static uint32_t mount_save_uid(const char *name,Nx2UserId uid){
+ if(!nx2_profile_has_uid(uid))return nx2_mount_save(name);
+ uint64_t primary=0;
+ uint32_t rc=nx2_rpc(RPC_SAVE_PROFILE_BIND,uid.lo,uid.hi,0,0,0,0,0,&primary);
+ if(rc)return rc;
+ Nx2Object *fs=object((uintptr_t)&nx2_launch->fs_table[2],uid.lo,
+               NX2_PROFILE_FS_MODE|(primary?NX2_PROFILE_PRIMARY_FLAG:0));
+ if(!fs)return NX2_LIMIT;
+ fs->profile_high=uid.hi;
+ void *owned=fs;rc=nx2_launch->api.register_fs(name,&owned);
+ if(rc)__atomic_store_n(&fs->active,0,__ATOMIC_RELEASE);
+ nx2_rpc(RPC_LOG,rc,primary,0,0,0,"SAVE_PROFILE_MOUNT",name,0);
+ return rc;
+}
+uint32_t nx2_mount_save_user_ref(const char *s,const Nx2UserId *u){
+ return mount_save_uid(s,u?*u:(Nx2UserId){0,0});
+}
+uint32_t nx2_mount_save_user_value(const char *s,Nx2UserId u){
+ return mount_save_uid(s,u);
+}
+uint32_t nx2_mount_save_app_user_ref(const char*s,uint64_t app,const Nx2UserId*u){
+ (void)app;return nx2_mount_save_user_ref(s,u);
+}
+uint32_t nx2_mount_save_app_user_value(const char*s,uint64_t app,Nx2UserId u){
+ (void)app;return mount_save_uid(s,u);
+}
+uint32_t nx2_mount_save_detail_user(const char*s,uint32_t space,uint64_t app,
+                          Nx2UserId u,uint32_t type,uint32_t a,uint32_t b){
+ (void)space;(void)app;(void)type;(void)a;(void)b;
+ return mount_save_uid(s,u);
+}
 uint32_t __attribute__((noinline)) nx2_mount_save(const char *name){
  Nx2Launch *l=nx2_launch;
  __atomic_store_n(&l->save_gate_caller,
@@ -282,6 +323,24 @@ uint32_t nx2_save_exists(void){
  uint64_t exists=0;
  uint32_t rc=nx2_rpc(RPC_SAVE_ARCHIVE_EXISTS,0,0,0,0,0,0,0,&exists);
  return !rc && exists?1U:0U;
+}
+uint32_t nx2_save_exists_user_ref(const Nx2UserId *u){
+ if(!u||!nx2_profile_has_uid(*u))return nx2_save_exists();
+ uint64_t exists=0;
+ uint32_t rc=nx2_rpc(RPC_SAVE_PROFILE_EXISTS,u->lo,u->hi,0,0,0,0,0,&exists);
+ return !rc&&exists?1U:0U;
+}
+uint32_t nx2_provision_save_user_ref(const Nx2UserId *u){
+ if(!u||!nx2_profile_has_uid(*u))return nx2_provision_save();
+ return nx2_rpc(RPC_SAVE_PROFILE_CREATE,u->lo,u->hi,0,0,0,0,0,0);
+}
+uint32_t nx2_provision_save_user_value(uint64_t app,Nx2UserId u){
+ (void)app;return nx2_provision_save_user_ref(&u);
+}
+uint32_t nx2_ensure_save_user(uint64_t *required,uint64_t app,
+                             const void *control,const Nx2UserId *u){
+ (void)app;(void)control;if(required)*required=0;
+ return nx2_provision_save_user_ref(u);
 }
 uint32_t nx2_ensure_save(uint64_t *required){
  if(required)*required=0;

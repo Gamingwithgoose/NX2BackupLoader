@@ -170,14 +170,11 @@ static uint32_t nx2_cache_enumerate(Nx2Host *h,uint64_t cursor,
  * A metadata marker OUTSIDE that root indicates a provisioned archive and
  * is never visible as a guest save file. Existing legacy saves (before this
  * marker existed) remain valid if they contain ordinary game content. */
-static int archive_marker_path(Nx2Host *h,char *out,size_t cap){
- return archive_marker_for_root(h->save_root,out,cap);
-}
-static Result archive_exists(Nx2Host *h,uint64_t *exists){
+static Result archive_exists_at(Nx2Host *h,const char *root,uint64_t *exists){
   if(!exists)return NX2_INVALID;
   *exists=0;
   char marker[120];
-  if(!archive_marker_path(h,marker,sizeof(marker)))
+  if(!archive_marker_for_root(root,marker,sizeof(marker)))
     return NX2_INVALID;
   FsDirEntryType type=0;
   Result rc=fsFsGetEntryType(h->sd,marker,&type);
@@ -189,7 +186,7 @@ static Result archive_exists(Nx2Host *h,uint64_t *exists){
   /* Legacy saves predate the archive marker. Check for real game content
    * instead of treating the automatically created mount root as a save. */
   FsDir dir;
-  rc=fsFsOpenDirectory(h->sd,h->save_root,
+  rc=fsFsOpenDirectory(h->sd,root,
                         FsDirOpenMode_ReadFiles|FsDirOpenMode_ReadDirs,&dir);
   if(R_FAILED(rc))return rc;
   FsDirectoryEntry entry;
@@ -198,6 +195,7 @@ static Result archive_exists(Nx2Host *h,uint64_t *exists){
     rc=fsDirRead(&dir,&n,1,&entry);
     if(R_FAILED(rc)||n==0)break;
     if(!strcmp(entry.name,"cache-storage")||
+       !strcmp(entry.name,"profiles")||
        !strncmp(entry.name,"vsave-",6)||
        !strncmp(entry.name,".nx2-",5))continue;
     *exists=1;
@@ -206,9 +204,9 @@ static Result archive_exists(Nx2Host *h,uint64_t *exists){
   fsDirClose(&dir);
   return rc;
 }
-static Result archive_provision(Nx2Host *h){
+static Result archive_provision_at(Nx2Host *h,const char *root){
   char marker[120];
-  if(!archive_marker_path(h,marker,sizeof(marker)))
+  if(!archive_marker_for_root(root,marker,sizeof(marker)))
     return NX2_INVALID;
   FsDirEntryType type=0;
   Result rc=fsFsGetEntryType(h->sd,marker,&type);
@@ -220,6 +218,55 @@ static Result archive_provision(Nx2Host *h){
   if(R_SUCCEEDED(rc))return 0;
   Result after=fsFsGetEntryType(h->sd,marker,&type);
   return R_SUCCEEDED(after)&&type==FsDirEntryType_File?0:rc;
+}
+/* Bind the old flat save directory to the first explicitly chosen user.
+ * The binding is outside the guest-visible root and never overwritten:
+ * subsequent users receive independent subdirectories. */
+static Result profile_scope(Nx2Host *h,Nx2UserId uid,int create,
+                            char root[620],int *primary){
+ if(!h||!primary||!root||!nx2_profile_has_uid(uid))return NX2_INVALID;
+ uint64_t hash=UINT64_C(14695981039346656037);
+ for(const unsigned char *p=(const unsigned char*)h->save_root;*p;p++){
+  hash^=*p;hash*=UINT64_C(1099511628211);
+ }
+ char marker[160],disk[170];FsDirEntryType type=0;
+ int n=snprintf(marker,sizeof(marker),
+        "/switch/BackupLoaderMKW/.nx2-primary-%016llx",
+        (unsigned long long)hash);
+ if(n<0||n>=(int)sizeof(marker))return NX2_INVALID;
+ n=snprintf(disk,sizeof(disk),"sdmc:%s",marker);
+ if(n<0||n>=(int)sizeof(disk))return NX2_INVALID;
+ Result rc=fsFsGetEntryType(h->sd,marker,&type);
+ uint64_t record[3]={0};
+ if(R_SUCCEEDED(rc)){
+  if(type!=FsDirEntryType_File)return NX2_INVALID;
+  FILE *f=fopen(disk,"rb");if(!f)return NX2_INVALID;
+  size_t count=fread(record,1,sizeof(record),f);int closed=fclose(f);
+  if(count!=sizeof(record)||closed||
+     record[0]!=NX2_PROFILE_MARKER_MAGIC||
+     (!record[1]&&!record[2]))return NX2_INVALID;
+ }else if(rc==NX2_NOT_FOUND){
+  record[0]=NX2_PROFILE_MARKER_MAGIC;
+  record[1]=uid.lo;record[2]=uid.hi;
+  FILE *f=fopen(disk,"wb");if(!f)return NX2_INVALID;
+  size_t count=fwrite(record,1,sizeof(record),f);
+  int flushed=fflush(f),closed=fclose(f);
+  if(count!=sizeof(record)||flushed||closed)return NX2_INVALID;
+  logline(h,"SAVE_PROFILE_PRIMARY_BOUND old_save_kept_in_place=1\n");
+ }else return rc;
+ *primary=(record[1]==uid.lo&&record[2]==uid.hi);
+ if(*primary){
+  n=snprintf(root,620,"%s",h->save_root);
+  return n>0&&n<620?0:NX2_INVALID;
+ }
+ char rel[80];if(!nx2_profile_relative(rel,sizeof(rel),uid))return NX2_INVALID;
+ n=snprintf(root,620,"%s/%s",h->save_root,rel);
+ if(n<0||n>=620)return NX2_INVALID;
+ if(!create)return 0;
+ char parent[600];n=snprintf(parent,sizeof(parent),"%s/profiles",h->save_root);
+ if(n<0||n>=(int)sizeof(parent))return NX2_INVALID;
+ rc=mkdir_one(h->sd,parent);if(R_FAILED(rc))return rc;
+ return mkdir_one(h->sd,root);
 }
 static uint64_t token(Nx2Host *h, unsigned i) {
   if (!++h->handles[i].generation)
@@ -337,16 +384,41 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   switch (r->op) {
   case RPC_SAVE_ARCHIVE_EXISTS: {
     uint64_t exists=0;
-    rc=archive_exists(h,&exists);
+    rc=archive_exists_at(h,h->save_root,&exists);
     if(R_SUCCEEDED(rc))r->answer=exists;
     logline(h,"GUEST_SAVE_ARCHIVE_EXISTS result=%08x exists=%llu root=%s\n",
             rc,(unsigned long long)exists,h->save_root);
     break;
   }
   case RPC_SAVE_ARCHIVE_CREATE: {
-    rc=archive_provision(h);
+    rc=archive_provision_at(h,h->save_root);
     logline(h,"GUEST_SAVE_ARCHIVE_CREATE result=%08x root=%s\n",
             rc,h->save_root);
+    break;
+  }
+  case RPC_SAVE_PROFILE_BIND:
+  case RPC_SAVE_PROFILE_EXISTS:
+  case RPC_SAVE_PROFILE_CREATE: {
+    Nx2UserId uid={r->a,r->b};char root[620];int primary=0;
+    rc=profile_scope(h,uid,r->op!=RPC_SAVE_PROFILE_EXISTS,root,&primary);
+    if(R_SUCCEEDED(rc)){
+      r->answer=(uint64_t)primary;
+      if(r->op==RPC_SAVE_PROFILE_CREATE)
+        rc=archive_provision_at(h,root);
+      if(r->op==RPC_SAVE_PROFILE_EXISTS){
+        FsDirEntryType type=0;uint64_t exists=0;
+        Result q=fsFsGetEntryType(h->sd,root,&type);
+        if(q==NX2_NOT_FOUND){rc=0;r->answer=0;}
+        else if(R_FAILED(q))rc=q;
+        else if(type!=FsDirEntryType_Dir)rc=NX2_INVALID;
+        else{
+          rc=archive_exists_at(h,root,&exists);
+          if(!rc)r->answer=exists;
+        }
+      }
+    }
+    logline(h,"SAVE_PROFILE_ROUTE operation=%u result=%08x primary=%d\n",
+            r->op,rc,primary);
     break;
   }
   case RPC_VFS_PREPARE_ROOT: {

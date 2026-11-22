@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #pragma once
 #include <stdint.h>
+#include "profile_save.h"
 #include <stddef.h>
 #include "rom_view.h"
 #define NX2_RPC_SLOTS 16
@@ -12,7 +13,7 @@
 #define NX2_NOT_FOUND 0x202U
 #define NX2_LIMIT 0x2f6a02U
 
-enum {RPC_ROM_READ=1,RPC_SAVE_CREATE,RPC_SAVE_DELETE,RPC_SAVE_MKDIR,RPC_SAVE_RMDIR,RPC_SAVE_RMTREE,RPC_SAVE_CLEAN,RPC_SAVE_RENAME_FILE,RPC_SAVE_RENAME_DIR,RPC_SAVE_TYPE,RPC_SAVE_FREE,RPC_SAVE_TOTAL,RPC_SAVE_OPEN,RPC_SAVE_READ,RPC_SAVE_WRITE,RPC_SAVE_FLUSH,RPC_SAVE_RESIZE,RPC_SAVE_SIZE,RPC_SAVE_CLOSE,RPC_DIR_OPEN,RPC_DIR_READ,RPC_DIR_COUNT,RPC_DIR_CLOSE,RPC_COMMIT,RPC_LOG,RPC_ABORT,RPC_MAIN_ENTERED,RPC_ROM_MOUNT,RPC_SAVE_MOUNT,RPC_IPC,RPC_SAVE_TIMESTAMP,RPC_BREAK,RPC_PHYSICAL_MEMORY,RPC_CACHE_CREATE,RPC_CACHE_CHECK,RPC_VFS_PREPARE_ROOT,RPC_SAVE_ARCHIVE_EXISTS,RPC_SAVE_ARCHIVE_CREATE,RPC_CACHE_ENUM,RPC_SAVE_OPERATE_RANGE,RPC_CACHE_QUERY_SIZE,RPC_CACHE_PROVISION};
+enum {RPC_ROM_READ=1,RPC_SAVE_CREATE,RPC_SAVE_DELETE,RPC_SAVE_MKDIR,RPC_SAVE_RMDIR,RPC_SAVE_RMTREE,RPC_SAVE_CLEAN,RPC_SAVE_RENAME_FILE,RPC_SAVE_RENAME_DIR,RPC_SAVE_TYPE,RPC_SAVE_FREE,RPC_SAVE_TOTAL,RPC_SAVE_OPEN,RPC_SAVE_READ,RPC_SAVE_WRITE,RPC_SAVE_FLUSH,RPC_SAVE_RESIZE,RPC_SAVE_SIZE,RPC_SAVE_CLOSE,RPC_DIR_OPEN,RPC_DIR_READ,RPC_DIR_COUNT,RPC_DIR_CLOSE,RPC_COMMIT,RPC_LOG,RPC_ABORT,RPC_MAIN_ENTERED,RPC_ROM_MOUNT,RPC_SAVE_MOUNT,RPC_IPC,RPC_SAVE_TIMESTAMP,RPC_BREAK,RPC_PHYSICAL_MEMORY,RPC_CACHE_CREATE,RPC_CACHE_CHECK,RPC_VFS_PREPARE_ROOT,RPC_SAVE_ARCHIVE_EXISTS,RPC_SAVE_ARCHIVE_CREATE,RPC_CACHE_ENUM,RPC_SAVE_OPERATE_RANGE,RPC_CACHE_QUERY_SIZE,RPC_CACHE_PROVISION,RPC_SAVE_PROFILE_BIND,RPC_SAVE_PROFILE_EXISTS,RPC_SAVE_PROFILE_CREATE};
 typedef struct {
  uint32_t state,op,result,reserved;
  uint64_t a,b,c,d,answer;
@@ -25,7 +26,7 @@ typedef struct {
  uint64_t caller,thread;
  uint32_t op,phase,result,sequence;
 } Nx2RpcTrace;
-typedef struct {uintptr_t vtable;uint64_t active,handle,mode;} Nx2Object;
+typedef struct {uintptr_t vtable;uint64_t active,handle,mode,profile_high;} Nx2Object;
 typedef struct {
  void (*os_init)(uint32_t,const void *);
  void (*set_fs_allocator)(void *(*)(uint64_t),void (*)(void *,uint64_t));
@@ -161,6 +162,15 @@ uint32_t nx2_mount_rom_index(const char *,int,void *,uint64_t);
 uint32_t nx2_query_rom_app(uint64_t *,uint64_t);
 uint32_t nx2_query_rom_index(uint64_t *,int);
 uint32_t nx2_mount_save(const char *);
+uint32_t nx2_mount_save_user_ref(const char *,const Nx2UserId *);
+uint32_t nx2_mount_save_user_value(const char *,Nx2UserId);
+uint32_t nx2_mount_save_app_user_ref(const char *,uint64_t,const Nx2UserId *);
+uint32_t nx2_mount_save_app_user_value(const char *,uint64_t,Nx2UserId);
+uint32_t nx2_mount_save_detail_user(const char *,uint32_t,uint64_t,Nx2UserId,uint32_t,uint32_t,uint32_t);
+uint32_t nx2_save_exists_user_ref(const Nx2UserId *);
+uint32_t nx2_provision_save_user_ref(const Nx2UserId *);
+uint32_t nx2_provision_save_user_value(uint64_t,Nx2UserId);
+uint32_t nx2_ensure_save_user(uint64_t *,uint64_t,const void *,const Nx2UserId *);
 /* Per-title cache storage is backed by isolated SD directories, not by
  * the host application's native cache quotas. No fake success. */
 uint32_t nx2_create_cache_storage(int,int64_t,int64_t);
