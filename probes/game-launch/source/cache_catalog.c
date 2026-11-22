@@ -14,6 +14,22 @@ int nx2_cache_parse_index(const char *name,uint16_t *index){
  }
  *index=(uint16_t)n;return 1;
 }
+static uint64_t get64(const unsigned char *p){
+ uint64_t v=0;
+ for(unsigned i=0;i<8;i++)v|=(uint64_t)p[i]<<(i*8);
+ return v;
+}
+int nx2_cache_unpack_quota(const void *bytes,size_t length,
+                           uint64_t *data_size,uint64_t *journal_size){
+ if(!bytes||length!=24||!data_size||!journal_size)return 0;
+ const unsigned char *p=bytes;
+ uint64_t magic=get64(p),data=get64(p+8),journal=get64(p+16);
+ if(magic!=NX2_CACHE_QUOTA_MAGIC || data>INT64_MAX ||
+    journal>INT64_MAX || data>INT64_MAX-journal)return 0;
+ *data_size=data;
+ *journal_size=journal;
+ return 1;
+}
 int nx2_cache_pack_info(void *output,size_t length,uint64_t guest_id,
                         uint16_t index,uint64_t data_size,uint64_t journal_size){
  if(!output||length<NX2_CACHE_INFO_BYTES||!guest_id||
