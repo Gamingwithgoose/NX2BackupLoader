@@ -263,3 +263,8 @@ Current code identified **two verifiable compatibility defects** across titles, 
 
 
 **IFile range API correction (same pass, before hardware testing):** The `FsOperationId` enum has op 0 = Clear (destructive), op 2 = InvalidateCache, op 3 = QueryRange. The earlier pass initially accepted 0,3 and has now been corrected in both guest and host implementations to accept only 2,3, explicitly refusing destructive op 0 and 1. Only the final experimental branch head including commits `0ec5816` / `91964c3` should be built.
+
+
+### 2026-11-22 — Confirmed Minecraft FSP cmd34 SDK Break and actual cache size handling
+
+Minecraft NUP entered nnMain and enumerated all three cached stores (cmd62 virtual ISaveDataInfoReader, reader cmd0: cursor 0/1/2 returned 1 each, cursor 3 returned 0), then called root fsp-srv cmd34 on domain object 0xb0. Loader returned NX2_FS_UNSUPPORTED (0x00310002); guest sdk immediately invoked Break with same result and stack trace. Correct IFileSystemProxy cmd34 is GetCacheStorageSize (u16 index -> u64 size, u64 journal), NOT a transfer-exporter operation. Implemented guest-only cmd34 with real size/journal read from selected title's existing `.nx2-capacity-N` marker and verifies underlying directory; shared validator now used in both cmd62 enumeration and cmd34, with GCC -Werror portable tests PASS. No Yoshi ROMFS streaming changes. Kirby still no presents after device+2 queues+window+2 submits; OOT still no presents after 7 queues+window+submit/finish and >160MB streaming. Neither has a captured guest CPU break, so graphics-stage cause unproven. Native compilation and hardware effects remain unverified. Next focused hardware check: Minecraft Fast NUP.
