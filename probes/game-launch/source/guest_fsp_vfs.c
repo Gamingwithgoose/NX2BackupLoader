@@ -127,14 +127,24 @@ static uint64_t read64(const void *p){
 static void put32(void *p,uint32_t v){
  unsigned char *b=p;for(unsigned i=0;i<4;i++)b[i]=(unsigned char)(v>>(8*i));
 }
+/* Guest buffers may legitimately span adjacent virtual-memory regions.
+ * Validate every covered region with the real kernel instead of insisting
+ * one svcQueryMemory descriptor cover the entire transfer. */
 static int valid_memory(const void *ptr,uint64_t bytes,int writable){
  uintptr_t at=(uintptr_t)ptr;
- if(!ptr||!bytes||bytes>0x1000000U||at>UINTPTR_MAX-bytes)return 0;
- MemoryInfo mi;u32 page;
- Result rc=svcQueryMemory(&mi,&page,at);
- if(R_FAILED(rc)||mi.addr>at||mi.size>UINTPTR_MAX-mi.addr||
-    mi.addr+mi.size-at<bytes)return 0;
- return (mi.perm&(writable?2U:1U))==(writable?2U:1U);
+ if(!ptr||!bytes||bytes>0x4000000U||at>UINTPTR_MAX-bytes)return 0;
+ const uintptr_t end=at+(uintptr_t)bytes;
+ const uint32_t permission=writable?2U:1U;
+ while(at<end){
+  MemoryInfo mi;u32 page=0;
+  Result rc=svcQueryMemory(&mi,&page,at);
+  if(R_FAILED(rc)||mi.addr>at||mi.size>UINTPTR_MAX-mi.addr||
+     mi.addr+mi.size<=at||(mi.perm&permission)!=permission)
+   return 0;
+  uintptr_t next=mi.addr+mi.size;
+  at=next<end?next:end;
+ }
+ return 1;
 }
 /* Raw reply never passes a fabricated handle to the kernel. The virtual
  * domain object ID exists only in this guest-side dispatcher. */
@@ -286,7 +296,7 @@ static int data_buffer(const HipcParsedRequest *req,int output,
    *dst=hipcGetStaticAddress(v);*size=hipcGetStaticSize(v);
   }
  }
- return *size && *size<=0x1000000U && valid_memory(*dst,*size,output);
+ return *size && *size<=0x4000000U && valid_memory(*dst,*size,output);
 }
 static int scoped_path(const VfsObject *obj,const char *path,
                        char out[NX2_PATH_MAX]){
@@ -402,12 +412,29 @@ static uint32_t do_file(const VfsObject *obj,uint32_t cmd,
     return 0;
    }
    void *buf=0;uint64_t cap=0;
-   if(n>0x1000000U||!data_buffer(rq,cmd==0,&buf,&cap)||n>cap)
+   if(n>0x4000000U||n>UINT64_MAX-offset||
+      !data_buffer(rq,cmd==0,&buf,&cap)||n>cap)
     return NX2_INVALID;
-   uint32_t rc=nx2_rpc(cmd==0?RPC_SAVE_READ:RPC_SAVE_WRITE,
-                       obj->token,offset,n,read32(in),buf,0,0,&answer);
-   if(!rc&&cmd==0){memcpy(out,&answer,8);*out_size=8;}
-   return rc;
+   /* Complete large valid save IO in 1 MiB chunks, keeping the
+    * single storage worker responsive to other guest operations. */
+   uint64_t processed=0;
+   while(processed<n){
+    uint64_t amount=n-processed;
+    if(amount>0x100000U)amount=0x100000U;
+    uint64_t transferred=0;
+    uint32_t flags=(cmd==1 && processed+amount==n)?read32(in):0;
+    uint32_t rc=nx2_rpc(cmd==0?RPC_SAVE_READ:RPC_SAVE_WRITE,
+                        obj->token,offset+processed,amount,flags,
+                        (unsigned char*)buf+processed,0,0,&transferred);
+    if(rc)return rc;
+    if(cmd==0){
+     if(transferred>amount)return NX2_INVALID;
+     processed+=transferred;
+     if(transferred<amount)break;
+    }else processed+=amount;
+   }
+   if(cmd==0){memcpy(out,&processed,8);*out_size=8;}
+   return 0;
   }
   case 2:return nx2_rpc(RPC_SAVE_FLUSH,obj->token,0,0,0,0,0,0,0);
   case 3:
