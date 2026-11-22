@@ -165,14 +165,14 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
  return 0;
 }
 uint32_t nx2_rtld_query(void *memory,uint32_t *page,uint64_t address){Nx2Launch *l=nx2_launch;uint64_t begin=0,end=UINT64_C(0x8000000000);uint32_t type=0,perm=0;for(uint32_t i=0;i<l->region_count;i++){Nx2Region *r=&l->regions[i];if(address>=r->begin&&address<r->end){begin=r->begin;end=r->end;type=r->type;perm=r->permission;break;}if(r->end<=address&&r->end>begin)begin=r->end;if(r->begin>address&&r->begin<end)end=r->begin;}if(!memory)return 0xdc01;if(address>=UINT64_C(0x8000000000)){begin=UINT64_C(0x8000000000);end=0;type=0x10;perm=0;}uint64_t *q=memory;uint32_t *w=memory;q[0]=begin;q[1]=end-begin;w[4]=type;w[5]=0;w[6]=perm;w[7]=w[8]=w[9]=0;if(page)*page=0;return 0;}
-static uint32_t tag(uint32_t h){for(unsigned i=0;i<128;i++){uint64_t v=__atomic_load_n(&nx2_launch->handle_tags[i],__ATOMIC_ACQUIRE);if((uint32_t)v==h&&h)return v>>32;}return 0;}
-static void set_tag(uint32_t h,uint32_t kind){if(!h)return;for(unsigned i=0;i<128;i++){uint64_t v=__atomic_load_n(&nx2_launch->handle_tags[i],__ATOMIC_RELAXED);if((uint32_t)v==h){__atomic_store_n(&nx2_launch->handle_tags[i],kind?((uint64_t)kind<<32)|h:0,__ATOMIC_RELEASE);return;}}if(!kind)return;for(unsigned i=0;i<128;i++){uint64_t expected=0;if(__atomic_compare_exchange_n(&nx2_launch->handle_tags[i],&expected,((uint64_t)kind<<32)|h,0,__ATOMIC_RELEASE,__ATOMIC_RELAXED))return;}nx2_rpc(RPC_ABORT,h,0,0,0,0,"Service handle tag table full",0,0);for(;;)__asm__ volatile("wfe");}
+static uint32_t tag(uint32_t h){for(unsigned i=0;i<2048;i++){uint64_t v=__atomic_load_n(&nx2_launch->handle_tags[i],__ATOMIC_ACQUIRE);if((uint32_t)v==h&&h)return v>>32;}return 0;}
+static void set_tag(uint32_t h,uint32_t kind){if(!h)return;for(unsigned i=0;i<2048;i++){uint64_t v=__atomic_load_n(&nx2_launch->handle_tags[i],__ATOMIC_RELAXED);if((uint32_t)v==h){__atomic_store_n(&nx2_launch->handle_tags[i],kind?((uint64_t)kind<<32)|h:0,__ATOMIC_RELEASE);return;}}if(!kind)return;for(unsigned i=0;i<2048;i++){uint64_t expected=0;if(__atomic_compare_exchange_n(&nx2_launch->handle_tags[i],&expected,((uint64_t)kind<<32)|h,0,__ATOMIC_RELEASE,__ATOMIC_RELAXED))return;}nx2_rpc(RPC_ABORT,h,0,0,0,0,"Service handle tag table full",0,0);for(;;)__asm__ volatile("wfe");}
 uint32_t nx2_connect(uint32_t *out,const char *name){nx2_rpc(RPC_LOG,0x1f,0,0,0,0,"CONNECT_TO_NAMED_PORT_BEGIN",name,0);uint32_t rc=nx2_raw_connect(out,name);if(!rc&&name&&name[0]=='s'&&name[1]=='m'&&name[2]==':'&&!name[3])set_tag(*out,1);nx2_rpc(RPC_LOG,rc,rc?0:*out,0x1f,0,0,"CONNECT_TO_NAMED_PORT_RESULT",name,0);return rc;}
 static uint32_t word(const unsigned char *p){return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 /* Best-effort diagnostic ownership, deliberately separate from the SM/FSP
  * enforcement tags. A slot never authorizes an IPC request. */
 typedef struct {uint32_t handle;char service[9];uint8_t root_first_pending;} Nx2IpcTraceHandle;
-static Nx2IpcTraceHandle ipc_owners[256];
+static Nx2IpcTraceHandle ipc_owners[1024];
 static volatile uint32_t ipc_trace_lock;
 static void trace_lock(void){
  while(__atomic_exchange_n(&ipc_trace_lock,1,__ATOMIC_ACQUIRE))
@@ -182,25 +182,25 @@ static void trace_unlock(void){__atomic_store_n(&ipc_trace_lock,0,__ATOMIC_RELEA
 /* A single FSP session handle can contain multiple CMIF domain objects.
  * Only grant a read-only reader's command to its specific object ID. */
 typedef struct {uint32_t handle,object,kind;} Nx2DomainCapability;
-static Nx2DomainCapability domain_caps[128];
+static Nx2DomainCapability domain_caps[512];
 static void domain_cap_set(uint32_t h,uint32_t object,uint32_t kind){
  if(!h||!object||!kind)return;
  trace_lock();
- unsigned slot=128;
- for(unsigned i=0;i<128;i++){
+ unsigned slot=512;
+ for(unsigned i=0;i<512;i++){
    if(domain_caps[i].handle==h && domain_caps[i].object==object){
      slot=i;break;
    }
-   if(slot==128 && !domain_caps[i].handle)slot=i;
+   if(slot==512 && !domain_caps[i].handle)slot=i;
  }
- if(slot<128)
+ if(slot<512)
    domain_caps[slot]=(Nx2DomainCapability){h,object,kind};
  trace_unlock();
 }
 static uint32_t domain_cap_kind(uint32_t h,uint32_t object){
  uint32_t kind=0;
  trace_lock();
- for(unsigned i=0;i<128;i++){
+ for(unsigned i=0;i<512;i++){
    if(domain_caps[i].handle==h && domain_caps[i].object==object){
      kind=domain_caps[i].kind;break;
    }
@@ -215,16 +215,16 @@ static unsigned domain_cap_clone_handle(uint32_t source,uint32_t clone){
  if(!source||!clone||source==clone)return 0;
  unsigned copied=0;
  trace_lock();
- for(unsigned i=0;i<128;i++){
+ for(unsigned i=0;i<512;i++){
   if(domain_caps[i].handle!=source||domain_caps[i].kind!=3)continue;
   uint32_t object=domain_caps[i].object;
-  unsigned free_slot=128,already=0;
-  for(unsigned j=0;j<128;j++){
+  unsigned free_slot=512,already=0;
+  for(unsigned j=0;j<512;j++){
    if(domain_caps[j].handle==clone &&
       domain_caps[j].object==object){already=1;break;}
-   if(free_slot==128&&!domain_caps[j].handle)free_slot=j;
+   if(free_slot==512&&!domain_caps[j].handle)free_slot=j;
   }
-  if(!already&&free_slot<128){
+  if(!already&&free_slot<512){
    domain_caps[free_slot]=(Nx2DomainCapability){clone,object,3};
    copied++;
   }
@@ -234,13 +234,13 @@ static unsigned domain_cap_clone_handle(uint32_t source,uint32_t clone){
 }
 static void domain_cap_forget_handle(uint32_t h){
  trace_lock();
- for(unsigned i=0;i<128;i++)if(domain_caps[i].handle==h)
+ for(unsigned i=0;i<512;i++)if(domain_caps[i].handle==h)
    domain_caps[i]=(Nx2DomainCapability){0};
  trace_unlock();
 }
 static void domain_cap_forget_object(uint32_t h,uint32_t object){
  trace_lock();
- for(unsigned i=0;i<128;i++)
+ for(unsigned i=0;i<512;i++)
    if(domain_caps[i].handle==h && domain_caps[i].object==object)
      domain_caps[i]=(Nx2DomainCapability){0};
  trace_unlock();
@@ -248,12 +248,12 @@ static void domain_cap_forget_object(uint32_t h,uint32_t object){
 static void trace_owner(uint32_t h,const char *name,int is_service_root){
  if(!h||!name||!name[0])return;
  trace_lock();
- unsigned slot=256;
- for(unsigned i=0;i<256;i++){
+ unsigned slot=1024;
+ for(unsigned i=0;i<1024;i++){
    if(ipc_owners[i].handle==h){slot=i;break;}
-   if(slot==256&&!ipc_owners[i].handle)slot=i;
+   if(slot==1024&&!ipc_owners[i].handle)slot=i;
  }
- if(slot<256){
+ if(slot<1024){
    if(ipc_owners[slot].handle!=h)ipc_owners[slot].root_first_pending=0;
    ipc_owners[slot].handle=h;
    unsigned i=0;for(;i<8&&name[i];i++)ipc_owners[slot].service[i]=name[i];
@@ -265,7 +265,7 @@ static void trace_owner(uint32_t h,const char *name,int is_service_root){
 static int trace_claim_first_root(uint32_t h){
  int found=0;
  trace_lock();
- for(unsigned i=0;i<256;i++){
+ for(unsigned i=0;i<1024;i++){
    if(ipc_owners[i].handle==h && ipc_owners[i].root_first_pending){
      ipc_owners[i].root_first_pending=0;
      found=1;break;
@@ -277,7 +277,7 @@ static int trace_claim_first_root(uint32_t h){
 static void trace_name(uint32_t h,char out[9]){
  out[0]=0;
  trace_lock();
- for(unsigned i=0;i<256;i++)if(ipc_owners[i].handle==h){
+ for(unsigned i=0;i<1024;i++)if(ipc_owners[i].handle==h){
    for(unsigned j=0;j<9;j++)out[j]=ipc_owners[i].service[j];
    break;
  }
@@ -285,7 +285,7 @@ static void trace_name(uint32_t h,char out[9]){
 }
 static void trace_forget(uint32_t h){
  trace_lock();
- for(unsigned i=0;i<256;i++)if(ipc_owners[i].handle==h){
+ for(unsigned i=0;i<1024;i++)if(ipc_owners[i].handle==h){
    ipc_owners[i].handle=0;ipc_owners[i].service[0]=0;
    ipc_owners[i].root_first_pending=0;break;
  }
