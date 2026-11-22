@@ -87,8 +87,51 @@ static void release_fs(void *p){
 }
 static void release_file(void *p){Nx2Object *o=p;if(o->active){nx2_rpc(RPC_SAVE_CLOSE,o->handle,0,0,0,0,0,0,0);__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);}}
 static void release_dir(void *p){Nx2Object *o=p;if(o->active){nx2_rpc(RPC_DIR_CLOSE,o->handle,0,0,0,0,0,0,0);__atomic_store_n(&o->active,0,__ATOMIC_RELEASE);}}
-static uint32_t file_read(void *p,uint64_t *read,int64_t offset,void *buf,uint64_t size,const void *option){(void)option;Nx2Object *o=p;if(offset<0||!read)return NX2_INVALID;uint64_t n=0;uint32_t rc=nx2_rpc(RPC_SAVE_READ,o->handle,offset,size,0,buf,0,0,&n);*read=n;return rc;}
-static uint32_t file_write(void *p,int64_t offset,const void *buf,uint64_t size,const void *option){Nx2Object *o=p;if(offset<0)return NX2_INVALID;return nx2_rpc(RPC_SAVE_WRITE,o->handle,offset,size,option?w(option):0,(void *)buf,0,0,0);}
+/* No guest-visible transfer ceiling: forward genuine IFile reads in fair
+ * 1-MiB increments and preserve native EOF and actual-byte semantics. */
+static uint32_t file_read(void *p,uint64_t *read,int64_t offset,void *buf,
+                          uint64_t size,const void *option){
+ (void)option;
+ if(!p||!read||!nx2_save_read_request_valid((uint64_t)offset,size)||
+    (size&&!buf))return NX2_INVALID;
+ Nx2Object *o=p;
+ uint64_t done=0;
+ do{
+  uint64_t amount=size-done;
+  if(amount>0x100000U)amount=0x100000U;
+  uint64_t got=0;
+  uint32_t error=nx2_rpc(RPC_SAVE_READ,o->handle,
+                 (uint64_t)offset+done,amount,0,
+                 amount?(unsigned char*)buf+done:buf,0,0,&got);
+  if(error)return error;
+  if(got>amount)return NX2_INVALID;
+  done+=got;
+  if(got<amount)break;
+ }while(done<size);
+ *read=done;
+ return 0;
+}
+/* Flush is applied only to the final native write chunk. Zero-sized writes
+ * still reach the real filesystem, retaining its handle/mode validation. */
+static uint32_t file_write(void *p,int64_t offset,const void *buf,
+                           uint64_t size,const void *option){
+ uint32_t flags=option?w(option):0;
+ if(!p||!nx2_save_write_request_valid((uint64_t)offset,size,flags)||
+    (size&&!buf))return NX2_INVALID;
+ Nx2Object *o=p;
+ uint64_t done=0;
+ do{
+  uint64_t amount=size-done;
+  if(amount>0x100000U)amount=0x100000U;
+  uint32_t last=(done+amount==size)?flags:0;
+  uint32_t error=nx2_rpc(RPC_SAVE_WRITE,o->handle,
+              (uint64_t)offset+done,amount,last,
+              amount?(unsigned char*)buf+done:(void*)buf,0,0,0);
+  if(error)return error;
+  done+=amount;
+ }while(done<size);
+ return 0;
+}
 static uint32_t file_flush(void *p){return nx2_rpc(RPC_SAVE_FLUSH,((Nx2Object *)p)->handle,0,0,0,0,0,0,0);}
 static uint32_t file_resize(void *p,int64_t n){if(n<0)return NX2_INVALID;return nx2_rpc(RPC_SAVE_RESIZE,((Nx2Object *)p)->handle,n,0,0,0,0,0,0);}
 static uint32_t file_size(void *p,int64_t *n){uint64_t size=0;uint32_t rc=nx2_rpc(RPC_SAVE_SIZE,((Nx2Object *)p)->handle,0,0,0,0,0,0,&size);if(n)*n=(int64_t)size;return n?rc:NX2_INVALID;}
@@ -195,7 +238,29 @@ static uint32_t open_dir(void *s,void **out,const void *p,uint32_t mode){
 static uint32_t commit(void *s){(void)s;return nx2_rpc(RPC_COMMIT,0,0,0,0,0,0,0,0);}
 static uint32_t commit_provisional(void *s,int64_t id){(void)id;return commit(s);}
 static uint32_t unsupported(void *s){(void)s;return NX2_FS_UNSUPPORTED;}
-static uint32_t dir_read(void *s,uint64_t *out,void *entries,int64_t max){if(!out||max<0)return NX2_INVALID;uint64_t n=0;uint32_t rc=nx2_rpc(RPC_DIR_READ,((Nx2Object *)s)->handle,max,0,0,entries,0,0,&n);*out=n;return rc;}
+/* The real kernel directory entry is 0x310 bytes; 1,024 entries is a
+ * per-RPC fairness batch, NOT an externally visible directory limit. */
+static uint32_t dir_read(void *s,uint64_t *out,void *entries,int64_t max){
+ if(!s||!out||max<0||(max&&!entries)||
+    (uint64_t)max>UINTPTR_MAX/0x310U ||
+    ((uint64_t)max && (uintptr_t)entries>
+      UINTPTR_MAX-(uint64_t)max*0x310U))return NX2_INVALID;
+ uint64_t done=0,capacity=(uint64_t)max;
+ do{
+  uint64_t batch=capacity-done;
+  if(batch>1024)batch=1024;
+  uint64_t actual=0;
+  uint32_t error=nx2_rpc(RPC_DIR_READ,((Nx2Object*)s)->handle,
+                batch,0,0,batch?(unsigned char*)entries+done*0x310U:entries,
+                0,0,&actual);
+  if(error)return error;
+  if(actual>batch)return NX2_INVALID;
+  done+=actual;
+  if(actual<batch)break;
+ }while(done<capacity);
+ *out=done;
+ return 0;
+}
 static uint32_t dir_count(void *s,int64_t *out){uint64_t n=0;uint32_t rc=nx2_rpc(RPC_DIR_COUNT,((Nx2Object *)s)->handle,0,0,0,0,0,0,&n);if(out)*out=(int64_t)n;return out?rc:NX2_INVALID;}
 static uint32_t timestamp(void *self,void *out,const void *p){
  if(!out)return NX2_INVALID;

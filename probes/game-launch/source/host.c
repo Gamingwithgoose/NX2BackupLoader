@@ -650,11 +650,24 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     if (!f)
       return NX2_INVALID;
     if (r->op == RPC_SAVE_READ) {
-      u64 read = 0;
-      if (r->c > 0x10000000)
-        return NX2_LIMIT;
-      rc = fsFileRead(&f->file, r->b, r->buffer, r->c, 0, &read);
-      r->answer = read;
+      if(!nx2_save_read_request_valid(r->b,r->c) ||
+         (r->c&&!r->buffer))return NX2_INVALID;
+      u64 processed=0;
+      /* Real FS reads; 1-MiB batches prevent a huge guest call from
+       * monopolizing the storage worker and preserve true short reads. */
+      do{
+        u64 amount=r->c-processed;
+        if(amount>0x100000U)amount=0x100000U;
+        u64 got=0;
+        rc=fsFileRead(&f->file,(s64)(r->b+processed),
+                      amount?(unsigned char*)r->buffer+processed:r->buffer,
+                      amount,0,&got);
+        if(R_FAILED(rc))break;
+        if(got>amount){rc=NX2_INVALID;break;}
+        processed+=got;
+        if(got<amount)break;
+      }while(processed<r->c);
+      r->answer=processed;
     } else if (r->op == RPC_SAVE_WRITE) {
       /* Let the real SD filesystem enforce capacity and permissions.
        * Validate signed ABI arithmetic, buffer presence, and options. */

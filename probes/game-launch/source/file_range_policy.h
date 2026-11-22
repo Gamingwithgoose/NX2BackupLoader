@@ -14,5 +14,6 @@ int nx2_save_create_request_valid(uint64_t size,uint64_t flags);
 
 /* Native IFile writes and resizes accept signed 64-bit positions and sizes;
  * there is no separate 1 GiB loader cap. */
+int nx2_save_read_request_valid(uint64_t offset,uint64_t size);
 int nx2_save_write_request_valid(uint64_t offset,uint64_t size,uint64_t options);
 int nx2_save_resize_request_valid(uint64_t size);

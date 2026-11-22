@@ -17,6 +17,10 @@ int nx2_save_create_request_valid(uint64_t size,uint64_t flags){
  return size<=INT64_MAX && (flags & ~UINT64_C(1))==0;
 }
 
+/* Reads are bounded only by their real signed 64-bit IFile ABI. */
+int nx2_save_read_request_valid(uint64_t offset,uint64_t size){
+ return offset<=INT64_MAX && size<=INT64_MAX-offset;
+}
 int nx2_save_write_request_valid(uint64_t offset,uint64_t size,uint64_t options){
  return offset<=INT64_MAX && size<=INT64_MAX-offset &&
         (options & ~UINT64_C(1))==0;

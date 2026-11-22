@@ -133,7 +133,7 @@ static void put32(void *p,uint32_t v){
  * one svcQueryMemory descriptor cover the entire transfer. */
 static int valid_memory(const void *ptr,uint64_t bytes,int writable){
  uintptr_t at=(uintptr_t)ptr;
- if(!ptr||!bytes||bytes>0x4000000U||at>UINTPTR_MAX-bytes)return 0;
+ if(!ptr||!bytes||bytes>UINTPTR_MAX||at>UINTPTR_MAX-bytes)return 0;
  const uintptr_t end=at+(uintptr_t)bytes;
  const uint32_t permission=writable?2U:1U;
  while(at<end){
@@ -297,7 +297,7 @@ static int data_buffer(const HipcParsedRequest *req,int output,
    *dst=hipcGetStaticAddress(v);*size=hipcGetStaticSize(v);
   }
  }
- return *size && *size<=0x4000000U && valid_memory(*dst,*size,output);
+ return *size && valid_memory(*dst,*size,output);
 }
 static int scoped_path(const VfsObject *obj,const char *path,
                        char out[NX2_PATH_MAX]){
@@ -420,7 +420,7 @@ static uint32_t do_file(const VfsObject *obj,uint32_t cmd,
     return 0;
    }
    void *buf=0;uint64_t cap=0;
-   if(n>0x4000000U||n>UINT64_MAX-offset||
+   if(n>INT64_MAX-offset||
       !data_buffer(rq,cmd==0,&buf,&cap)||n>cap)
     return NX2_INVALID;
    /* Complete large valid save IO in 1 MiB chunks, keeping the
@@ -486,12 +486,21 @@ static uint32_t do_dir(const VfsObject *obj,uint32_t cmd,
  }
  if(cmd==0){
   void *buf=0;uint64_t n=0;
-  if(!data_buffer(rq,1,&buf,&n)||n%0x310U||n/0x310U>1024)
-   return NX2_INVALID;
-  uint32_t rc=nx2_rpc(RPC_DIR_READ,obj->token,n/0x310U,
-                      0,0,buf,0,0,&answer);
-  if(!rc){memcpy(out,&answer,8);*out_size=8;}
-  return rc;
+  if(!data_buffer(rq,1,&buf,&n)||n%0x310U)return NX2_INVALID;
+  uint64_t done=0,capacity=n/0x310U;
+  while(done<capacity){
+   uint64_t batch=capacity-done;
+   if(batch>1024)batch=1024;
+   uint64_t actual=0;
+   uint32_t error=nx2_rpc(RPC_DIR_READ,obj->token,batch,0,0,
+                           (unsigned char*)buf+done*0x310U,0,0,&actual);
+   if(error)return error;
+   if(actual>batch)return NX2_INVALID;
+   done+=actual;
+   if(actual<batch)break; /* Real end-of-directory. */
+  }
+  memcpy(out,&done,8);*out_size=8;
+  return 0;
  }
  return NX2_FS_UNSUPPORTED;
 }
@@ -506,7 +515,6 @@ static uint32_t do_cache_reader(const VfsObject *obj,uint32_t cmd,
  if(!data_buffer(rq,1,&buf,&n)||n%NX2_CACHE_INFO_BYTES)
   return NX2_INVALID;
  uint64_t capacity=n/NX2_CACHE_INFO_BYTES;
- if(capacity>256)capacity=256;
  if(!capacity)return NX2_INVALID;
  uint64_t cursor=0;
  if(!cache_reader_begin(obj->object_id,&cursor))return NX2_INVALID;
