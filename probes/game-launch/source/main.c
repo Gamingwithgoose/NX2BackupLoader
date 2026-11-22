@@ -2,6 +2,7 @@
 #include "fault.h"
 #include "folder.h"
 #include "heap_plan.h"
+#include "guest_thread_policy.h"
 #include "index_cache.h"
 #include "nup.h"
 #include "host.h"
@@ -98,11 +99,12 @@ static int choose_core(FILE *f) {
       }
   return -1;
 }
-static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game) {
+static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game,
+                        uint32_t stack_bytes) {
   int core = choose_core(f);
   if (core < 0)
     return 0;
-  Result rc = threadCreate(t, game_entry, l, NULL, 0x100000, 0x2c, core);
+  Result rc = threadCreate(t, game_entry, l, NULL, stack_bytes, 0x2c, core);
   row(f, "WORKER_CREATE game=%d result=%08x\n", game, rc);
   if (R_FAILED(rc))
     return 0;
@@ -332,6 +334,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   }
   launch_phase="PACKAGE_OPEN";
   selected_resource = game->resource;
+  uint32_t declared_main_stack = game->main_stack_size;
   if(game->is_nup) {
     screen("Opening NUP game...");
     row(f,"NUP_LAUNCH_REQUEST path=%s\n",game->root);
@@ -370,10 +373,29 @@ static void run(const Nx2Game *game, int rebuild_index) {
       return;
     }
     memcpy(&selected_resource,npdm+0x14,4);
+    memcpy(&declared_main_stack,npdm+0x1c,4);
     free(npdm);
     row(f,"NUP_OPEN_OK title=%016llx resource=%u\n",
         (unsigned long long)game->id,selected_resource);
   }
+  /* NPDM META+0x1c specifies the game's real main-thread stack.
+   * Previously every game got a hardcoded 1 MiB guest worker stack.
+   * Preserve that as a minimum; larger titles get a bounded, page-aligned
+   * stack instead of risking a process-ending stack guard fault. */
+  uint32_t allocated_main_stack=0;
+  if(!nx2_guest_main_stack(declared_main_stack,&allocated_main_stack)){
+    row(f,"REFUSED NPDM main thread stack=%u exceeds safe limit=%u\n",
+        declared_main_stack,NX2_GUEST_STACK_CAP);
+    nx2_nup_close();
+    fclose(f);
+    snprintf(outcome,sizeof(outcome),
+             "The game's declared main-thread stack is unsupported.");
+    if(crash){row(crash,"PRELAUNCH_STOP phase=MAIN_THREAD_STACK\n");fclose(crash);}
+    return;
+  }
+  row(f,"NPDM_MAIN_THREAD_STACK declared=%u allocated=%u minimum=%u cap=%u\n",
+      declared_main_stack,allocated_main_stack,
+      NX2_GUEST_STACK_BASE,NX2_GUEST_STACK_CAP);
   launch_phase="RESOURCE_CHECK";
   u64 resource = 0;
   rc = svcGetInfo(&resource, 16, CUR_PROCESS_HANDLE, 0);
@@ -513,7 +535,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   if(!start_storage_service(f,host,l,&storage_worker))
     stop(f,"Storage service worker could not start");
   Thread worker;
-  if (!start_worker(f, l, &worker, 1))
+  if (!start_worker(f, l, &worker, 1, allocated_main_stack))
     stop(f, "Game worker could not start");
   row(f,"PRELAUNCH_TIMING phase=GUEST_WORKER_STARTED cumulative_ms=%llu\n",
       (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
