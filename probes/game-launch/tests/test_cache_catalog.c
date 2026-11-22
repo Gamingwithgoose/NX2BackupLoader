@@ -21,5 +21,26 @@ int main(void){
  failures+=check(p[0x38]==2&&p[0x39]==0&&p[0x60]==0xa5,"index and bounds");
  failures+=check(!nx2_cache_pack_info(p,0x5f,guest,2,1,2),"short output buffer");
  failures+=check(!nx2_cache_pack_info(p,0x60,guest,2,UINT64_MAX,1),"size overflow");
+ /* Command 34 reads the real on-disk three-u64 capacity marker.
+  * Reject truncated, foreign, corrupt and overflowing metadata. */
+ unsigned char marker[24]={0};uint64_t data=0,journal=0;
+ uint64_t values[3]={NX2_CACHE_QUOTA_MAGIC,201326592U,67108864U};
+ for(unsigned k=0;k<3;k++)
+  for(unsigned j=0;j<8;j++)
+   marker[8*k+j]=(unsigned char)(values[k]>>(j*8));
+ failures+=check(nx2_cache_unpack_quota(marker,sizeof(marker),&data,&journal)&&
+                 data==201326592U&&journal==67108864U,"cache quota read");
+ failures+=check(!nx2_cache_unpack_quota(marker,23,&data,&journal),
+                 "truncated quota");
+ marker[0]^=1;
+ failures+=check(!nx2_cache_unpack_quota(marker,sizeof(marker),&data,&journal),
+                 "foreign or corrupt marker");
+ marker[0]^=1;
+ for(unsigned j=0;j<8;j++)marker[8+j]=0xff;
+ failures+=check(!nx2_cache_unpack_quota(marker,sizeof(marker),&data,&journal),
+                 "invalid data size");
+ for(unsigned j=0;j<8;j++)marker[8+j]=(unsigned char)(INT64_MAX>>(j*8));
+ failures+=check(!nx2_cache_unpack_quota(marker,sizeof(marker),&data,&journal),
+                 "data and journal total overflow");
  printf("Native cache catalog fixtures: %s\n",failures?"FAILED":"PASS");return failures?1:0;
 }
