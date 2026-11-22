@@ -612,8 +612,12 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
     /* Native CreateCacheStorage participates in the same quota and
      * directory lifecycle as the nn::fs high-level cache adapter. */
     uint64_t size=read64(in+0x40),journal=read64(in+0x48);
-    if(d.command!=22||size>INT64_MAX||journal>INT64_MAX||
-       size>INT64_MAX-journal)rc=NX2_INVALID;
+    /* FsSaveDataCreationInfo.save_data_space_id is byte 0x24
+     * after the 0x40-byte attribute. Never let a non-user cache
+     * request silently acquire the guest's user cache namespace. */
+    if(d.command!=22||in[0x64]!=1||size>INT64_MAX||
+       journal>INT64_MAX||size>INT64_MAX-journal)
+      rc=NX2_INVALID;
     else{
      uint16_t index=(uint16_t)in[34]|((uint16_t)in[35]<<8);
      rc=nx2_rpc(RPC_CACHE_CREATE,index,size,journal,0,0,0,0,0);
