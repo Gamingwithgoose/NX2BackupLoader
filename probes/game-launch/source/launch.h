@@ -49,7 +49,8 @@ typedef struct {
  void (*original_sdk_init)(void);
  uintptr_t (*original_bootstrap)(const char *);
  uintptr_t (*original_getproc)(void *,const char *);
- uint64_t (*original_present)(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
+ /* NVNqueuePresentTexture has a void return and three arguments. */
+ void (*original_present)(void *queue,void *window,int texture_index);
  void (*rtld)(uint64_t,uint64_t);
  void (*original_os_init)(uint32_t,const void *);
  uint32_t (*original_device_initialize)(void *,const void *);
