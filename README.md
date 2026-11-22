@@ -231,3 +231,8 @@ chmod +x build-arch.sh build-nup-arch.sh build-arch.desktop build-nup-arch.deskt
 If your file manager refuses to launch .desktop files, use the ./ commands
 in a terminal instead. Desktop launchers keep their terminal open to show
 errors and results.
+
+
+## Experimental exact-title host override
+
+The default and proven host is Mario Kart World title override. As a separate unverified compatibility path, this branch now accepts a homebrew title override started from **the same installed Switch 2 application** as the selected backup (the real Horizon host ProgramId must equal the selected title's NPDM ID). Unrelated application hosts are refused. This does not grant more kernel rights than the actual title, create a new game process, ensure adequate heap, or bypass existing safety checks. MKW launches continue to work as before. The ZL retained-applet experiment caused immediate SDK aborts for OOT and Sports Resort and has been disabled; use ordinary A.

@@ -370,7 +370,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile, int ret
   row(f,"LOG_CONTEXT title=%s source=%s verbosity=%s lifecycle=%s\n",
       game->name,game->is_nup?"nup":"folder",
       nx2_log_verbose?"full":"warnings_errors",
-      retain_applet?"retain_host_applet":"release_host_applet");
+      "release_host_applet");
   if(crash)row(crash,"LOG_CONTEXT title=%s source=%s monitor=cpu_only "
       "verbosity=%s lifecycle=%s\n",game->name,
       game->is_nup?"nup":"folder",
@@ -393,14 +393,26 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile, int ret
   u64 title = 0;
   Result rc = svcGetInfo(&title, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0);
   row(f, "HOST result=%08x title=%016llx\n", rc, (unsigned long long)title);
-  if (R_FAILED(rc) || title != UINT64_C(0x0400c3f00006e000)) {
-    row(f, "REFUSED MKW override required\n");
+  /* Keep the proven MKW override path. As an opt-in identity-correct
+   * alternative, allow the *same* installed Switch 2 title to host its
+   * own backup under title override. This is a real kernel ProgramId,
+   * not a fabricated guest service response or an arbitrary host ACL.
+   * The existing heap/NPDM and kernel capability checks still apply. */
+  const int host_is_mkw=title==UINT64_C(0x0400c3f00006e000);
+  const int host_is_guest=game->id!=0 && title==game->id;
+  if (R_FAILED(rc) || (!host_is_mkw && !host_is_guest)) {
+    row(f, "REFUSED_HOST_IDENTITY host=%016llx guest=%016llx "
+           "reason=host_must_be_mkw_or_exact_guest_title\n",
+        (unsigned long long)title,(unsigned long long)game->id);
     fclose(f);
     snprintf(outcome, sizeof(outcome),
-             "Start NX2 through Mario Kart World's override.");
+             "Use MKW override or the selected game's own title override.");
     if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
+  row(f, "HOST_IDENTITY_MODE mode=%s host=%016llx guest=%016llx\n",
+      host_is_mkw?"mkw_compat":"same_title_native",
+      (unsigned long long)title,(unsigned long long)game->id);
   if (snprintf(selected_save, sizeof(selected_save), "%s", game->name) >= (int)sizeof(selected_save)) {
     row(f, "REFUSED save name too long\n");
     fclose(f);
@@ -632,13 +644,12 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile, int ret
   row(f, "HOST_DISPLAY_RELEASE result=%08x\n", display_release);
   if (R_FAILED(display_release))
     stop(f, "Could not release launcher display");
-  /* Experimental title-independent applet lifecycle: keep actual
-   * application framework initialized during guest startup. Still
-   * release the launcher VI layer. Normal A behavior is unchanged. */
-  if(!retain_applet)appletExit();
-  row(f,retain_applet?
-      "WARNING_EXPERIMENTAL_APPLET_LIFETIME retained=1 vi_layer_released=1\n":
-      "HOST_APPLET_PROXY_RELEASED\n");
+  /* The ZL retained-applet experiment reproducibly caused SDK Break
+   * (appletOE command 10 -> 0x3e880) for OOT and Sports Resort.
+   * Always restore the verified ordinary application-proxy release. */
+  (void)retain_applet;
+  appletExit();
+  row(f,"HOST_APPLET_PROXY_RELEASED\n");
   row(f,"GAMEPLAY_CUTOFF disabled\n");
   int guest_priority=0x2c,storage_priority=0x2b;
   if(!choose_priorities(f,declared_main_priority,
@@ -1316,7 +1327,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
       printf("This selection loads base; updates are not merged.\n");
   }
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
-         "ZL+A: retain applet session (experimental)\n"
+         "ZL+A: no longer retains applet (failed experiment)\n"
          "B+A: rebuild index   R+A: Horizon check\n"
          "X: refresh   +: exit\n\n%s\n",
          outcome);
