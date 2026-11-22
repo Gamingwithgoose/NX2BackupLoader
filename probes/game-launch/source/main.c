@@ -361,7 +361,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
    * This cannot capture kernel/GPU faults that never reach the CPU handler. */
   FILE *crash = fopen("sdmc:/BackupLoaderMKW-crash.log","w");
   if(crash)
-    setvbuf(crash,nx2_crash_buffer,_IOFBF,sizeof(nx2_crash_buffer));  row(f,"LOG_CONTEXT title=%s source=%s verbosity=%s\n",
+    setvbuf(crash,nx2_crash_buffer,_IOFBF,sizeof(nx2_crash_buffer));
+  row(f,"LOG_CONTEXT title=%s source=%s verbosity=%s\n",
       game->name,game->is_nup?"nup":"folder",
       nx2_log_verbose?"full":"warnings_errors");
   if(crash)row(crash,"LOG_CONTEXT title=%s source=%s monitor=cpu_only "

@@ -774,8 +774,9 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     break;
   case RPC_LOG:
     if(nx2_log_keep(r->path))
-      logline(h,"WARNING_NATIVE_EVENT a=%016llx b=%016llx c=%016llx "
-                "d=%016llx text=%s detail=%s\n",
+      logline(h,nx2_log_verbose?
+                "NATIVE_LOG a=%016llx b=%016llx c=%016llx d=%016llx text=%s detail=%s\n":
+                "WARNING_NATIVE_EVENT a=%016llx b=%016llx c=%016llx d=%016llx text=%s detail=%s\n",
               (unsigned long long)r->a,(unsigned long long)r->b,
               (unsigned long long)r->c,(unsigned long long)r->d,
               r->path,r->path2);
@@ -1059,6 +1060,19 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
       __atomic_store_n(&h->rpc_active_slot,i+1,__ATOMIC_RELEASE);
       r->result = r->op==RPC_ROM_READ ?
           serve_rom_cached(h,l,r) : serve(h,l,r);
+      /* A successful I/O request is not news. A failed one must survive
+       * quiet logging even if its normal name contains no ERROR token.
+       * Sample repetitive failures to avoid amplifying a failure storm. */
+      if(r->result){
+        static unsigned failures;
+        unsigned occurrence=++failures;
+        if(occurrence<=32 || !(occurrence&255U))
+          logline(h,"ERROR_RPC_COMPLETION op=%u result=%08x slot=%u "
+                    "occurrence=%u a=%016llx b=%016llx c=%016llx\n",
+                  r->op,r->result,i,occurrence,
+                  (unsigned long long)r->a,(unsigned long long)r->b,
+                  (unsigned long long)r->c);
+      }
       /* Do not issue SD writes for every RomFS read and host RPC.
        * Publish the result immediately; existing RPC_TRAIL breadcrumbs,
        * private save operation results and backend failure logs remain.
