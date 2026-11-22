@@ -19,6 +19,89 @@ static void row(FILE *f, const char *fmt, ...) {
   va_end(a);
   fflush(f);
 }
+
+/* Normal kaiHEN RO can track eight ready NROs in one client context.
+ * The executing homebrew loader consumes one entry. If a guest needs more,
+ * recycle the RO SESSION, not its mapped executable pages. kaiHEN's
+ * roSessionClose explicitly leaves ready mappings in place.
+ *
+ * This is a one-way launch: hbloader's original RO override is closed and
+ * an old context cannot unload its preserved modules. Only use it for
+ * RO's exact TooManyNro result. No game name or module-name exceptions. */
+#define NX2_RO_TOO_MANY_NRO ((7U<<9)|22U)
+#define NX2_RO_MAX_ROLLOVERS 2U
+static int rollover_ro_context(FILE *f,Nx2Images *all,unsigned module){
+  if(all->ro_rollovers>=NX2_RO_MAX_ROLLOVERS){
+    row(f,"RO_ROLLOVER_REFUSED reason=rollover_limit module=%u generation=%u\n",
+        module,all->ro_rollovers);
+    return 0;
+  }
+  Service hen={0};
+  Result rc=kaihenOpenHomebrewSession(&all->ro,&hen);
+  if(R_FAILED(rc)){
+    row(f,"RO_ROLLOVER_PREFLIGHT step=hen_session result=%08x\n",rc);
+    return 0;
+  }
+  Handle process=INVALID_HANDLE;
+  rc=henGetProcessHandle(&hen,&process);
+  serviceClose(&hen);
+  if(R_FAILED(rc)||process==INVALID_HANDLE){
+    row(f,"RO_ROLLOVER_PREFLIGHT step=process_handle result=%08x\n",rc);
+    return 0;
+  }
+  u64 self_id=0,copy_id=0;
+  Result a=svcGetProcessId(&self_id,CUR_PROCESS_HANDLE);
+  Result b=svcGetProcessId(&copy_id,process);
+  if(R_FAILED(a)||R_FAILED(b)||self_id!=copy_id){
+    row(f,"RO_ROLLOVER_PREFLIGHT step=process_identity self=%08x copy=%08x match=%u\n",
+        a,b,self_id==copy_id);
+    svcCloseHandle(process);
+    return 0;
+  }
+  /* Bypass the borrowed ldr:ro override, which names the FULL context. */
+  Handle fresh_handle=INVALID_HANDLE;
+  rc=smGetServiceOriginal(&fresh_handle,smEncodeName("ldr:ro"));
+  if(R_FAILED(rc)||fresh_handle==INVALID_HANDLE){
+    row(f,"RO_ROLLOVER_PREFLIGHT step=fresh_ro_service result=%08x\n",rc);
+    svcCloseHandle(process);
+    return 0;
+  }
+  Service fresh={0};
+  serviceCreate(&fresh,fresh_handle);
+  Handle former=all->ro.session;
+  row(f,"RO_ROLLOVER_BEGIN module=%u preserved=%u old=%08x fresh=%08x generation=%u\n",
+      module,module,former,fresh_handle,all->ro_rollovers+1);
+  /* The RO server permits at most one initialized context per process.
+   * Release its first context before initializing another one. */
+  rc=svcCloseHandle(former);
+  if(R_FAILED(rc)){
+    row(f,"RO_ROLLOVER_PREFLIGHT step=close_old result=%08x\n",rc);
+    serviceClose(&fresh);
+    svcCloseHandle(process);
+    return 0;
+  }
+  all->ro_rollovers++;
+  all->ro=(Service){0};
+  const u64 unused_pid=0;
+  for(unsigned attempt=0;attempt<20;attempt++){
+    /* Allow RO's server thread to observe the closed old session. */
+    svcSleepThread(10000000ULL);
+    rc=serviceDispatchIn(&fresh,4,unused_pid,
+                         .in_send_pid=true,
+                         .in_num_handles=1,.in_handles={process});
+    if(R_SUCCEEDED(rc))break;
+  }
+  svcCloseHandle(process);
+  if(R_FAILED(rc)){
+    row(f,"RO_ROLLOVER_FATAL step=initialize_new result=%08x no_rollback=1\n",rc);
+    fflush(f);fclose(f);svcExitProcess();
+  }
+  all->ro=fresh;
+  row(f,"RO_ROLLOVER_READY generation=%u old_modules_preserved=%u "
+        "one_way=1\n",all->ro_rollovers,module);
+  return 1;
+}
+
 static void hash(unsigned char out[32], const void *p, size_t n) {
   sha256CalculateHash(out, p, n);
 }
@@ -151,6 +234,13 @@ static int bind(FILE *f, Nx2Images *all, Nx2Launch *l) {
   return 1;
 }
 void nx2_images_free(FILE *f, Nx2Images *all) {
+  if(all->ro_rollovers){
+    /* Mappings from the retired RO session cannot be safely unloaded
+     * from its successor; terminate instead of freeing live pages. */
+    row(f,"RO_ROLLOVER_PROCESS_EXIT generation=%u orphaned_ready_modules=1\n",
+        all->ro_rollovers);
+    fflush(f);fclose(f);svcExitProcess();
+  }
   for (unsigned n = all->count; n; n--) {
     Nx2Loaded *im = &all->images[n - 1];
     if (im->mapped) {
@@ -242,6 +332,13 @@ int nx2_images_load(FILE *f, const char *root, Nx2Images *all, Nx2Launch *l,
                               .in_send_pid = true);
     row(f, "MAP %s result=%08x address=%016llx\n", names[i], rc,
         (unsigned long long)im->mapped);
+    if(rc==NX2_RO_TOO_MANY_NRO && rollover_ro_context(f,all,i)){
+      im->mapped=0;
+      rc=serviceDispatchInOut(&all->ro,0,input,im->mapped,
+                              .in_send_pid=true);
+      row(f,"MAP_RETRY_RO_ROLLOVER module=%s generation=%u result=%08x address=%016llx\n",
+          names[i],all->ro_rollovers,rc,(unsigned long long)im->mapped);
+    }
     if (R_FAILED(rc)) {
       row(f, "STOP_PROCESS map failure; backing retained\n");
       fclose(f);
