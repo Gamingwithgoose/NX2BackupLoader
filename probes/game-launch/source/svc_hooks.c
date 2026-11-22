@@ -138,7 +138,6 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
    return 0xd001;
  }
  const uint64_t kernel_size=retain+size;
- const uint64_t increase=size>previous_guest?size-previous_guest:0;
  nx2_rpc(RPC_LOG,previous_guest,size,kernel_size,NX2_NATIVE_PHYSICAL_FLOOR,0,
          "GUEST_HEAP_RESIZE_GUARD",0,0);
  if(!nx2_heap_growth_allowed(previous_guest,size,available,
