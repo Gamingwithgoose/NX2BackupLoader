@@ -33,7 +33,7 @@ static uint32_t dest(uint32_t source,uint32_t ins){
 static uint32_t veneer_dest(uint32_t at,uint32_t adrp,uint32_t add){
  int64_t pages=((int64_t)((adrp>>5)&0x7ffff)<<2)|((adrp>>29)&3);
  if(pages&(1LL<<20))pages-=1LL<<21;
- return (uint32_t)(((int64_t)(at&~4095U)+(pages<<12))+
+ return (uint32_t)(((int64_t)(at&~4095U)+(pages*4096))+
                     ((add>>10)&4095U));
 }
 int main(void){

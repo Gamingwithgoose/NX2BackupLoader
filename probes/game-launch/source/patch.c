@@ -169,12 +169,6 @@ static int absolute_entry(unsigned char *text,uint32_t original_size,
     if((ins&0x7c000000)==0x14000000){
       uint64_t need=32ULL+16ULL*(island_count+1);
       int used=0;
-      if((uint64_t)padded-off<need &&
-         !branch((int64_t)at+(int64_t)((int32_t)(ins<<6)>>4)-
-                 ((int64_t)off+4*i),&(uint32_t){0})){
-        patch_reason="insufficient_branch_veneer_padding";
-        return 0;
-      }
       if(!relocate_entry_branch(ins,at+4*i,off+4*i,at,off,
                off+32+16*island_count,&saved[i],islands[island_count],
                &used)){
