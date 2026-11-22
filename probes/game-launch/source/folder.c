@@ -196,6 +196,7 @@ static int catalog_entry(void *v, const char *name) {
       unsigned char h[128], aci[32];
       if (fread(h, 1, 128, f) == 128 && !memcmp(h, "META", 4)) {
         game.resource = read_le32(h + 0x14);
+        game.main_stack_size = read_le32(h + 0x1c);
         uint32_t at = read_le32(h + 0x70);
         if (at >= 128 && at <= 0x100000 && !fseek(f, (long)at, SEEK_SET) &&
             fread(aci, 1, 32, f) == 32 && !memcmp(aci, "ACI0", 4))
