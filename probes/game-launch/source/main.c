@@ -3,6 +3,7 @@
 #include "folder.h"
 #include "heap_plan.h"
 #include "guest_thread_policy.h"
+#include "guest_core_policy.h"
 #include "index_cache.h"
 #include "nup.h"
 #include "host.h"
@@ -86,22 +87,20 @@ static void __attribute__((noreturn)) stop(FILE *f, const char *why) {
   svcExitProcess();
 }
 static void game_entry(void *p) { nx2_game_worker(p); }
-static int choose_core(FILE *f) {
+static int choose_core(FILE *f,int npdm_core) {
   u64 allowed = 0;
   Result rc = svcGetInfo(&allowed, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0);
   u32 current = svcGetCurrentProcessorNumber();
-  if (R_SUCCEEDED(rc))
-    for (int i = 0; i < 6; i++)
-      if ((allowed & (1ULL << i)) && (u32)i != current) {
-        row(f, "WORKER_CORE host=%u selected=%d allowed=%016llx\n", current, i,
-            (unsigned long long)allowed);
-        return i;
-      }
-  return -1;
+  if (R_FAILED(rc))return -1;
+  int chosen=nx2_guest_select_core(allowed,(int)current,npdm_core);
+  row(f,"WORKER_CORE host=%u selected=%d declared=%d allowed=%016llx source=%s\n",
+      current,chosen,npdm_core,(unsigned long long)allowed,
+      chosen==npdm_core?"npdm":"fallback");
+  return chosen;
 }
 static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game,
-                        uint32_t stack_bytes) {
-  int core = choose_core(f);
+                        uint32_t stack_bytes,int npdm_core) {
+  int core = choose_core(f,npdm_core);
   if (core < 0)
     return 0;
   Result rc = threadCreate(t, game_entry, l, NULL, stack_bytes, 0x2c, core);
@@ -335,6 +334,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   launch_phase="PACKAGE_OPEN";
   selected_resource = game->resource;
   uint32_t declared_main_stack = game->main_stack_size;
+  int declared_main_core = game->has_thread_metadata?(int)game->main_core:-1;
   if(game->is_nup) {
     screen("Opening NUP game...");
     row(f,"NUP_LAUNCH_REQUEST path=%s\n",game->root);
@@ -374,6 +374,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
     }
     memcpy(&selected_resource,npdm+0x14,4);
     memcpy(&declared_main_stack,npdm+0x1c,4);
+    declared_main_core=(int)npdm[0x0f];
     free(npdm);
     row(f,"NUP_OPEN_OK title=%016llx resource=%u\n",
         (unsigned long long)game->id,selected_resource);
@@ -396,6 +397,8 @@ static void run(const Nx2Game *game, int rebuild_index) {
   row(f,"NPDM_MAIN_THREAD_STACK declared=%u allocated=%u minimum=%u cap=%u\n",
       declared_main_stack,allocated_main_stack,
       NX2_GUEST_STACK_BASE,NX2_GUEST_STACK_CAP);
+  row(f,"NPDM_MAIN_THREAD_CORE requested=%d policy=metadata_if_allowed\n",
+      declared_main_core);
   launch_phase="RESOURCE_CHECK";
   u64 resource = 0;
   rc = svcGetInfo(&resource, 16, CUR_PROCESS_HANDLE, 0);
@@ -535,7 +538,7 @@ static void run(const Nx2Game *game, int rebuild_index) {
   if(!start_storage_service(f,host,l,&storage_worker))
     stop(f,"Storage service worker could not start");
   Thread worker;
-  if (!start_worker(f, l, &worker, 1, allocated_main_stack))
+  if (!start_worker(f, l, &worker, 1, allocated_main_stack,declared_main_core))
     stop(f, "Game worker could not start");
   row(f,"PRELAUNCH_TIMING phase=GUEST_WORKER_STARTED cumulative_ms=%llu\n",
       (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
