@@ -89,6 +89,21 @@ int main(void){
  put32(p+8,1U<<1); /* copies only */
  fail+=expect(!nx2_ipc_reply_first_moved_handle(p,sizeof(p),&moved),
               "reject copy-only reply");
+ /* HIPC type 2 ends the server-side session even when the kernel
+  * returns ConnectionClosed, but a failed unrelated IPC must not. */
+ memset(p,0,sizeof(p));
+ put32(p,2);
+ d=nx2_ipc_decide(p,sizeof(p),0);
+ fail+=expect(nx2_ipc_session_closed(d,0xF601U),
+              "connection-closed means IPC session already destroyed");
+ fail+=expect(nx2_ipc_session_closed(d,0),
+              "normal IPC close means session destroyed");
+ fail+=expect(!nx2_ipc_session_closed(d,0x1015U),
+              "failed IPC close preserves its handle state");
+ put32(p,4);
+ d=nx2_ipc_decide(p,sizeof(p),0);
+ fail+=expect(!nx2_ipc_session_closed(d,0),
+              "ordinary method is not a session close");
  printf("FSP native CMIF fixture: %s\n",fail?"FAILED":"PASS");
  return fail?1:0;
 }
