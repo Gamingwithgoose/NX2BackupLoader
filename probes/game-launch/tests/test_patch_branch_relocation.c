@@ -44,7 +44,7 @@ int main(void){
  if(!text){fprintf(stderr,"fixture allocation failed\n");return 1;}
  uintptr_t original=0;
  const uintptr_t gate=UINT64_C(0x1234567812345678);
- uint32_t cursor=base,target=at+0x2000;
+ uint32_t cursor=base,target=at+100U*1024U*1024U;
  wr(text+at,0x90055600);wr(text+at+4,0xd503201f);
  wr(text+at+8,rel(at+8,target,1));wr(text+at+12,0xd503201f);
  check(nx2_patch_gate(text,base,padded,&cursor,at,gate,0,&original),
@@ -67,7 +67,7 @@ int main(void){
  /* Original BL can reach a function far below the trampoline; a 16-byte
   * ADRP/ADD/BR island must preserve the return address to copied code. */
  cursor=base;memset(text+base,0,80);
- target=at-100U*1024U*1024U;
+ target=at+0x2000;
  wr(text+at,0x90055600);wr(text+at+4,0xd503201f);
  wr(text+at+8,rel(at+8,target,1));wr(text+at+12,0xd503201f);
  check(nx2_patch_gate(text,base,padded,&cursor,at,gate,0,&original),
