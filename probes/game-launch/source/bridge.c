@@ -13,6 +13,14 @@ static void wake(void){__asm__ volatile("sev" ::: "memory");}
 /* CPU event registers belong to cores, not scheduled threads. Poll the
  * acquire state after a bounded kernel sleep; no event delivery is required. */
 static void wait(void){nx2_raw_sleep(100000);}
+/* The guest bridge is freestanding and does not include libnx/switch.h.
+ * Read the same architectural physical counter used by armGetSystemTick()
+ * on the host. Keeping tick domains identical makes watchdog ages valid. */
+static uint64_t nx2_guest_system_tick(void){
+ uint64_t tick;
+ __asm__ volatile("mrs %0, cntpct_el0" : "=r"(tick));
+ return tick;
+}
 uint32_t nx2_rpc(uint32_t op,uint64_t a,uint64_t b,uint64_t c,uint64_t d,void *buffer,const char *path,const char *path2,uint64_t *answer){
  Nx2Launch *l=nx2_launch;Nx2Request *r=0;
  /* The host can persist the last guest callsites even if the guest disappears
@@ -33,7 +41,7 @@ uint32_t nx2_rpc(uint32_t op,uint64_t a,uint64_t b,uint64_t c,uint64_t d,void *b
  if(!text(r->path,path)||!text(r->path2,path2)){__atomic_store_n(&trace->result,NX2_INVALID,__ATOMIC_RELAXED);__atomic_store_n(&trace->phase,2,__ATOMIC_RELEASE);__atomic_store_n(&r->state,0,__ATOMIC_RELEASE);wake();return NX2_INVALID;}
  /* Publishing the slot and its owner/ticket happens before state=2,
   * so a watchdog can distinguish an unserviced request from slow I/O. */
- __atomic_store_n(&r->diagnostic_published_tick,armGetSystemTick(),__ATOMIC_RELAXED);
+ __atomic_store_n(&r->diagnostic_published_tick,nx2_guest_system_tick(),__ATOMIC_RELAXED);
  __atomic_store_n(&r->diagnostic_owner_tls,thread,__ATOMIC_RELAXED);
  __atomic_store_n(&r->diagnostic_ticket,ticket,__ATOMIC_RELAXED);
  __atomic_store_n(&r->state,2,__ATOMIC_RELEASE);wake();
