@@ -661,6 +661,10 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   uint32_t last_fsp_route_stage=UINT32_MAX;
   uint32_t last_nvn_stage[NX2_NVN_STAGE_COUNT]={0};
   uint32_t last_nvn_stage_done[NX2_NVN_STAGE_COUNT]={0};
+  /* Host-only suspect-stall snapshot; no guest calls or changed dispatch. */
+  u64 passive_last_frame=0,passive_frame_tick=began;
+  u64 passive_ipc_at_progress=0,passive_rom_at_progress=0;
+  int passive_reported=0;
   /* Preserve flushed prelaunch evidence. Once guest execution begins,
    * batch independent crash-report writes and flush each complete sample.
    * Reduces SD sync I/O without weakening the CPU exception fast path. */
@@ -698,6 +702,69 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       previous_stage = stage;
     }
     u64 frames = __atomic_load_n(&l->frames, __ATOMIC_ACQUIRE);
+    /* The normal A mode counts actual returned PresentTexture calls.
+     * A long interval without a present is not proof of a deadlock:
+     * scenes can pause, load, suspend or deliberately stop presenting.
+     * Native L+A is unobserved and must never produce this warning. */
+    if(l->nvn_driver_passthrough!=2){
+      u64 now=armGetSystemTick();
+      if(frames!=passive_last_frame){
+        passive_last_frame=frames;passive_frame_tick=now;
+        passive_ipc_at_progress=
+          __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE);
+        passive_rom_at_progress=
+          __atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE);
+        passive_reported=0;
+      }else if(!passive_reported && frames>=30 &&
+         armTicksToNs(now-passive_frame_tick)>=8000000000ULL){
+        passive_reported=1;
+        u64 ipc_now=__atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE);
+        u64 rom_now=__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE);
+        u32 slot=__atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE);
+        u64 io_tick=__atomic_load_n(&host->rpc_started_tick,__ATOMIC_RELAXED);
+        u64 io_age=slot && now>=io_tick?
+          armTicksToNs(now-io_tick)/1000000ULL:0;
+        u64 elapsed=armTicksToNs(now-passive_frame_tick)/1000000ULL;
+        if(crash){
+          row(crash,"WARNING_SUSPECTED_PRESENT_STALL duration_ms=%llu frames=%llu "
+                    "ipc_end=%llu ipc_since_present=%llu rom_rpc=%llu "
+                    "rom_rpc_since_present=%llu active_storage_slot=%u "
+                    "storage_age_ms=%llu nvn_mode=%u confirmed_deadlock=0\n",
+              (unsigned long long)elapsed,(unsigned long long)frames,
+              (unsigned long long)ipc_now,
+              (unsigned long long)(ipc_now-passive_ipc_at_progress),
+              (unsigned long long)rom_now,
+              (unsigned long long)(rom_now-passive_rom_at_progress),
+              slot,(unsigned long long)io_age,l->nvn_driver_passthrough);
+          row(crash,"WARNING_STALL_NATIVE_PRESENT entered=%u returned=%u "
+                    "nvn_other_stages_observed=%u\n",
+              __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE),
+              (unsigned)(l->nvn_driver_passthrough==0));
+          u32 next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
+          for(u32 back=(next<8?next:8);back;back--){
+            u32 slot_id=(next-back)%NX2_IPC_TRACE_SLOTS;
+            Nx2IpcBreadcrumb *e=&l->ipc_breadcrumbs[slot_id];
+            u32 phase=__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE);
+            if(!phase)continue;
+            Nx2IpcBreadcrumb snap=*e;
+            if(__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE)!=phase)continue;
+            snap.service[8]=0;
+            row(crash,"WARNING_STALL_IPC_TAIL phase=%u service=%s "
+                      "command=%u result=%08x cmif=%08x caller=%016llx\n",
+                phase,snap.service,snap.command,snap.result,
+                snap.service_result,(unsigned long long)snap.caller);
+          }
+          fflush(crash);
+        }
+        row(f,"WARNING_SUSPECTED_PRESENT_STALL duration_ms=%llu "
+              "frames=%llu storage_slot=%u ipc_since_present=%llu "
+              "rom_rpc_since_present=%llu details=crash_log\n",
+            (unsigned long long)elapsed,(unsigned long long)frames,slot,
+            (unsigned long long)(ipc_now-passive_ipc_at_progress),
+            (unsigned long long)(rom_now-passive_rom_at_progress));
+      }
+    }
     if (frames && (!previous_frames || frames - previous_frames >= 300)) {
       row(f, "GRAPHICS_PRESENT_RETURNED calls=%llu\n",
           (unsigned long long)frames);
