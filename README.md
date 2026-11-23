@@ -241,3 +241,10 @@ The guest-thread tracer remains in RAM; host-side log writing is batched and flu
 
 
 Current compatibility logging additionally labels `COMPAT_SYNTHETIC_SUCCESS_NO_KERNEL_CALL` for the existing SDK save-extend/access-log-mode no-op success shim, and `COMPAT_SYNTHETIC_RO_INIT_SUCCESS` when guest dynamic-loader initialization is intentionally not performed in MKW's host-owned loader context. These markers are **not native kernel approvals**; the underlying shims are not removed yet. Do not treat their appearance as proof a requested operation occurred.
+
+
+### Experimental targeted stall diagnostics (2026-11-23)
+
+For the default launch, the persistent gameplay/NUP log now keeps only meaningful service activity (native errors, FSP and locally handled/rejected IPC) instead of every normal IPC poll. Guest IPC request/return metadata remains recorded in the bounded memory ring and crash tail. This corrects an earlier full-text-by-default experiment that overran the 16K event ring and generated excessive SD traffic. To opt into verbose full-text IPC for a short run, create an empty file at `SD:/switch/BackupLoaderMKW/full-ipc-trace.flag`. Creating `sparse-ipc-trace.flag` explicitly forces sparse logging and takes precedence if both files exist. `IPC_EVENTS_DROPPED` means trace records were lost, **not** that guest kernel requests were rejected.
+
+When actual PresentTexture calls stop returning for 8 seconds after 30 frames, a repeatable 10-second stall snapshot in the crash report records guest main/IPC progress, native synchronization calls still in flight, and NVN stage entered/returned counters. When no frame has ever appeared, a separate 12-second progress snapshot helps distinguish early startup from a prolonged wait. With normal A launch mode only PresentTexture is instrumented; NVN submit/flush/finish/acquire counters report `observed=0` rather than implying those functions were never called. Fully instrumented ZR+A is a separate diagnostic launch mode and may change timing. These logs do not provide kernel stacks and cannot by themselves establish a deadlock or fix DK Bananza.
