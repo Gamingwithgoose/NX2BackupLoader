@@ -3,6 +3,7 @@
 #include "raw_svc.h"
 #include "file_range_policy.h"
 #include "cache_catalog.h"
+#include <switch.h>
 #include <stdio.h>
 Nx2Launch *nx2_launch;
 static void copy(void *d,const void *s,uint64_t n){unsigned char *a=d;const unsigned char *b=s;for(uint64_t i=0;i<n;i++)a[i]=b[i];}
