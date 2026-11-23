@@ -7,6 +7,12 @@ set "BASH=%DEVKITPRO%\msys2\usr\bin\bash.exe"
 set "RESULT=1"
 echo NX2BackupLoader PRIVATE developer diagnostic build
 echo Public build.bat is unchanged. Plugin is NOT installed automatically.
+set "PLUGIN_OUT=%CD%\release\developer\kaihen\plugins\nx2trace.nso"
+if exist "%PLUGIN_OUT%" del /f /q "%PLUGIN_OUT%"
+if exist "%PLUGIN_OUT%" (
+ echo [ERROR] Failed to remove stale developer plugin. Build stopped.
+ goto finish
+)
 if not exist "%BASH%" (
  echo [ERROR] devkitPro MSYS2 missing.
  goto finish
@@ -31,6 +37,7 @@ echo [NOTE] Plugin requires HEN bootstrap. Copy manually ONLY after reviewing RE
 set "RESULT=0"
 goto finish
 :fail
+if exist "%PLUGIN_OUT%" del /f /q "%PLUGIN_OUT%"
 echo [ERROR] Developer build failed. Do not use older binaries as a new build.
 :finish
 echo.
