@@ -3,12 +3,8 @@
 #include <switch2/memory/heap.h>
 #include <stdarg.h>
 #include "vm_release.h"
-#include "log_policy.h"
 
-static void row(FILE *f,const char *fmt,...){
-    if(!f||!nx2_log_keep(fmt))return;
-    va_list a;va_start(a,fmt);vfprintf(f,fmt,a);va_end(a);fflush(f);
-}
+static void row(FILE *f,const char *fmt,...){va_list a;va_start(a,fmt);vfprintf(f,fmt,a);va_end(a);fflush(f);}
 int nx2_release_heap_for_vm(FILE *f,const Nx2HeapPlan *p,uint64_t min_resource,
                            uint64_t min_alias,uint64_t min_free,uint64_t *budget){
     uint64_t heap=0,reserved=0,resource=0,alias=0,alias_size=0,total=0,used=0;
@@ -21,25 +17,8 @@ int nx2_release_heap_for_vm(FILE *f,const Nx2HeapPlan *p,uint64_t min_resource,
         row(f,"VM_HOST_INFO type=%u result=%08x value=%016llx\n",kinds[i],rc,(unsigned long long)*outputs[i]);
         if(R_FAILED(rc))return 0;
     }
-    /* Recheck after NSO mapping: this remains the host process's genuine
-     * kernel-managed memory-management reservation, not free application
-     * RAM. A shortage is different from an unavailable alias region. */
-    if(resource<min_resource){
-        /* The NPDM reservation is a process memory-manager setting, not
-         * the physical-memory budget checked below. On zero-reservation
-         * hosts the real kernel may refuse physical mappings; that
-         * decision belongs to svcMapPhysicalMemory at first use, not to
-         * an unconditional host-identity/NPDM comparison. Do NOT skip
-         * heap ownership, alias bounds, free physical RAM or kernel RCs. */
-        row(f,"WARNING_VM_HOST_RESOURCE_DIFFERENCE available_bytes=%llu guest_npdm_bytes=%llu deficit_bytes=%llu policy=kernel_enforced\n",
-            (unsigned long long)resource,(unsigned long long)min_resource,
-            (unsigned long long)(min_resource-resource));
-    }
-    if(alias_size<min_alias||!alias||alias_size>UINT64_MAX-alias){
-        row(f,"VM_REFUSED invalid_alias_capacity alias_base=%016llx alias_bytes=%llu min_bytes=%llu\n",
-            (unsigned long long)alias,(unsigned long long)alias_size,
-            (unsigned long long)min_alias);
-        return 0;
+    if(resource<min_resource||alias_size<min_alias||!alias||alias_size>UINT64_MAX-alias){
+        row(f,"VM_REFUSED inadequate real system-resource/alias capacity\n");return 0;
     }
     MemoryInfo tail;u32 page=0;Result rc=svcQueryMemory(&tail,&page,p->game_begin);
     if(R_FAILED(rc)){row(f,"VM_TAIL_QUERY result=%08x\n",rc);return 0;}

@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <switch.h>
 
 static uint32_t rd32(const unsigned char *p) {
   return (uint32_t)p[0] | (uint32_t)p[1]<<8 |
@@ -161,19 +160,11 @@ done:
  * offset rather than unpacking its siblings onto the SD card. */
 typedef struct {
   FILE *f;
-  /* Native FS handle avoids devoptab/stdio buffering for archive payload.
-   * Keep original FILE* for validated TOC and fallback compatibility. */
-  FsFile native_file;
-  uint32_t native_active;
   unsigned char *toc;
   size_t toc_size;
   uint64_t blob_start, file_length;
   uint64_t ndirs, nfiles;
   uint32_t exefs_dir, romfs_dir;
-  uint32_t base_exefs_dir,base_romfs_dir;
-  uint32_t update_exefs_dir,update_romfs_dir;
-  uint32_t update_version,addons;
-  uint64_t selected_title_id;
   uint64_t meta_offset, meta_size;
   const unsigned char *dirs, *files, *children, *pool;
   uint64_t child_count, pool_size;
@@ -251,42 +242,28 @@ static uint32_t lookup_child(NupMount *m,uint32_t dir,
   }
   return UINT32_MAX;
 }
-/* A single NUP can store base, updates and add-ons in separate roots.
- * Lookup is update-first and base-fallback. An update may omit files which
- * remain valid from the base; no archive bytes or guest storage are changed. */
-static uint32_t lookup_node_from(uint32_t dir,const char *path) {
-  if(dir>=mounted.ndirs || !path || !*path)return UINT32_MAX;
+static uint32_t lookup_file(const char *path) {
+  if(!mounted.f||!path)return UINT32_MAX;
+  uint32_t dir;
+  if(!strncmp(path,"romfs/",6)) {
+    dir=mounted.romfs_dir;path+=6;
+  } else if(!strncmp(path,"exefs/",6)) {
+    dir=mounted.exefs_dir;path+=6;
+  } else return UINT32_MAX;
+  if(dir==UINT32_MAX)return UINT32_MAX;
   while(*path) {
     const char *slash=strchr(path,'/');
     size_t len=slash?(size_t)(slash-path):strlen(path);
     if(!len||len>255)return UINT32_MAX;
     uint32_t node=lookup_child(&mounted,dir,path,len);
     if(node==UINT32_MAX)return UINT32_MAX;
-    if(!slash)return node;
+    if(!slash)return node>=mounted.ndirs?node-mounted.ndirs:UINT32_MAX;
     if(node>=mounted.ndirs)return UINT32_MAX;
     dir=node;path=slash+1;
   }
   return UINT32_MAX;
 }
-static uint32_t lookup_file(const char *path) {
-  if(!mounted.f||!path)return UINT32_MAX;
-  uint32_t updated=UINT32_MAX,base=UINT32_MAX;
-  if(!strncmp(path,"romfs/",6)) {
-    updated=mounted.update_romfs_dir;
-    base=mounted.base_romfs_dir;
-    path+=6;
-  }else if(!strncmp(path,"exefs/",6)) {
-    updated=mounted.update_exefs_dir;
-    base=mounted.base_exefs_dir;
-    path+=6;
-  }else return UINT32_MAX;
-  uint32_t node=lookup_node_from(updated,path);
-  if(node==UINT32_MAX || node<mounted.ndirs)
-    node=lookup_node_from(base,path);
-  return node!=UINT32_MAX && node>=mounted.ndirs?node-mounted.ndirs:UINT32_MAX;
-}
 void nx2_nup_close(void) {
-  if(mounted.native_active)fsFileClose(&mounted.native_file);
   if(mounted.f)fclose(mounted.f);
   free(mounted.toc);
   for(unsigned j=0;j<2;j++){
@@ -297,7 +274,6 @@ void nx2_nup_close(void) {
   memset(&mounted,0,sizeof(mounted));
 }
 int nx2_nup_active(void) {return mounted.f!=NULL;}
-int nx2_nup_native_fs_active(void) {return mounted.native_active!=0;}
 int nx2_nup_open(const char *path) {
   nx2_nup_close();
   probe_error="NUP mount not started";
@@ -350,64 +326,20 @@ int nx2_nup_open(const char *path) {
   m.children=toc+children_start;m.pool=toc+pool_off;
   m.child_count=(pool_off-children_start)/4;m.pool_size=pool_len;
   m.exefs_dir=m.romfs_dir=UINT32_MAX;
-  m.base_exefs_dir=m.base_romfs_dir=UINT32_MAX;
-  m.update_exefs_dir=m.update_romfs_dir=UINT32_MAX;
   for(unsigned j=0;j<2;j++)m.cached_file[j]=UINT32_MAX;
   for(unsigned j=0;j<2;j++)large_stream[j].file=UINT32_MAX;
-  /* First select the base, independently of package record ordering.
-   * A standalone update is allowed only in archives without a base.
-   * Update IDs can be base IDs or the conventional base+0x800 variation.
-   * Do not accidentally overlay unrelated programs in multi-title NUPs. */
-  int base_index=-1,standalone_index=-1,update_index=-1;
-  uint32_t best_version=0;
   for(uint32_t i=0;i<pc;i++){
     const unsigned char *p=toc+48+(size_t)i*64;
-    if(p[24]==0 && base_index<0)base_index=(int)i;
-    if(p[24]==1 && (p[25]&1) && standalone_index<0)
-      standalone_index=(int)i;
-    if(p[24]==2)m.addons++;
-  }
-  int selected=base_index>=0?base_index:standalone_index;
-  if(selected>=0) {
-    const unsigned char *p=toc+48+(size_t)selected*64;
-    m.selected_title_id=rd64(p);
-    m.base_exefs_dir=rd32(p+12);
-    m.base_romfs_dir=rd32(p+16);
-    m.meta_offset=rd64(p+32);
-    m.meta_size=rd32(p+40);
-  }
-  if(base_index>=0)for(uint32_t i=0;i<pc;i++){
-    const unsigned char *p=toc+48+(size_t)i*64;
-    if(p[24]!=1)continue;
-    const uint64_t id=rd64(p);
-    const uint32_t version=rd32(p+20);
-    if(m.selected_title_id && id && id!=m.selected_title_id &&
-       !(m.selected_title_id<=UINT64_MAX-0x800 &&
-         id==m.selected_title_id+0x800))continue;
-    if(update_index<0 || version>best_version) {
-      best_version=version;
-      update_index=(int)i;
-    }
-  }
-  if(update_index>=0) {
-    const unsigned char *p=toc+48+(size_t)update_index*64;
-    m.update_exefs_dir=rd32(p+12);
-    m.update_romfs_dir=rd32(p+16);
-    m.update_version=best_version;
-    /* Prefer the applicable update's NPDM when supplied. */
-    if(rd32(p+40)) {
+    if(p[24]==0 || (p[24]==1 && (p[25]&1))){
+      m.exefs_dir=rd32(p+12);
+      m.romfs_dir=rd32(p+16);
       m.meta_offset=rd64(p+32);
       m.meta_size=rd32(p+40);
+      break;
     }
   }
-  m.exefs_dir=m.update_exefs_dir!=UINT32_MAX?
-               m.update_exefs_dir:m.base_exefs_dir;
-  m.romfs_dir=m.update_romfs_dir!=UINT32_MAX?
-               m.update_romfs_dir:m.base_romfs_dir;
   probe_error="NUP executable or RomFS root invalid";
-  if(m.base_exefs_dir>=nd||m.base_romfs_dir>=nd ||
-     (m.update_exefs_dir!=UINT32_MAX&&m.update_exefs_dir>=nd) ||
-     (m.update_romfs_dir!=UINT32_MAX&&m.update_romfs_dir>=nd))goto fail;
+  if(m.exefs_dir>=nd||m.romfs_dir>=nd)goto fail;
   probe_error="NUP invalid directory child/metadata";
   /* Validate every directory edge and file extent before exposing paths. */
   for(uint64_t i=0;i<nd;i++){
@@ -435,23 +367,6 @@ int nx2_nup_open(const char *path) {
        (codec==0 && stored!=size))goto fail;
   }
   mounted=m;
-  /* Regression-safe backend selection: the original FILE* reader is
-   * the default for EVERY title and EVERY package, not only Star Fox.
-   * Native fsFileRead was previously made the unconditional default and
-   * the first verified Star Fox black-screen regression followed. Reads
-   * completed but guest graphics startup changed; causality is unproven.
-   * Keep native available for an explicit comparative SD test only.
-   * No archive extraction, title-specific exceptions, or fake bytes. */
-  int request_native=0;
-  FILE *backend_flag=fopen(
-      "sdmc:/switch/BackupLoaderMKW/native-nup-read.flag","rb");
-  if(backend_flag){request_native=1;fclose(backend_flag);}
-  if(request_native && !strncmp(path,"sdmc:",5)){
-    FsFileSystem *sd=fsdevGetDeviceFileSystem("sdmc");
-    if(sd && R_SUCCEEDED(fsFsOpenFile(sd,path+5,FsOpenMode_Read,
-                                    &mounted.native_file)))
-      mounted.native_active=1;
-  }
   probe_error="NUP mounted successfully";
   return 1;
 fail:
@@ -524,66 +439,18 @@ void nx2_nup_get_progress(Nx2NupReadProgress *out){
  out->decoded_bytes=__atomic_load_n(&read_progress.decoded_bytes,__ATOMIC_RELAXED);
  out->delivered_bytes=__atomic_load_n(&read_progress.delivered_bytes,__ATOMIC_RELAXED);
 }
-static int nup_seek_file(FILE *f,uint64_t offset);
-/* The native FS service accepts absolute file offsets and returns an actual
- * transferred count. Bypass stdio/devoptab for payload reads when possible.
- * Fallback remains the original exact stdio bytes; neither path returns
- * success for short data or missing bytes. */
-static int read_exact_chunks(FILE *f,uint64_t absolute,void *dst,size_t length){
+/* Same real bytes as fread of the full request, but in 64 KiB SD calls.
+ * A short native read is a failure, never a fabricated successful asset. */
+static int read_exact_chunks(FILE *f,void *dst,size_t length){
  unsigned char *p=dst;
  size_t pos=0;
- if(absolute>INT64_MAX || length>(uint64_t)INT64_MAX-absolute){
-  read_error="NUP absolute read offset exceeds signed filesystem range";
-  return 0;
- }
- if(!mounted.native_active && !nup_seek_file(f,absolute)){
-  read_error="NUP stdio seek failed";
-  return 0;
- }
  progress_phase(2);
  while(pos<length){
   size_t want=length-pos;
   if(want>0x10000U)want=0x10000U;
-  size_t got=0;
-  if(mounted.native_active){
-   u64 transferred=0;
-   Result rc=fsFileRead(&mounted.native_file,(s64)(absolute+pos),
-                        p+pos,want,FsReadOption_None,&transferred);
-   if(R_FAILED(rc) || transferred!=want){
-    /* Retry the exact same archive offset using the independently open
-     * stdio handle only after the native call has RETURNED an error or
-     * short count. Never fake a completed read or retry indefinitely.
-     * A truly blocked native call cannot be rescued by this fallback. */
-    unsigned original_result=(unsigned)rc;
-    u64 original_count=transferred;
-    fsFileClose(&mounted.native_file);
-    memset(&mounted.native_file,0,sizeof(mounted.native_file));
-    mounted.native_active=0;
-    if(!nup_seek_file(f,absolute+pos)){
-      snprintf(probe_details,sizeof(probe_details),
-               "Native NUP read failed result=%08x count=%llu; stdio seek failed",
-               original_result,(unsigned long long)original_count);
-      read_error=probe_details;
-      return 0;
-    }
-    got=fread(p+pos,1,want,f);
-    if(got!=want){
-      snprintf(probe_details,sizeof(probe_details),
-               "Native NUP read failed result=%08x count=%llu; stdio retry short=%llu",
-               original_result,(unsigned long long)original_count,
-               (unsigned long long)got);
-      read_error=probe_details;
-      return 0;
-    }
-   } else got=(size_t)transferred;
-  }else got=fread(p+pos,1,want,f);
+  size_t got=fread(p+pos,1,want,f);
   if(got)__atomic_fetch_add(&read_progress.sd_bytes,(uint64_t)got,__ATOMIC_RELAXED);
-  if(got!=want){
-   read_error=mounted.native_active?
-     "Native NUP fsFileRead returned short data":
-     "NUP stdio fread returned short data";
-   return 0;
-  }
+  if(got!=want)return 0;
   pos+=got;
  }
  return 1;
@@ -671,7 +538,8 @@ static int read_large_compressed(const unsigned char *e,uint32_t file,
       size_t n=(size_t)(s->packed-s->consumed);
       if(n>128*1024)n=128*1024;
       if(s->consumed>UINT64_MAX-s->at ||
-         !read_exact_chunks(mounted.f,s->at+s->consumed,s->input,n)) {
+         !nup_seek_file(mounted.f,s->at+s->consumed) ||
+         !read_exact_chunks(mounted.f,s->input,n)) {
         read_error="Zstandard large-stream packed read failed";
         large_discard(s);
         return 0;
@@ -751,8 +619,8 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       mounted.cached_file[slot]=UINT32_MAX;
       mounted.cached_size[slot]=0;
       unsigned char *raw=malloc((size_t)packed),*out=malloc((size_t)total);
-      if(!raw||!out||
-         !read_exact_chunks(mounted.f,at,raw,(size_t)packed)) {
+      if(!raw||!out||!nup_seek_file(mounted.f,at)||
+         !read_exact_chunks(mounted.f,raw,(size_t)packed)) {
         free(raw);free(out);return 0;
       }
       progress_phase(3);
@@ -810,7 +678,8 @@ int nx2_nup_read(const char *path,uint64_t offset,void *dest,size_t length){
     /* Validate the absolute archive offset separately from virtual
      * extent bounds; an overflow must not alias another NUP entry. */
     int ok=at<=UINT64_MAX-offset &&
-           read_exact_chunks(mounted.f,at+offset,dest,length);
+           nup_seek_file(mounted.f,at+offset) &&
+           read_exact_chunks(mounted.f,dest,length);
     if(ok)__atomic_fetch_add(&read_progress.delivered_bytes,(uint64_t)length,__ATOMIC_RELAXED);
     read_error=ok?"OK":"Raw NUP seek/read failed";
     progress_done();
@@ -868,31 +737,8 @@ static int walk_dir(uint32_t d,char path[1024],unsigned depth,
   }
   return 1;
 }
-typedef struct {
-  Nx2NupVisit visit;
-  void *ctx;
-  uint32_t update_root;
-} NupOverlayWalk;
-static int walk_base_only(void *arg,const char *path,int dir,uint64_t size) {
-  NupOverlayWalk *w=(NupOverlayWalk*)arg;
-  /* Update-first enumeration: suppress duplicate paths, but visit all
-   * unique base children even when their parent directory is shared. */
-  if(lookup_node_from(w->update_root,path)!=UINT32_MAX)return 1;
-  return w->visit(w->ctx,path,dir,size);
-}
 int nx2_nup_romfs_walk(Nx2NupVisit visit,void *context) {
-  if(!mounted.f||mounted.base_romfs_dir>=mounted.ndirs||!visit)return 0;
+  if(!mounted.f||mounted.romfs_dir>=mounted.ndirs||!visit)return 0;
   char path[1024]={0};uint32_t stack[65]={0};
-  if(mounted.update_romfs_dir<mounted.ndirs) {
-    if(!walk_dir(mounted.update_romfs_dir,path,0,visit,context,stack))
-      return 0;
-  }
-  NupOverlayWalk overlay={visit,context,mounted.update_romfs_dir};
-  return walk_dir(mounted.base_romfs_dir,path,0,walk_base_only,&overlay,stack);
-}
-uint32_t nx2_nup_applied_update_version(void) {
-  return mounted.f?mounted.update_version:0;
-}
-uint32_t nx2_nup_addon_count(void) {
-  return mounted.f?mounted.addons:0;
+  return walk_dir(mounted.romfs_dir,path,0,visit,context,stack);
 }

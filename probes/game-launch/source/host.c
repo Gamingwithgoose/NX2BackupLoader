@@ -5,7 +5,6 @@
 #include "path_guard.h"
 #include "rom_prefetch.h"
 #include "file_range_policy.h"
-#include "log_policy.h"
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,9 +13,8 @@ _Static_assert(sizeof(FsRangeInfo) == 0x40, "SDK range-info ABI mismatch");
 _Static_assert(sizeof(FsTimeStampRaw) == 0x20, "SDK timestamp ABI mismatch");
 _Static_assert(sizeof(FsFileSystemAttribute) == 0xC0, "SDK filesystem attribute ABI mismatch");
 static void logline(Nx2Host *h, const char *fmt, ...) {
-  if(!h->report || !nx2_log_keep(fmt))return;
-  if(nx2_log_verbose &&
-     __atomic_fetch_add(&h->lines,1,__ATOMIC_RELAXED)>10000)return;
+  if (__atomic_fetch_add(&h->lines, 1, __ATOMIC_RELAXED) > 10000)
+    return;
   va_list a;
   va_start(a, fmt);
   vfprintf(h->report, fmt, a);
@@ -63,77 +61,6 @@ static int legacy_archive_present(FsFileSystem *sd,const char *root){
  fsDirClose(&dir);
  return R_FAILED(rc)||count>0;
 }
-/* A freshly-created named layout has only saves/ in the game root.
- * Do not let the legacy-flat-save check pin future launches to that parent,
- * or the second launch would silently see a different save. Older flat
- * layouts with ANY other data or an archive marker take precedence. */
-static int named_profile_root_present(FsFileSystem *sd,const char *root){
-  char path[600],marker[160];
-  int n=snprintf(path,sizeof(path),"%s/saves",root);
-  if(n<=0||n>=(int)sizeof(path))return 0;
-  FsDirEntryType type=0;
-  if(R_FAILED(fsFsGetEntryType(sd,path,&type))||type!=FsDirEntryType_Dir)
-    return 0;
-  if(!archive_marker_for_root(root,marker,sizeof(marker)))return 0;
-  if(R_SUCCEEDED(fsFsGetEntryType(sd,marker,&type)))return 0;
-  FsDir dir;
-  if(R_FAILED(fsFsOpenDirectory(sd,root,
-          FsDirOpenMode_ReadFiles|FsDirOpenMode_ReadDirs,&dir)))return 0;
-  int only_saves=1;
-  for(;;){
-    FsDirectoryEntry entry; s64 read=0;
-    Result rc=fsDirRead(&dir,&read,1,&entry);
-    if(R_FAILED(rc)){only_saves=0;break;}
-    if(!read)break;
-    if(strcmp(entry.name,"saves")){only_saves=0;break;}
-  }
-  fsDirClose(&dir);
-  return only_saves;
-}
-static Result profile_scope(Nx2Host *h,Nx2UserId uid,int create,
-                            char root[620],int *primary);
-/* The HBL UserIdStorage key is optional. In particular, forwarders and
- * some applet/HEN launch chains do not pass it even when an actual account
- * launched the host application. Resolve that real account while the host
- * account/app-proxy context is still alive, before starting foreign code.
- * Never manufacture a UID from the guest title or save directory name. */
-static int resolve_launch_user(Nx2Host *h){
- const AccountUid *from_hbl=envGetUserIdStorage();
- if(from_hbl && accountUidIsValid(from_hbl)){
-   h->launch_uid=(Nx2UserId){from_hbl->uid[0],from_hbl->uid[1]};
-   h->launch_uid_valid=1;
-   logline(h,"SAVE_LAUNCH_USER_SOURCE source=hbl_user_id_storage valid=1\n");
-   return 1;
- }
- Result rc=accountInitialize(AccountServiceType_Application);
- if(R_FAILED(rc)){
-   logline(h,"WARNING_SAVE_LAUNCH_USER_ACCOUNT_INIT_FAILED result=%08x\n",rc);
-   return 0;
- }
- AccountUid selected={0};
- Result pre=accountGetPreselectedUser(&selected);
- if(R_SUCCEEDED(pre) && accountUidIsValid(&selected)){
-   h->launch_uid=(Nx2UserId){selected.uid[0],selected.uid[1]};
-   h->launch_uid_valid=1;
-   logline(h,"SAVE_LAUNCH_USER_SOURCE source=account_preselected valid=1\n");
- }else {
-   /* This is the real OS last-opened account, not a fabricated UID. It
-    * should match the MKW launcher user, but cannot prove user selection
-    * in launchers that do not expose a preselected account. */
-   AccountUid last={0};
-   Result last_rc=accountGetLastOpenedUser(&last);
-   if(R_SUCCEEDED(last_rc) && accountUidIsValid(&last)){
-     h->launch_uid=(Nx2UserId){last.uid[0],last.uid[1]};
-     h->launch_uid_valid=1;
-     logline(h,"WARNING_SAVE_LAUNCH_USER_SOURCE source=account_last_opened_fallback preselected_result=%08x\n",pre);
-   }else {
-     logline(h,"WARNING_SAVE_LAUNCH_USER_MISSING preselected_result=%08x last_opened_result=%08x\n",pre,last_rc);
-   }
- }
- accountExit();
- return h->launch_uid_valid!=0;
-}
-
 int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
                   const char *save_key,uint64_t guest_id) {
   memset(h, 0, sizeof(*h));
@@ -145,14 +72,6 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   if (snprintf(h->rom_root, sizeof(h->rom_root), "%s/romfs", rom + 5) >=
       (int)sizeof(h->rom_root))
     return 0;
-  /* The profile must be captured before we choose either new or legacy
-   * save storage, not only in the new-layout branch. */
-  if(!resolve_launch_user(h)){
-    /* Do not open a legacy shared save when launch account identity is
-     * missing: that can silently expose another user's data. */
-    logline(h,"WARNING_SAVE_LAUNCH_USER_REQUIRED refusing_unscoped_save=1\n");
-    return 0;
-  }
   if (!save_key || !save_key[0] || !strcmp(save_key, ".") ||
       !strcmp(save_key, "..") || strchr(save_key, '/') ||
       strchr(save_key, '\\') || strchr(save_key, ':'))
@@ -161,75 +80,23 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   int n=snprintf(old_root,sizeof(old_root),
                  "/switch/BackupLoaderMKW/%s",save_key);
   if(n<0||n>=(int)sizeof(old_root))return 0;
-  /* Preserve every pre-existing title-ID and display-name save, without
-   * migrating or deleting the archive/primary-user markers that reference
-   * its full pathname. New saves get a human-readable game directory. */
-  char title_root[512],game_root[512],save_parent[512];
-  n=snprintf(title_root,sizeof(title_root),
-             "/switch/BackupLoaderMKW/title-%016llx",
-             (unsigned long long)guest_id);
-  if(n<0||n>=(int)sizeof(title_root))return 0;
-  n=snprintf(game_root,sizeof(game_root),
-             "/switch/BackupLoaderMKW/%s",save_key);
-  if(n<0||n>=(int)sizeof(game_root))return 0;
-  int named_profile=named_profile_root_present(h->sd,game_root);
-  int legacy_name=!named_profile && legacy_archive_present(h->sd,old_root);
-  int legacy_title=guest_id && legacy_archive_present(h->sd,title_root);
-  if(legacy_name || !guest_id)
+  int legacy=(!guest_id)||legacy_archive_present(h->sd,old_root);
+  if(legacy)
     n=snprintf(h->save_root,sizeof(h->save_root),"%s",old_root);
-  else if(legacy_title)
-    n=snprintf(h->save_root,sizeof(h->save_root),"%s",title_root);
-  else {
-    n=snprintf(save_parent,sizeof(save_parent),"%s/saves",game_root);
-    if(n<0||n>=(int)sizeof(save_parent))return 0;
-    if(h->launch_uid_valid){
-      n=snprintf(h->save_root,sizeof(h->save_root),
-                 "%s/%016llx%016llx",save_parent,
-                 (unsigned long long)h->launch_uid.lo,
-                 (unsigned long long)h->launch_uid.hi);
-      h->new_save_layout=1;
-    }else {
-      /* A missing launch identity must not create a new shared save tree,
-       * or make another profile's data appear as this user's save. */
-      logline(h,"WARNING_SAVE_LAUNCH_USER_UNRESOLVED refusing_new_unscoped_save=1 existing_profile_tree=%d\n",named_profile);
-      return 0;
-    }
-  }
+  else
+    n=snprintf(h->save_root,sizeof(h->save_root),
+               "/switch/BackupLoaderMKW/title-%016llx",
+               (unsigned long long)guest_id);
   if(n<0||n>=(int)sizeof(h->save_root))return 0;
   logline(h,"SAVE_NAMESPACE strategy=%s guest=%016llx root=%s\n",
-          legacy_title?"existing_title_id":
-          legacy_name?"existing_game_name":
-          h->new_save_layout?"game_name_launch_user":"game_name_unscoped",
+          legacy?"existing_legacy":"canonical_program_id",
           (unsigned long long)guest_id,h->save_root);
-  const char *paths[5];
-  size_t path_count=0;
-  paths[path_count++]="/switch/BackupLoaderMKW";
-  if(h->new_save_layout){
-    paths[path_count++]=game_root;
-    paths[path_count++]=save_parent;
-  }
-  paths[path_count++]=h->save_root;
-  for(size_t i=0;i<path_count;i++){
-    Result rc=mkdir_one(h->sd,paths[i]);
-    logline(h,"PRIVATE_SAVE_DIRECTORY path=%s result=%08x\n",paths[i],rc);
-    if(R_FAILED(rc))return 0;
-  }
-  /* The old flat save root is still shared by every guest that mounts
-   * without an explicit SDK UserId. Bind it to one real launch profile
-   * and place later users in their own private profiles/<uid> tree.
-   * This preserves every old save byte and archive marker in place. */
-  if((legacy_name||legacy_title||!guest_id) && h->launch_uid_valid){
-    char scoped[620];int primary=0;
-    Result rc=profile_scope(h,h->launch_uid,1,scoped,&primary);
-    if(R_FAILED(rc)){
-      logline(h,"WARNING_SAVE_LEGACY_PROFILE_BIND_FAILED result=%08x\n",rc);
+  const char *paths[] = {"/switch/BackupLoaderMKW", h->save_root};
+  for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+    Result rc = mkdir_one(h->sd, paths[i]);
+    logline(h, "PRIVATE_SAVE_DIRECTORY path=%s result=%08x\n", paths[i], rc);
+    if (R_FAILED(rc))
       return 0;
-    }
-    if(!primary){
-      if(snprintf(h->save_root,sizeof(h->save_root),"%s",scoped)>=
-         (int)sizeof(h->save_root))return 0;
-    }
-    logline(h,"SAVE_LAUNCH_PROFILE_SCOPED primary=%d private_root=1\n",primary);
   }
   return 1;
 }
@@ -403,20 +270,6 @@ static Result profile_scope(Nx2Host *h,Nx2UserId uid,int create,
  rc=mkdir_one(h->sd,parent);if(R_FAILED(rc))return rc;
  return mkdir_one(h->sd,root);
 }
-/* Storage requests run on one worker; preserve token index/generation and
- * grow only when another native file/directory handle is really needed. */
-static int host_next_free_handle(Nx2Host *h,unsigned *out){
- if(!h||!out)return 0;
- for(size_t i=0;i<h->handle_capacity;i++)
-  if(!h->handles[i].kind){*out=(unsigned)i;return 1;}
- size_t old=h->handle_capacity,cap=old?old*2U:64U;
- if(cap<=old||cap>UINT32_MAX||cap>SIZE_MAX/sizeof(*h->handles))return 0;
- Nx2HostFile *p=realloc(h->handles,cap*sizeof(*p));
- if(!p)return 0;
- memset(p+old,0,(cap-old)*sizeof(*p));
- h->handles=p;h->handle_capacity=cap;*out=(unsigned)old;
- return 1;
-}
 static uint64_t token(Nx2Host *h, unsigned i) {
   if (!++h->handles[i].generation)
     h->handles[i].generation++;
@@ -424,7 +277,7 @@ static uint64_t token(Nx2Host *h, unsigned i) {
 }
 static Nx2HostFile *lookup(Nx2Host *h, uint64_t id, uint32_t kind) {
   unsigned i = (uint32_t)id;
-  if (!i || i > h->handle_capacity)
+  if (!i || i > NX2_HOST_HANDLE_LIMIT)
     return 0;
   Nx2HostFile *f = &h->handles[i - 1];
   return f->kind == kind && f->generation == (uint32_t)(id >> 32) ? f : 0;
@@ -501,28 +354,12 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       h->cache[slot].logged = 0;
     }
     h->cache[slot].used = h->calls;
-    /* The folder backend previously passed an arbitrarily large guest
-     * destination to one synchronous native FS IPC. NUP payloads already
-     * use bounded operations. Keep exact semantics while limiting each
-     * folder IPC to 256 KiB; an incomplete read is NEVER successful. */
-    if((r->c&&!r->buffer) || r->b>INT64_MAX ||
-       r->c>(uint64_t)INT64_MAX-r->b)return NX2_INVALID;
     u64 read = 0;
-    do {
-      u64 want=r->c-read;
-      if(want>0x40000U)want=0x40000U;
-      u64 got=0;
-      rc=fsFileRead(&h->cache[slot].file,(s64)(r->b+read),
-                    want?(unsigned char*)r->buffer+(size_t)read:r->buffer,
-                    want,FsReadOption_None,&got);
-      if(R_FAILED(rc))break;
-      if(got>want){rc=NX2_INVALID;break;}
-      read+=got;
-      if(got!=want){rc=NX2_INVALID;break;}
-    } while(read<r->c);
+    rc = fsFileRead(&h->cache[slot].file, r->b, r->buffer, r->c,
+                    FsReadOption_None, &read);
     __atomic_fetch_add(&h->bytes, read, __ATOMIC_RELAXED);
-    /* A successful-but-short ROMFS IStorage read must never expose stale
-     * data in the destination or speculative cache buffer. */
+    /* A successful-but-short ROMFS IStorage read would expose stale bytes
+     * from the guest buffer or cache. Report actual invalid data instead. */
     if(R_SUCCEEDED(rc)&&read!=r->c)rc=NX2_INVALID;
     /* Startup may read hundreds of files in parallel. Every successful
      * asset log is an SD-card flush on the host and a blocking guest RPC.
@@ -542,8 +379,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       rc = NX2_INVALID;
     return rc;
   }
-  if ((r->op >= RPC_SAVE_CREATE && r->op <= RPC_SAVE_OPEN) ||
-      r->op == RPC_SAVE_QUERY_ENTRY) {
+  if (r->op >= RPC_SAVE_CREATE && r->op <= RPC_SAVE_OPEN) {
     if (!nx2_save_path(p, sizeof(p), h->save_root, r->path))
       return NX2_INVALID;
   }
@@ -790,8 +626,11 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     break;
   }
   case RPC_SAVE_OPEN: {
-    unsigned i=0;
-    if(!host_next_free_handle(h,&i))return NX2_LIMIT;
+    unsigned i = 0;
+    for (; i < NX2_HOST_HANDLE_LIMIT && h->handles[i].kind; i++)
+      ;
+    if (i == NX2_HOST_HANDLE_LIMIT)
+      return NX2_LIMIT;
     rc = fsFsOpenFile(h->sd, p, r->a & 7, &h->handles[i].file);
     if (R_SUCCEEDED(rc)) {
       h->handles[i].kind = 1;
@@ -873,8 +712,11 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   case RPC_DIR_OPEN: {
     if (!nx2_save_path(p, sizeof(p), h->save_root, r->path))
       return NX2_INVALID;
-    unsigned i=0;
-    if(!host_next_free_handle(h,&i))return NX2_LIMIT;
+    unsigned i = 0;
+    for (; i < NX2_HOST_HANDLE_LIMIT && h->handles[i].kind; i++)
+      ;
+    if (i == NX2_HOST_HANDLE_LIMIT)
+      return NX2_LIMIT;
     rc = fsFsOpenDirectory(h->sd, p, r->a & 3, &h->handles[i].dir);
     if (R_SUCCEEDED(rc)) {
       h->handles[i].kind = 2;
@@ -908,22 +750,12 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       return NX2_INVALID;
     rc = fsFsGetFileTimeStampRaw(h->sd, p, r->buffer);
     break;
-  case RPC_SAVE_QUERY_ENTRY:
-    /* IFileSystem::QueryEntry ID 0 modifies only the virtual guest's
-     * SD-backed directory attribute. Never target the namespace root,
-     * and never forward a guest path into MKW's fsp-srv. */
-    if(r->a!=0 || !strcmp(p,h->save_root))return NX2_INVALID;
-    rc=fsFsSetConcatenationFileAttribute(h->sd,p);
-    if(R_FAILED(rc))
-      logline(h,"VIRTUAL_QUERY_ENTRY_FAILED id=%llu result=%08x path=%s\n",
-              (unsigned long long)r->a,rc,p);
-    break;
   case RPC_SAVE_ATTRIBUTE:
     if(!r->buffer)return NX2_INVALID;
     rc=fsFsGetFileSystemAttribute(h->sd,(FsFileSystemAttribute *)r->buffer);
     break;
   case RPC_COMMIT:
-    for (unsigned i = 0; i < h->handle_capacity; i++)
+    for (unsigned i = 0; i < NX2_HOST_HANDLE_LIMIT; i++)
       if (h->handles[i].kind == 1 && (h->handles[i].mode & FsOpenMode_Write)) {
         Result flush = fsFileFlush(&h->handles[i].file);
         if (R_FAILED(flush))
@@ -931,13 +763,10 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       }
     break;
   case RPC_LOG:
-    if(nx2_log_keep(r->path))
-      logline(h,nx2_log_verbose?
-                "NATIVE_LOG a=%016llx b=%016llx c=%016llx d=%016llx text=%s detail=%s\n":
-                "WARNING_NATIVE_EVENT a=%016llx b=%016llx c=%016llx d=%016llx text=%s detail=%s\n",
-              (unsigned long long)r->a,(unsigned long long)r->b,
-              (unsigned long long)r->c,(unsigned long long)r->d,
-              r->path,r->path2);
+    logline(h, "NATIVE_LOG a=%016llx b=%016llx c=%016llx d=%016llx text=%s detail=%s\n",
+            (unsigned long long)r->a, (unsigned long long)r->b,
+            (unsigned long long)r->c, (unsigned long long)r->d,
+            r->path, r->path2);
     break;
   case RPC_IPC:
     logline(
@@ -962,11 +791,11 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     }
     break;
   case RPC_PHYSICAL_MEMORY:
-    if(nx2_log_verbose || (r->c!=UINT32_MAX && r->c!=0))
-      logline(h,"WARNING_NATIVE_PHYSICAL_MEMORY op=%s address=%016llx "
-                "bytes=%llu result=%08x\n",
-              r->d?"unmap":"map",(unsigned long long)r->a,
-              (unsigned long long)r->b,(unsigned)r->c);
+    logline(h,
+            "NATIVE_PHYSICAL_MEMORY operation=%s phase=%s address=%016llx "
+            "bytes=%llu result=%08x\n",
+            r->d ? "unmap" : "map", r->c == UINT32_MAX ? "begin" : "end",
+            (unsigned long long)r->a, (unsigned long long)r->b, (unsigned)r->c);
     break;
   case RPC_BREAK: {
     /* Report native SDK breaks uniformly for every guest title. */
@@ -1218,19 +1047,6 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
       __atomic_store_n(&h->rpc_active_slot,i+1,__ATOMIC_RELEASE);
       r->result = r->op==RPC_ROM_READ ?
           serve_rom_cached(h,l,r) : serve(h,l,r);
-      /* A successful I/O request is not news. A failed one must survive
-       * quiet logging even if its normal name contains no ERROR token.
-       * Sample repetitive failures to avoid amplifying a failure storm. */
-      if(r->result){
-        static unsigned failures;
-        unsigned occurrence=++failures;
-        if(occurrence<=32 || !(occurrence&255U))
-          logline(h,"ERROR_RPC_COMPLETION op=%u result=%08x slot=%u "
-                    "occurrence=%u a=%016llx b=%016llx c=%016llx\n",
-                  r->op,r->result,i,occurrence,
-                  (unsigned long long)r->a,(unsigned long long)r->b,
-                  (unsigned long long)r->c);
-      }
       /* Do not issue SD writes for every RomFS read and host RPC.
        * Publish the result immediately; existing RPC_TRAIL breadcrumbs,
        * private save operation results and backend failure logs remain.
@@ -1250,15 +1066,13 @@ void nx2_host_close(Nx2Host *h) {
     h->rom_windows[i].data=0;
     h->rom_windows[i].valid=0;
   }
-  for (unsigned i = 0; i < h->handle_capacity; i++) {
+  for (unsigned i = 0; i < NX2_HOST_HANDLE_LIMIT; i++) {
     if (h->handles[i].kind == 1)
       fsFileClose(&h->handles[i].file);
     if (h->handles[i].kind == 2)
       fsDirClose(&h->handles[i].dir);
     h->handles[i].kind = 0;
   }
-  free(h->handles);
-  h->handles=0;h->handle_capacity=0;
   for (unsigned i = 0; i < 16; i++)
     if (h->cache[i].open) {
       fsFileClose(&h->cache[i].file);

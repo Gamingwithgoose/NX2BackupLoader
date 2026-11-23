@@ -8,13 +8,11 @@
 #include "patch.h"
 #include "patch_plan.h"
 #include "resolve.h"
-#include "log_policy.h"
 #include <dirent.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 static void row(FILE *f, const char *fmt, ...) {
-  if(!f || !nx2_log_keep(fmt))return;
   va_list a;
   va_start(a, fmt);
   vfprintf(f, fmt, a);
@@ -164,11 +162,9 @@ static int apply_plan(FILE *f, Nx2Images *all, Nx2Module *m, unsigned module,
     int preserve=p->original_field!=UINT64_MAX;
     if(!gate(f,m,&cursor,(uint32_t)p->offset,p->gate,
              preserve?&original:0,p->label)){
-      /* This one-time static-RO compatibility hook is optional if a
-       * module's entry cannot be safely patched; never modify the
-       * unpatchable prologue or claim a patch was installed. */
+      /* Preserve existing compatibility for this optional RO hook. */
       if(p->gate==(uintptr_t)nx2_ro_initialize_compat){
-        row(f,"RO_STATIC_INIT_HOOK_SKIPPED unsafe_or_unpatchable_prologue=1\n");
+        row(f,"RO_INIT_COMPAT_SKIPPED unsafe_or_unpatchable_prologue=1\n");
         continue;
       }
       goto fail;

@@ -8,16 +8,13 @@ typedef struct {
   FsFile file;
   FsDir dir;
 } Nx2HostFile;
-/* Native guest file/directory handles grow with available memory. */
+/* Virtual guest object capacity is intentionally larger than lightweight SDK needs. */
+#define NX2_HOST_HANDLE_LIMIT 512U
 typedef struct {
   FsFileSystem *sd;
   FILE *report;
   char rom_root[1200], save_root[512];
-  /* Launch-profile namespace for NEW games. Existing save trees are untouched. */
-  Nx2UserId launch_uid;
-  uint32_t launch_uid_valid,new_save_layout;
-  Nx2HostFile *handles;
-  size_t handle_capacity;
+  Nx2HostFile handles[NX2_HOST_HANDLE_LIMIT];
   struct {
     FsFile file;
     uint64_t used;

@@ -10,7 +10,6 @@
 #include "images.h"
 #include "raw_svc.h"
 #include "vm_release.h"
-#include "log_policy.h"
 #include <malloc.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -18,7 +17,6 @@
 #include <string.h>
 #include <switch.h>
 #include <switch2/memory/heap.h>
-int nx2_log_verbose=0;
 static PadState pad;
 /* The crash report is durable at snapshot boundaries, not after every line.
  * Separate, bursty fflush() calls previously competed with game SD reads. */
@@ -29,7 +27,6 @@ static uint32_t selected_resource;
 static char selected_save[256];
 static char outcome[192] = "Mario Kart World override required.";
 static void row(FILE *f, const char *fmt, ...) {
-  if(!f || !nx2_log_keep(fmt))return;
   va_list a;
   va_start(a, fmt);
   vfprintf(f, fmt, a);
@@ -63,15 +60,11 @@ static void drain_ipc_events(FILE *f,Nx2Launch *l,uint32_t *cursor,
   /* Normal HID, applet and NVN polling dominates the IPC stream.
    * Keep those calls in RAM and in crash-tail snapshots. Disk records
    * focus on FSP interfaces, service acquisition and any error. */
-  /* HIPC type-2 close can report ConnectionClosed (0xF601)
-    * after the session has already been destroyed. This is not an
-    * actionable failed service command and must not flood quiet logs. */
-   const int normal_close=(v.request_type==2 &&
-                            v.kernel_result==0xF601U);
-   const int abnormal=(v.phase==2 && !normal_close &&
+  const int abnormal=(v.phase==2 &&
     ((v.kernel_result!=0 && v.kernel_result!=UINT32_MAX)||
      (v.cmif_result!=0 && v.cmif_result!=UINT32_MAX)));
-  const int important=full_text || abnormal || v.phase==4 || v.phase==5;
+  const int important=full_text||v.phase>=3||v.kind==2||v.kind==3||
+                      abnormal||(v.phase==2&&v.kind==1&&v.command==1);
   if(important)
     fprintf(f,"IPC_EVENT seq=%u call=%u phase=%u service=%s kind=%u handle=%08x hipc=%u command=%u domain_object=%08x flags=%02x hdr0=%08x hdr1=%08x special=%08x kernel=%08x cmif=%08x caller=%016llx tick=%llu\n",
             expected,v.call_id,v.phase,v.service,v.kind,v.handle,
@@ -233,67 +226,6 @@ static void isolate_watchdog_core(FILE *f,int guest_core){
       host_core,spare,guest_core,nx2_storage_core,moved,
       (unsigned long long)allowed);
 }
-/* Walk only validated readable frame-pair locations. This runs on the host
- * watchdog after libounce has parked the faulting thread; never from its
- * exception stack. It is diagnostic only and must not alter guest execution. */
-static void write_fault_stack(FILE *f, const Nx2Images *images, uint64_t first_fp) {
-  uint64_t fp=first_fp;
-  uint64_t seen[24]={0};
-  unsigned depth=0;
-  for (; depth<24; ++depth) {
-    if (!fp || (fp & 15U)) {
-      row(f,"FAULT_STACK_END depth=%u reason=%s fp=%016llx\n",
-          depth,!fp?"null_frame_pointer":"unaligned_frame_pointer",
-          (unsigned long long)fp);
-      return;
-    }
-    int repeated=0;
-    for (unsigned i=0;i<depth;i++)
-      if(seen[i]==fp){repeated=1;break;}
-    if(repeated){
-      row(f,"FAULT_STACK_END depth=%u reason=cycle fp=%016llx\n",
-          depth,(unsigned long long)fp);
-      return;
-    }
-    MemoryInfo info={0};
-    u32 page_info=0;
-    Result rc=svcQueryMemory(&info,&page_info,fp);
-    if(R_FAILED(rc) || !(info.perm & Perm_R) ||
-       fp<info.addr || info.size<16 || fp-info.addr>info.size-16){
-      row(f,"FAULT_STACK_END depth=%u reason=unreadable_frame "
-            "query=%08x fp=%016llx\n",
-          depth,rc,(unsigned long long)fp);
-      return;
-    }
-    /* Standard AArch64 frame record: previous FP followed by saved LR.
-     * A nonstandard/unwound frame ends the trace safely. */
-    const volatile uint64_t *record=(const volatile uint64_t *)(uintptr_t)fp;
-    uint64_t next=record[0],return_pc=record[1];
-    int module=-1;
-    uint64_t offset=0;
-    if(images)
-      for(unsigned k=0;k<images->count;k++){
-        const Nx2Module *m=&images->modules[k];
-        uint64_t begin=(uintptr_t)m->guest;
-        uint64_t length=m->total>=4096?m->total-4096:0;
-        if(return_pc>=begin && return_pc-begin<length){
-          module=(int)k;offset=return_pc-begin;break;
-        }
-      }
-    row(f,"FAULT_STACK_FRAME depth=%u fp=%016llx return_pc=%016llx "
-          "module=%d offset=%016llx next_fp=%016llx\n",
-        depth,(unsigned long long)fp,(unsigned long long)return_pc,
-        module,(unsigned long long)offset,(unsigned long long)next);
-    seen[depth]=fp;
-    if(next<=fp){
-      row(f,"FAULT_STACK_END depth=%u reason=nonincreasing_frame_pointer\n",
-          depth+1);
-      return;
-    }
-    fp=next;
-  }
-  row(f,"FAULT_STACK_END depth=%u reason=depth_limit\n",depth);
-}
 static void write_fault_report(FILE *f, const Nx2Images *images) {
   const ThreadExceptionDump *d = &nx2_fault.dump;
   extern void _start(void);
@@ -309,9 +241,6 @@ static void write_fault_report(FILE *f, const Nx2Images *images) {
   for (unsigned i = 0; i < 29; i++)
     row(f, "FAULT_REGISTER x%u=%016llx\n", i,
         (unsigned long long)d->cpu_gprs[i].x);
-  row(f,"FAULT_CAPTURE_SCOPE host_process_only=1 "
-        "external_termination_not_observable=1 stack_unwind=frame_pointer_best_effort\n");
-  write_fault_stack(f,images,d->fp.x);
   if (images)
     for (unsigned i = 0; i < images->count; i++) {
       const Nx2Module *m = &images->modules[i];
@@ -416,9 +345,6 @@ static void scan_progress(uint32_t files, void *unused) {
 }
 /* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
 static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
-  FILE *flag=fopen("sdmc:/BackupLoaderMKW-verbose.flag","rb");
-  nx2_log_verbose=flag!=NULL;
-  if(flag)fclose(flag);
   FILE *f = fopen(game->is_nup ? "sdmc:/BackupLoaderMKW-nup.log" :
                           "sdmc:/BackupLoaderMKW-gameplay.log", "w");
   if (!f) {
@@ -431,15 +357,11 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   FILE *crash = fopen("sdmc:/BackupLoaderMKW-crash.log","w");
   if(crash)
     setvbuf(crash,nx2_crash_buffer,_IOFBF,sizeof(nx2_crash_buffer));
-  row(f,"LOG_CONTEXT title=%s source=%s verbosity=%s lifecycle=%s\n",
-      game->name,game->is_nup?"nup":"folder",
-      nx2_log_verbose?"full":"warnings_errors",
-      "release_host_applet");
-  if(crash)row(crash,"LOG_CONTEXT title=%s source=%s monitor=cpu_only "
-      "verbosity=%s lifecycle=%s\n",game->name,
-      game->is_nup?"nup":"folder",
-      nx2_log_verbose?"full":"warnings_errors",
-      "release_host_applet");
+  if (crash)
+    row(crash,"NX2_CRASH_DIAGNOSTIC version=2 game=%s guest=%016llx host=0400c3f00006e000\n"
+              "CAPTURE_MODE libounce_cpu_exception_plus_host_snapshot_and_prelaunch\n"
+              "LIMITATION no_external_kernel_or_gpu_exception_monitor\n",
+        game->name,(unsigned long long)game->id);
 
   const char *launch_phase="START";
   u64 launch_started=armGetSystemTick(), module_prepare_started=0;
@@ -457,37 +379,14 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   u64 title = 0;
   Result rc = svcGetInfo(&title, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0);
   row(f, "HOST result=%08x title=%016llx\n", rc, (unsigned long long)title);
-  /* Keep MKW as the established host baseline, but permit the real
-   * installed Pokopia application as a SECOND experimental process host.
-   * This selects an existing process context: it neither changes the real
-   * kernel ProgramId nor impersonates the backup title. The regular
-   * kernel resource/priority/core/memory checks remain authoritative. */
-  const int host_is_mkw=title==UINT64_C(0x0400c3f00006e000);
-  const int host_is_pokopia=title==UINT64_C(0x0400a3a01ee4c000);
-  const int host_is_guest=game->id!=0 && title==game->id;
-  const char *host_mode=host_is_mkw?"mkw_compat":
-                        host_is_pokopia?"pokopia_experimental":
-                        host_is_guest?"same_title_native":"unapproved";
-  if (R_FAILED(rc) || (!host_is_mkw && !host_is_pokopia && !host_is_guest)) {
-    row(f, "REFUSED_HOST_IDENTITY host=%016llx guest=%016llx "
-           "reason=host_not_approved_mkw_pokopia_or_exact_guest\n",
-        (unsigned long long)title,(unsigned long long)game->id);
+  if (R_FAILED(rc) || title != UINT64_C(0x0400c3f00006e000)) {
+    row(f, "REFUSED MKW override required\n");
     fclose(f);
     snprintf(outcome, sizeof(outcome),
-             "Launch via MKW, Pokopia, or the selected game's own title.");
+             "Start NX2 through Mario Kart World's override.");
     if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
-  row(f, "HOST_IDENTITY_MODE mode=%s host=%016llx guest=%016llx\n",
-      host_mode,(unsigned long long)title,(unsigned long long)game->id);
-  /* Survive warning-only logs and short system-level exits without
-   * dumping account identifiers or confusing Pokopia with MKW. */
-  row(f,"WARNING_HOST_COMPARISON host_mode=%s host=%016llx guest=%016llx "
-        "separate_guest_process=0 native_host_identity=1\n",
-      host_mode,(unsigned long long)title,(unsigned long long)game->id);
-  if(crash)row(crash,"WARNING_HOST_COMPARISON host_mode=%s host=%016llx guest=%016llx "
-                       "separate_guest_process=0 native_host_identity=1\n",
-      host_mode,(unsigned long long)title,(unsigned long long)game->id);
   if (snprintf(selected_save, sizeof(selected_save), "%s", game->name) >= (int)sizeof(selected_save)) {
     row(f, "REFUSED save name too long\n");
     fclose(f);
@@ -510,16 +409,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
       return;
     }
-    /* Quiet reports must state the actual reader; otherwise a black
-     * screen cannot be correlated with backend selection. */
-    row(f,"WARNING_NUP_READER_SELECTION backend=%s native_explicit_opt_in=%u archive=%s\n",
-        nx2_nup_native_fs_active()?"native_horizon_fs":"stdio_proven_default",
-        (unsigned)nx2_nup_native_fs_active(),game->root);
-    if(crash)row(crash,"WARNING_NUP_READER_SELECTION backend=%s native_explicit_opt_in=%u\n",
-        nx2_nup_native_fs_active()?"native_horizon_fs":"stdio_proven_default",
-        (unsigned)nx2_nup_native_fs_active());
-    row(f,"NUP_CONTENT_APPLY update_version=%u addon_packages=%u addon_content_mounted=0 mode=base_plus_update_overlay\n",
-        nx2_nup_applied_update_version(),nx2_nup_addon_count());
     size_t npdm_size=0;
     uint64_t npdm_file_size=0;
     unsigned npdm_codec=0;
@@ -579,44 +468,17 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
         "policy=metadata_if_kernel_priority_mask_allows\n",declared_main_priority);
   launch_phase="RESOURCE_CHECK";
   u64 resource = 0;
-  /* InfoType 16 reports the host process's REAL system-resource memory
-   * reservation (PersonalMmHeap). META+0x14 declares the guest's required
-   * reservation. Keep them separate from normal heap/physical free RAM.
-   * Distinguish query failure from a genuine deficit; do not label either
-   * as a known allocation failure or grant imaginary resources. */
-  rc=svcGetInfo(&resource,InfoType_SystemResourceSizeTotal,
-                CUR_PROCESS_HANDLE,0);
-  if(R_FAILED(rc)){
-    row(f,"WARNING_HOST_SYSTEM_RESOURCE_QUERY_FAILED result=%08x host=%016llx guest=%016llx requested_bytes=%u\n",
-        rc,(unsigned long long)title,(unsigned long long)game->id,
-        selected_resource);
-    if(crash)row(crash,"WARNING_HOST_SYSTEM_RESOURCE_QUERY_FAILED result=%08x requested_bytes=%u\n",
-                 rc,selected_resource);
-    nx2_nup_close();fclose(f);
-    snprintf(outcome,sizeof(outcome),
-             "Host system-resource query failed (%08x); not a confirmed shortage.",rc);
-    if(crash){row(crash,"PRELAUNCH_STOP phase=RESOURCE_QUERY\n");fclose(crash);}
+  rc = svcGetInfo(&resource, 16, CUR_PROCESS_HANDLE, 0);
+  row(f, "RESOURCE_CHECK result=%08x available=%llu requested=%u\n", rc,
+      (unsigned long long)resource, selected_resource);
+  if (R_FAILED(rc) || resource < selected_resource) {
+    row(f, "REFUSED insufficient host system resources\n");
+    nx2_nup_close();
+    fclose(f);
+    snprintf(outcome, sizeof(outcome),
+             "This backup requires more resources than MKW provides.");
+    if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
-  }
-  row(f,"WARNING_HOST_SYSTEM_RESOURCE_MEASURED available_bytes=%llu requested_bytes=%u deficit_bytes=%llu host=%016llx guest=%016llx\n",
-      (unsigned long long)resource,selected_resource,
-      (unsigned long long)(resource<selected_resource?selected_resource-resource:0),
-      (unsigned long long)title,(unsigned long long)game->id);
-  if(crash)row(crash,"WARNING_HOST_SYSTEM_RESOURCE_MEASURED available_bytes=%llu requested_bytes=%u deficit_bytes=%llu\n",
-      (unsigned long long)resource,selected_resource,
-      (unsigned long long)(resource<selected_resource?selected_resource-resource:0));
-  if(resource<selected_resource){
-    /* NPDM system-resource size is not the game's RAM requirement.
-     * Some modern application processes legitimately have zero private
-     * system-resource bytes. Do not reject a guest solely for declaring
-     * a larger NPDM value: let the actual kernel VM operations decide.
-     * This is host-agnostic, not a Pokopia/guest-specific exception.
-     * Guest MapPhysicalMemory can still fail with InvalidState when the
-     * host's process uses optimized allocation with no private resource. */
-    row(f,"WARNING_HOST_RESOURCE_MODE mode=kernel_enforced_compat host_resource_bytes=%llu guest_npdm_bytes=%u physical_mapping_may_fail=%u\n",
-        (unsigned long long)resource,selected_resource,resource==0);
-    if(crash)row(crash,"WARNING_HOST_RESOURCE_MODE mode=kernel_enforced_compat host_resource_bytes=%llu guest_npdm_bytes=%u physical_mapping_may_fail=%u\n",
-        (unsigned long long)resource,selected_resource,resource==0);
   }
   launch_phase="ROMFS_INDEX";
   screen(rebuild_index ? "Rebuilding game index..." : "Loading game index...");
@@ -716,11 +578,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                             "Game preparation failed; see BackupLoaderMKW-gameplay.log.");
     goto done;
   }
-  /* Account identity and save namespace are resolved by the host
-   * before the guest starts. Report only the outcome, never the UID or
-   * another user's private save path, in the independent crash file. */
-  if(crash)row(crash,"WARNING_SAVE_LAUNCH_PROFILE_READY valid=%u named_user_layout=%u private_sd=1\n",
-               host->launch_uid_valid,host->new_save_layout);
   row(f,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
       game->is_nup?"nup":"folder",(unsigned long long)game->id,
       images->count,(unsigned long long)l->heap_capacity);
@@ -758,12 +615,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   row(f, "HOST_DISPLAY_RELEASE result=%08x\n", display_release);
   if (R_FAILED(display_release))
     stop(f, "Could not release launcher display");
-  /* The ZL retained-applet experiment reproducibly caused SDK Break
-   * (appletOE command 10 -> 0x3e880) for OOT and Sports Resort.
-   * Always restore the verified ordinary application-proxy release. */
   appletExit();
-  row(f,"HOST_APPLET_PROXY_RELEASED\n");
-  row(f,"GAMEPLAY_CUTOFF disabled\n");
+  row(f, "HOST_APPLET_PROXY_RELEASED\nGAMEPLAY_CUTOFF disabled\n");
   int guest_priority=0x2c,storage_priority=0x2b;
   if(!choose_priorities(f,declared_main_priority,
                         &guest_priority,&storage_priority))
@@ -793,9 +646,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       ipc_full_text?"full_text_opt_in":"memory_plus_important_text",
       NX2_IPC_EVENT_SLOTS);
   u64 crash_sample = began;
-  /* Low-rate crash-only baseline survives quiet-mode gameplay. */
-  u64 last_crash_progress = began;
-  u64 last_no_present_warning=0,last_storage_warning=0;
   u64 crash_detail_tick=began;
   int crash_detail_written=0;
   u32 previous_crash_ipc_next = UINT32_MAX;
@@ -916,115 +766,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
      * snapshots must not compete with game asset reads every 100-500ms. */
     uint64_t crash_interval=(since_start<3000000000ULL && !frames)
                           ?250000000ULL:2000000000ULL;
-    uint64_t stamp=armGetSystemTick();
-    uint32_t slot=__atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE);
-    uint64_t started=__atomic_load_n(&host->rpc_started_tick,__ATOMIC_RELAXED);
-    uint64_t age_ms=slot&&stamp>=started?
-      armTicksToNs(stamp-started)/1000000ULL:0;
-    /* The system can terminate before 2.5 s. Commit a compact warning
-     * checkpoint early enough to retain a recent state even without a
-     * libounce CPU exception. This is evidence of incomplete startup,
-     * not proof the renderer is faulty. */
-    int overdue_first=(!frames && since_start>=650000000ULL &&
-      __atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE));
-    /* An unloaded game may legitimately stream assets for 40+ seconds.
-     * Writing two flushed SD log records every 750 ms for the whole
-     * interval competes with those reads. Preserve dense early failure
-     * evidence, then sample sparsely while the 10-second independent
-     * host snapshot continues to preserve progress. */
-    uint64_t no_present_interval=since_start<5000000000ULL
-      ?750000000ULL:since_start<15000000000ULL
-      ?3000000000ULL:10000000000ULL;
-    int warn_first=overdue_first&&
-      (!last_no_present_warning ||
-       armTicksToNs(stamp-last_no_present_warning)>=no_present_interval);
-    int warn_io=age_ms>=1500&&
-      (!last_storage_warning ||
-       armTicksToNs(stamp-last_storage_warning)>=5000000000ULL);
-    if(warn_first){
-      last_no_present_warning=stamp;
-      row(f,"WARNING_NO_FIRST_PRESENT elapsed_ms=%llu "
-            "bootstrap=%u getproc=%u queues=%u/%u windows=%u/%u\n",
-          (unsigned long long)(since_start/1000000ULL),
-          __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE));
-      /* Main log writes alone were not enough: kernel closure can erase
-       * the chance to produce a crash report. Persist one bounded state
-       * line now; this is a checkpoint of an unfinished launch, not an
-       * assertion that a timeout has already happened. */
-      if(crash){
-        row(crash,"WARNING_STARTUP_CHECKPOINT elapsed_ms=%llu "
-                  "main=%llu frames=%llu rpc=%llu rom_bytes=%llu "
-                  "pending_slot=%u pending_op=%u pending_age_ms=%llu "
-                  "nvn_bootstrap=%u getproc=%u window=%u/%u "
-                  "queue=%u/%u present=%u/%u ipc=%u/%u\n",
-            (unsigned long long)(since_start/1000000ULL),
-            (unsigned long long)__atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE),
-            (unsigned long long)frames,
-            (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE),
-            (unsigned long long)__atomic_load_n(&host->bytes,__ATOMIC_ACQUIRE),
-            slot,__atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED),
-            (unsigned long long)age_ms,
-            __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE));
-        fflush(crash);
-      }
-    }
-    if(warn_io){
-      last_storage_warning=stamp;
-      row(f,"WARNING_STORAGE_IO_DELAY slot=%u op=%u age_ms=%llu completed=%llu\n",
-          slot,__atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED),
-          (unsigned long long)age_ms,
-          (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_RELAXED));
-    }
-    /* Save a compact durable checkpoint even when startup warnings stop.
-     * No new threads, service calls, or changes to guest execution. */
-    if(crash && armTicksToNs(stamp-last_crash_progress)>=10000000000ULL){
-      last_crash_progress=stamp;
-      row(crash,"HOST_SNAPSHOT_PERIODIC elapsed_ms=%llu stage=%u "
-                "fault_state=%u main=%llu frames=%llu rpc=%llu rom_bytes=%llu "
-                "nvn_bootstrap=%u getproc=%u device=%u/%u queue=%u/%u "
-                "window=%u/%u present=%u/%u ipc=%u/%u "
-                "active_storage_slot=%u storage_age_ms=%llu "
-                "guest_abort=%u host_abort=%u\n",
-          (unsigned long long)(since_start/1000000ULL),
-          stage,__atomic_load_n(&nx2_fault.state,__ATOMIC_ACQUIRE),
-          (unsigned long long)__atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE),
-          (unsigned long long)frames,
-          (unsigned long long)host->calls,
-          (unsigned long long)host->bytes,
-          __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_device_entered,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_device_returned,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE),
-          slot,(unsigned long long)age_ms,
-          __atomic_load_n(&l->abort_requested,__ATOMIC_ACQUIRE),
-          host->abort);
-      fflush(crash);
-    }
     int captured_snapshot=0;
-    if(crash && (nx2_log_verbose || warn_first || warn_io) &&
-       armTicksToNs(stamp-crash_sample)>=crash_interval){
+    if(crash && armTicksToNs(armGetSystemTick()-crash_sample)>=crash_interval){
       captured_snapshot=1;
       crash_sample=armGetSystemTick();
       unsigned pending=0;
@@ -1483,7 +1226,6 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
       printf("This selection loads base; updates are not merged.\n");
   }
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
-
          "B+A: rebuild index   R+A: Horizon check\n"
          "X: refresh   +: exit\n\n%s\n",
          outcome);

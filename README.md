@@ -33,7 +33,7 @@ Create a folder called **games** at the root of the SD card. Extracted games can
         BackupLoaderMKW/
           BackupLoaderMKW.nro
 
-Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs. NUP archives containing a base game and recognized update package now use the highest-version compatible update as a **read-time ExeFS/RomFS overlay**, with base-file fallback. No game data is rewritten. Separate extracted folders do not gain automatic update overlay. DLC packages may be present in a NUP, but are **not** yet mounted through add-on-content services; they cannot be assumed playable.
+Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs. Updates are not merged into the base game automatically.
 
 ## Running the loader
 
@@ -48,15 +48,13 @@ If the list is empty, check that extracted games have valid exefs and romfs fold
 
 ## Where saves go
 
-New games with no existing save now use the human-readable game name and the user ID provided by Homebrew Menu's launch environment:
+Each game now gets its own folder:
 
-    SD:/switch/BackupLoaderMKW/<Game Name>/saves/<Launch User ID>/
+    SD:/switch/BackupLoaderMKW/(game folder name)/
 
-The launcher does not open another account service or run a capability probe to determine this. If Homebrew Menu does not provide a selected user ID, a new game uses the original game-name root and writes a warning. Once a per-user layout exists, the loader will refuse to silently fall back to the parent folder without that ID.
+The folder name is the same one shown under SD:/games. Renaming the game folder changes its save location.
 
-**Existing saves are never auto-moved or renamed.** If the old `title-<program-id>` folder or a legacy game-name save contains data, it keeps using that exact folder, including its archive and first-user markers. Back up saves before any manual migration; changing only the folder name can invalidate pathname-derived marker references.
-
-The launch-user directory is the root of the existing guest-save and virtual cache implementation. Further guest-profile subdirectories remain available beneath it. BCAT is **not yet mounted to SD**; this save change does not resolve `bcat:u` IPC or DLC entitlement behavior.
+**Coming from NX2BackupLoader?** Old saves are still under SD:/switch/nx2-backup-loader/saves/. This update does **not** move or delete them automatically. Back them up, then copy the old save folder's contents into the new game-named folder. The previously working Yoshi demo used the old **yoshi-demo** save folder. Keep your old saves until you've checked the new copy.
 
 ## Gameplay / crash log
 
@@ -102,7 +100,7 @@ Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro**. Copy 
 
 ## Current limitations
 
-**Yoshi and the Mysterious Book Demo** has reached gameplay in extracted-folder form and title/profile selection using a fast NUP. Other games remain unverified or have known startup failures. It selects the base package and overlays the highest-version compatible update where one exists, or runs an explicitly standalone update if no base is present; DLC is not yet mounted through Horizon add-on-content services. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
+**Yoshi and the Mysterious Book Demo** has reached gameplay in extracted-folder form and title/profile selection using a fast NUP. Other games remain unverified or have known startup failures. It selects a base package, or a standalone-update package explicitly marked with the NUP v1 standalone flag; ordinary updates and DLC are not merged. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
 
 **Early experimental release. Use at your own risk.**
 
@@ -233,8 +231,3 @@ chmod +x build-arch.sh build-nup-arch.sh build-arch.desktop build-nup-arch.deskt
 If your file manager refuses to launch .desktop files, use the ./ commands
 in a terminal instead. Desktop launchers keep their terminal open to show
 errors and results.
-
-
-## Experimental exact-title host override
-
-The default and proven host is Mario Kart World title override. As a separate unverified compatibility path, this branch now accepts a homebrew title override started from **the same installed Switch 2 application** as the selected backup (the real Horizon host ProgramId must equal the selected title's NPDM ID). Unrelated application hosts are refused. This does not grant more kernel rights than the actual title, create a new game process, ensure adequate heap, or bypass existing safety checks. MKW launches continue to work as before. The ZL retained-applet experiment caused immediate SDK aborts for OOT and Sports Resort and has been disabled; use ordinary A.

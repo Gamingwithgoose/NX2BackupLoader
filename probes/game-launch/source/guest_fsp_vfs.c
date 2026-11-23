@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stddef.h>
-#include <stdlib.h>
+#define VFS_MAX_OBJECTS 512
 #define VFS_FS 1
 #define VFS_FILE 2
 #define VFS_DIR 3
@@ -23,10 +23,7 @@ typedef struct {
  uint32_t busy;
  char root[128];
 } VfsObject;
-/* The table grows under the existing lock; all lookups return copies,
- * never pointers which could be invalidated by realloc. */
-static VfsObject *vfs_objects;
-static size_t vfs_capacity;
+static VfsObject vfs_objects[VFS_MAX_OBJECTS];
 static volatile uint32_t vfs_lock;
 static uint32_t vfs_next_id=0xe0000000U;
 static void lock_vfs(void){
@@ -38,7 +35,7 @@ static VfsObject find_object(uint32_t session,uint32_t id){
  (void)session;
  VfsObject v={0};
  lock_vfs();
- for(unsigned i=0;i<vfs_capacity;i++)
+ for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
   if(vfs_objects[i].kind && vfs_objects[i].object_id==id){
    /* Cloned fsp-srv domain sessions reuse the same object IDs. Our
     * generated IDs are process-global and never overlap kernel IDs. */
@@ -52,21 +49,7 @@ static uint32_t allocate_object(uint32_t session,uint32_t kind,
                                 const char *root){
  uint32_t id=0;
  lock_vfs();
- size_t slot=vfs_capacity;
- for(size_t j=0;j<vfs_capacity;j++)
-  if(!vfs_objects[j].kind){slot=j;break;}
- if(slot==vfs_capacity){
-  size_t old=vfs_capacity,cap=old?old*2U:64U;
-  if(cap>old&&cap<=UINT32_MAX&&cap<=SIZE_MAX/sizeof(*vfs_objects)){
-   VfsObject *grown=realloc(vfs_objects,cap*sizeof(*grown));
-   if(grown){
-    memset(grown+old,0,(cap-old)*sizeof(*grown));
-    vfs_objects=grown;vfs_capacity=cap;slot=old;
-   }
-  }
- }
- if(slot<vfs_capacity){
-  size_t i=slot;
+ for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)if(!vfs_objects[i].kind){
   id=++vfs_next_id;
   if(!id||id<0xe0000000U)id=vfs_next_id=0xe0000001U;
   vfs_objects[i].session=session;
@@ -81,6 +64,7 @@ static uint32_t allocate_object(uint32_t session,uint32_t kind,
     vfs_objects[i].root[j]=root[j];
    vfs_objects[i].root[j]=0;
   }else vfs_objects[i].root[0]=0;
+  break;
  }
  unlock_vfs();
  return id;
@@ -89,7 +73,7 @@ static int forget_object(uint32_t session,uint32_t id,VfsObject *old){
  (void)session;
  int found=0;
  lock_vfs();
- for(unsigned i=0;i<vfs_capacity;i++)
+ for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
   if(vfs_objects[i].kind && vfs_objects[i].object_id==id){
    if(old)*old=vfs_objects[i];
    vfs_objects[i]=(VfsObject){0};
@@ -104,7 +88,7 @@ static int cache_reader_begin(uint32_t id,uint64_t *cursor){
  for(;;){
   int found=0;
   lock_vfs();
-  for(unsigned i=0;i<vfs_capacity;i++)
+  for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
    if(vfs_objects[i].kind==VFS_CACHE_READER &&
       vfs_objects[i].object_id==id){
     found=1;
@@ -123,7 +107,7 @@ static int cache_reader_begin(uint32_t id,uint64_t *cursor){
 }
 static void cache_reader_end(uint32_t id,uint64_t count,int valid){
  lock_vfs();
- for(unsigned i=0;i<vfs_capacity;i++)
+ for(unsigned i=0;i<VFS_MAX_OBJECTS;i++)
   if(vfs_objects[i].kind==VFS_CACHE_READER &&
      vfs_objects[i].object_id==id && vfs_objects[i].busy){
    if(valid && count<=UINT64_MAX-vfs_objects[i].token)
@@ -343,7 +327,7 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
                       unsigned char out[192],uint32_t *out_size){
  char pa[NX2_PATH_MAX],pb[NX2_PATH_MAX];
  char a[NX2_PATH_MAX],b[NX2_PATH_MAX];
- int needs_path=cmd<=9||cmd==11||cmd==12||cmd==13||cmd==14||cmd==15;
+ int needs_path=cmd<=9||cmd==11||cmd==12||cmd==13||cmd==14;
  if(needs_path){
   if(!path_argument(rq,0,pa)||!scoped_path(obj,pa,a))
    return NX2_INVALID;
@@ -390,14 +374,6 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
    rc=nx2_rpc(RPC_SAVE_TIMESTAMP,0,0,0,0,out,a,0,0);
    if(!rc)*out_size=32;
    return rc;
-  case 15:
-   /* QueryEntry 0 is SetConcatenationFileAttribute. This is a real
-    * write to the guest-private SD tree, never to the MKW save.
-    * Unknown query IDs may read system metadata or alter native storage:
-    * do not fabricate a reply or forward them under the host PID. */
-   if(obj->read_only || len<4 || read32(in)!=0)
-    return NX2_FS_UNSUPPORTED;
-   return nx2_rpc(RPC_SAVE_QUERY_ENTRY,0,0,0,0,0,a,0,0);
   case 16:
    /* Query native SD backing filesystem; do not invent 0xc0-byte limits. */
    rc=nx2_rpc(RPC_SAVE_ATTRIBUTE,0,0,0,0,out,0,0,0);
@@ -437,21 +413,10 @@ static uint32_t do_file(const VfsObject *obj,uint32_t cmd,
    if(len<24||((int64_t)read64(in+8))<0)return NX2_INVALID;
    if(cmd==1&&obj->read_only)return NX2_FS_UNSUPPORTED;
    uint64_t offset=read64(in+8),n=read64(in+16);
-   /* Zero-byte IFile operations still need real handle, mode and
-    * option validation. Earlier code fabricated success without calling
-    * the selected title's actual SD-backed file object. No transfer
-    * descriptor is required when the requested byte count is zero. */
+   /* Native IFile zero-byte reads/writes need no transfer descriptor.
+    * Return an actual 0-byte read count without touching SD state. */
    if(!n){
-    uint64_t transferred=0;
-    uint32_t flags=cmd==1?read32(in):0;
-    uint32_t zero_rc=nx2_rpc(cmd==0?RPC_SAVE_READ:RPC_SAVE_WRITE,
-                             obj->token,offset,0,flags,0,0,0,
-                             &transferred);
-    if(zero_rc)return zero_rc;
-    if(cmd==0){
-     if(transferred)return NX2_INVALID;
-     memset(out,0,8);*out_size=8;
-    }
+    if(cmd==0){memset(out,0,8);*out_size=8;}
     return 0;
    }
    void *buf=0;uint64_t cap=0;

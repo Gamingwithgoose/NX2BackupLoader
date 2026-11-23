@@ -587,14 +587,13 @@ uintptr_t nx2_bootstrap_gate(const char *name){
  return result;
 }
 
-/* Static-module compatibility: NX2 has already mapped and linked each
- * ExeFS NSO, but the guest SDK's real RO registration requires a different
- * kernel process identity. Starfox and Kirby demonstrate a hard abort
- * (0x1759) when running that registration in the launcher process.
- * This acknowledges ONLY one-time SDK initialization. Actual dynamic
- * registration/loading remains unavailable until a guest-aware RO backend
- * is implemented; no dynamic call is intercepted or falsely completed. */
+/* All guest titles execute in the host process. Initializing the host
+ * ldr:ro session with guest assumptions can abort before native graphics
+ * starts. Apply this process-context adapter uniformly where the guest
+ * SDK exports nn::ro::Initialize; actual dynamic NRO loads still need a
+ * correctly isolated, process-aware loader implementation. */
 uint32_t nx2_ro_initialize_compat(void){
+ nx2_rpc(RPC_LOG,0,0,0,0,0,"RO_INIT_COMPAT","host-owned ldr:ro initialization skipped; dynamic modules not yet virtualized",0);
  return 0;
 }
 uint32_t nx2_save_sizes(int64_t *size,int64_t *journal){if(size)*size=0x20000000;if(journal)*journal=0;return 0;}

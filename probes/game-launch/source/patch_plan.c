@@ -178,12 +178,8 @@ const Nx2PatchSpec nx2_patch_specs[] = {
      "nvnBootstrapLoader", "nvnBootstrapLoader", (uintptr_t)nx2_bootstrap_gate},
     {5, 0, 0, UINT64_MAX, 2, offsetof(Nx2LaunchApi, original_os_init),
      "nnosInitialize", "nnosInitialize", (uintptr_t)nx2_os_init_gate},
-    /* All static guest NSOs have already been mapped by NX2. Native RO
-     * registration assumes an independently created title process, which
-     * does not exist in the host-process execution model. Intercept only
-     * the SDK's one-time Initialize; do not fake NRO load/NRR commands. */
     {5, 0, 0, UINT64_MAX, 2, UINT64_MAX,
-     "_ZN2nn2ro10InitializeEv", "Guest RO static initialization",
+     "_ZN2nn2ro10InitializeEv", "Guest RO Initialize",
      (uintptr_t)nx2_ro_initialize_compat},
     {0, 0, 0, 6, 2, UINT64_MAX, 0, "Bounded rtld QueryMemory",
      (uintptr_t)nx2_rtld_query},

@@ -50,41 +50,13 @@ Nx2IpcDecision nx2_ipc_decide(const void *buffer,uint64_t size,uint32_t kind){
  if(kind==1&&!d.control&&d.command==1&&cmif+24<=end)d.want_fsp=name(p+cmif+16);
  return d;
 }
-/* Forward real native service operations for process initialization and
- * process-independent FSP administration, rather than inventing a reply.
- * FSP 180 is an interface-level method observed on Switch 2. It is NOT an
- * open/create/mount/delete save call. Preserve the guest's SD-backed
- * filesystem virtualization for commands 22/23/34/51/52/53/62 and every
- * known save child object. No title IDs, names or ROM formats are checked.
- * The underlying service returns its actual CMIF status and permissions. */
+/* The only FSP root methods permitted to reach the real host service
+ * are process initialization and the existing non-save method 1005.
+ * Cache/save reader 62 is now routed to a per-guest virtual interface,
+ * never enumerated under the Mario Kart World host's native identity. */
 int nx2_ipc_fsp_allowed(Nx2IpcDecision d){
- if(!d.valid)return 0;
- if(d.control)return d.command<=4;
- if(d.close_kind)return 1;
- /* Only non-mutating system-state operations or real device/notifier
-  * interface constructors are safe under the launcher's native PID. */
- switch(d.command){
- case 1: case 13: case 26: case 27: case 29: case 180:
- case 201: case 202: case 400:
- case 500: case 501: case 502: case 503: case 1005:return 1;
- default:return 0;
- }
-}
-int nx2_ipc_fsp_native_child_allowed(Nx2IpcDecision d,uint32_t kind){
- if(!d.valid||(kind!=4&&kind!=5&&kind!=6))return 0;
- if(d.control)return d.command<=4;
- if(d.close_kind)return 1;
- if(kind==5)return d.command==0; /* Native notifier kernel event */
- if(kind==6)return d.command==0||d.command==4; /* IStorage Read/GetSize */
- switch(d.command){
- case 0: case 1: case 2: case 3: case 4: case 5: case 6:
- case 100: case 101: case 111: case 112: case 114:
- case 200: case 202: case 203: case 205: case 206:
- case 207: case 208: case 211: case 212: case 214:
- case 216: case 217: case 218: case 220: case 221:
- case 222: case 224: case 226: case 301: case 402:return 1;
- default:return 0;
- }
+ return d.valid&&((d.control&&d.command<=4)||
+                  (!d.control&&(d.command==1||d.command==1005)));
 }
 /* ISaveDataInfoReader supports a read-only enumeration call at command 0.
  * Reject other calls on this interface instead of giving it proxy access. */
@@ -120,32 +92,6 @@ int nx2_ipc_reply_result(const void *buffer,uint64_t size,uint32_t request_type,
 }
 
 
-/* A native IStorage child is generally read-only; Operation 5 is safe
- * only for non-destructive range maintenance. Validate the *request data*,
- * not merely the command number, before letting it reach Horizon. */
-int nx2_ipc_fsp_storage_range_allowed(const void *buffer,uint64_t size,
-                                      Nx2IpcDecision d){
- if(!buffer||!d.valid||d.control||d.close_kind||d.command!=5)return 0;
- const unsigned char *p=buffer;
- uint64_t off=0,end=0;
- if(!data_area(p,size,&off,&end))return 0;
- uint64_t at=(off+15U)&~UINT64_C(15);
- if(at>end||end-at<16)return 0;
- if(word(p+at)!=0x49434653U){
-  if(!d.domain||at>end||end-at<32||
-     word(p+at)!=1U||word(p+at+16)!=0x49434653U)return 0;
-  at+=16;
- }
- if(end-at<40||word(p+at+8)!=5)return 0;
- uint32_t operation=word(p+at+16);
- uint64_t offset=(uint64_t)word(p+at+24)|
-                 ((uint64_t)word(p+at+28)<<32);
- uint64_t length=(uint64_t)word(p+at+32)|
-                 ((uint64_t)word(p+at+36)<<32);
- return (operation==2U||operation==3U) &&
-        offset<=INT64_MAX && length<=INT64_MAX &&
-        offset<=INT64_MAX-length;
-}
 /* HIPC control 1 (CopyFromCurrentDomain) converts a domain object to a
  * separate session handle. Preserve its interface kind after this operation.
  * Decode only the 4-byte object ID in a bounded control SFCI request. */
