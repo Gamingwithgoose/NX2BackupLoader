@@ -258,3 +258,8 @@ Check `GAMEPLAY_GPU_TRACE enabled=1` in the primary log. After at least 30 prese
 
 
 The gameplay GPU stall snapshot also performs a zero-timeout check of the guest main worker's termination handle: `WARNING_GUEST_WORKER_TERMINATION_PROBE` reports whether the kernel says the thread has terminated, not whether it is actively scheduled or blocked on a GPU fence. The exact graphics observation coverage is reflected in `nvn_other_stages_observed` only for opt-in A tracing or ZR+A.
+
+
+### Acquire-to-present ordering trace (2026-11-23)
+
+The ZR+A fully instrumented NVN diagnostic mode now retains the last 256 GPU boundary crossings in shared RAM and writes the most recent 64 to the **crash log** on each suspected presentation stall. Each `WARNING_GPU_BOUNDARY_EVENT` records chronological sequence, stage kind, age, thread TLS, calling address, queue/window identity, and texture index (where available). Kinds: **10/11** Present entry/return, **20/21** command submit entry/return, **22/23** queue flush entry/return, **24/25** queue finish entry/return, **26/27** window acquire entry/return, **28/29** queue acquire entry/return. The same event timeline is available by launching with normal **A** when `SD:/switch/BackupLoaderMKW/gameplay-gpu-trace.flag` exists. Default A and L+A modes are not affected. The existing `WARNING_NATIVE_SYNC_IN_FLIGHT` and `WARNING_GUEST_WORKER_TERMINATION_PROBE` outputs provide limited guest wait context; they do **not** identify kernel stack traces, GPU fence wait causes, or userspace mutex waits. Check that a suspected missing present and preceding acquire came from the same thread/queue before drawing conclusions. This is diagnostic instrumentation, not an established GPU gameplay fix.
