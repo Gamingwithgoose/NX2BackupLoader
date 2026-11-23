@@ -161,6 +161,7 @@ typedef struct {
   uint64_t last_poll_tick;
   uint64_t loop_count;
   uint32_t phase; /* 1 enter poll, 2 returned poll, 3 idle sleep */
+  uint32_t handle;
   uint32_t running;
 } Nx2StorageService;
 static Nx2StorageService nx2_storage_service;
@@ -181,6 +182,18 @@ static void report_unresolved_waits(FILE *out,Nx2Launch *l,Nx2Host *host,
      (unsigned long long)worker_age,
      __atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE),
      (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE));
+ if(worker_age>=1000){
+   Handle h=__atomic_load_n(&nx2_storage_service.handle,__ATOMIC_ACQUIRE);
+   if(h){
+     s32 index=-1;
+     Result rc=svcWaitSynchronization(&index,&h,1,0);
+     /* Kernel success here means the thread termination handle is
+      * signaled, NOT that the worker is idle or a ROM request succeeded. */
+     row(out,"WARNING_WORKER_TERMINATION_PROBE handle=%08x "
+             "kernel_result=%08x terminated=%u\n",
+         h,rc,(unsigned)(R_SUCCEEDED(rc)));
+   }
+ }
  for(unsigned i=0;i<NX2_RPC_SLOTS;i++){
    Nx2Request *r=&l->requests[i];
    uint32_t state=__atomic_load_n(&r->state,__ATOMIC_ACQUIRE);
@@ -255,12 +268,14 @@ static int start_storage_service(FILE *f,Nx2Host *host,Nx2Launch *launch,
   nx2_storage_service.running=0;
   nx2_storage_service.phase=0;
   nx2_storage_service.loop_count=0;
+  nx2_storage_service.handle=0;
   /* Kernel-permitted scheduling priority selected from guest demand. */
   rc=threadCreate(thread,storage_service_entry,&nx2_storage_service,
                   NULL,0x80000,priority,core);
   row(f,"STORAGE_WORKER_CREATE core=%d priority=%d result=%08x\n",
       core,priority,rc);
   if(R_FAILED(rc))return 0;
+  __atomic_store_n(&nx2_storage_service.handle,thread->handle,__ATOMIC_RELEASE);
   rc=threadStart(thread);
   row(f,"STORAGE_WORKER_START handle=%08x result=%08x\n",thread->handle,rc);
   if(R_FAILED(rc)){threadClose(thread);return 0;}
