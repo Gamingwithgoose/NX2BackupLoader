@@ -39,6 +39,8 @@ typedef struct {
   /* Serialized worker breadcrumbs, read by the watchdog only. */
   uint32_t rpc_rom_phase,rpc_rom_file;
   uint64_t rpc_rom_offset,rpc_rom_bytes;
+  uint64_t rpc_rom_completed;
+  uint32_t rpc_rom_chunk_bytes,rpc_rom_result;
   int abort;
 } Nx2Host;
 int nx2_host_init(Nx2Host *, FILE *, const char *, const char *,uint64_t);
