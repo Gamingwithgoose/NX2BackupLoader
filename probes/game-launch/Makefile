@@ -25,7 +25,6 @@ LIBDIRS := $(PORTLIBS) $(LIBNX)
 # Only the explicitly requested developer build links the kaiHEN IPC client.
 ifeq ($(NX2_DEV_TRACE),1)
 CFLAGS += -DNX2_DEV_TRACE
-LIBS += -lkaihen
 LIBDIRS += $(DEVKITPRO)/libounce
 endif
 export NO_ICON := 1
