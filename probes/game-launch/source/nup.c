@@ -281,7 +281,8 @@ static uint32_t lookup_file(const char *path) {
     path+=6;
   }else return UINT32_MAX;
   uint32_t node=lookup_node_from(updated,path);
-  if(node==UINT32_MAX)node=lookup_node_from(base,path);
+  if(node==UINT32_MAX || node<mounted.ndirs)
+    node=lookup_node_from(base,path);
   return node!=UINT32_MAX && node>=mounted.ndirs?node-mounted.ndirs:UINT32_MAX;
 }
 void nx2_nup_close(void) {
