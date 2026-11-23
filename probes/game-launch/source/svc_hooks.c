@@ -517,7 +517,38 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
   * every tagged guest IPC synchronously waited for a storage-worker RPC
   * solely to print IPC_BEGIN. That extra guest/SD dependency is unnecessary
   * and can postpone service initialization or graphics work. */
+ /* Bounded, lock-free per-thread observation of the *native* IPC
+  * boundary. Do not parse a non-CMIF reply as a CMIF error. The TLS
+  * hash can collide: preserve an already outstanding foreign owner and
+  * report collision, rather than silently overwriting a blocked call. */
+ uint64_t sync_tls=0;
+ __asm__ volatile("mrs %0,tpidrro_el0":"=r"(sync_tls));
+ Nx2SyncFlight *flight=&nx2_launch->sync_flights[
+    (sync_tls>>5)&(NX2_SYNC_FLIGHT_SLOTS-1U)];
+ uint64_t observed_tls=__atomic_load_n(&flight->thread_tls,__ATOMIC_ACQUIRE);
+ uint32_t observed_phase=__atomic_load_n(&flight->phase,__ATOMIC_ACQUIRE);
+ int flight_owned=0;
+ if(observed_tls==sync_tls || observed_phase!=1){
+   __atomic_store_n(&flight->phase,0,__ATOMIC_RELAXED);
+   flight->thread_tls=sync_tls;
+   flight->caller=caller;
+   flight->started_tick=armGetSystemTick();
+   flight->handle=h;
+   flight->request_type=request_type;
+   flight->header0=hdr0;
+   flight->header1=hdr1;
+   flight->call_id=call_id;
+   flight->result=UINT32_MAX;
+   __atomic_store_n(&flight->phase,1,__ATOMIC_RELEASE);
+   flight_owned=1;
+ }else{
+   __atomic_fetch_add(&nx2_launch->sync_flight_collisions,1,__ATOMIC_RELAXED);
+ }
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
+ if(flight_owned){
+   flight->result=rc;
+   __atomic_store_n(&flight->phase,2,__ATOMIC_RELEASE);
+ }
  if(crumb){
    crumb->result=rc;
    __atomic_store_n(&crumb->phase,2,__ATOMIC_RELEASE);
