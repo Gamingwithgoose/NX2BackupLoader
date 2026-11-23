@@ -971,12 +971,17 @@ static unsigned rom_select_window(Nx2Host *h,uint32_t file){
  return slot;
 }
 static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
+ __atomic_store_n(&h->rpc_rom_file,(uint32_t)r->a,__ATOMIC_RELAXED);
+ __atomic_store_n(&h->rpc_rom_offset,r->b,__ATOMIC_RELAXED);
+ __atomic_store_n(&h->rpc_rom_bytes,r->c,__ATOMIC_RELAXED);
+ __atomic_store_n(&h->rpc_rom_phase,1,__ATOMIC_RELEASE);
  if(r->a>=l->rom.count || r->c>0x10000000U ||
     !r->c || (!r->buffer&&r->c))return serve(h,l,r);
  const uint32_t file=(uint32_t)r->a;
  const uint64_t offset=r->b,bytes=r->c;
  const uint64_t length=rom_extent_length(&l->rom,file);
  if(offset>length || bytes>length-offset)return serve(h,l,r);
+ __atomic_store_n(&h->rpc_rom_phase,2,__ATOMIC_RELEASE);
  unsigned slot=rom_select_window(h,file);
  unsigned streak=h->rom_windows[slot].previous &&
                  h->rom_windows[slot].last_end==offset
@@ -988,7 +993,8 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
     offset-h->rom_windows[slot].offset<=h->rom_windows[slot].length &&
     bytes<=h->rom_windows[slot].length-
            (offset-h->rom_windows[slot].offset)){
-  memcpy(r->buffer,h->rom_windows[slot].data+
+  __atomic_store_n(&h->rpc_rom_phase,3,__ATOMIC_RELEASE);
+   memcpy(r->buffer,h->rom_windows[slot].data+
          (size_t)(offset-h->rom_windows[slot].offset),(size_t)bytes);
   __atomic_fetch_add(&h->calls,1,__ATOMIC_RELAXED);
   __atomic_fetch_add(&h->bytes,bytes,__ATOMIC_RELAXED);
@@ -1011,7 +1017,8 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
    Nx2Request temp=*r;
    temp.buffer=h->rom_windows[slot].data;
    temp.c=amount;
-   result=serve(h,l,&temp);
+   __atomic_store_n(&h->rpc_rom_phase,4,__ATOMIC_RELEASE);
+    result=serve(h,l,&temp);
    if(!result){
     memcpy(r->buffer,h->rom_windows[slot].data,(size_t)bytes);
     h->rom_windows[slot].offset=offset;
@@ -1023,9 +1030,11 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
    }else{
     /* Failed speculative suffix is never an error for a valid prefix. */
     h->rom_windows[slot].valid=0;
-    result=serve(h,l,r);
+    __atomic_store_n(&h->rpc_rom_phase,5,__ATOMIC_RELEASE);
+     result=serve(h,l,r);
    }
-  }else result=serve(h,l,r);
+  }else __atomic_store_n(&h->rpc_rom_phase,5,__ATOMIC_RELEASE);
+     result=serve(h,l,r);
  }
  if(!result){
   h->rom_windows[slot].last_end=offset+bytes;
@@ -1035,6 +1044,7 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
   h->rom_windows[slot].previous=0;
   h->rom_windows[slot].streak=0;
  }
+ __atomic_store_n(&h->rpc_rom_phase,7,__ATOMIC_RELEASE);
  return result;
 }
 int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
@@ -1043,6 +1053,7 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
     Nx2Request *r = &l->requests[i];
     if (__atomic_load_n(&r->state, __ATOMIC_ACQUIRE) == 2) {
       __atomic_store_n(&h->rpc_active_op,r->op,__ATOMIC_RELAXED);
+      __atomic_store_n(&h->rpc_rom_phase,0,__ATOMIC_RELAXED);
       __atomic_store_n(&h->rpc_started_tick,armGetSystemTick(),__ATOMIC_RELAXED);
       __atomic_store_n(&h->rpc_active_slot,i+1,__ATOMIC_RELEASE);
       r->result = r->op==RPC_ROM_READ ?
@@ -1054,6 +1065,7 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
       __atomic_store_n(&r->state, 3, __ATOMIC_RELEASE);
       __atomic_fetch_add(&h->rpc_completed_count,1,__ATOMIC_RELAXED);
       __atomic_store_n(&h->rpc_active_slot,0,__ATOMIC_RELEASE);
+      __atomic_store_n(&h->rpc_rom_phase,0,__ATOMIC_RELEASE);
       __asm__ volatile("sev" ::: "memory");
       served++;
     }
