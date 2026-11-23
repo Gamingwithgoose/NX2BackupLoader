@@ -601,13 +601,17 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       (unsigned long long)resource,selected_resource,
       (unsigned long long)(resource<selected_resource?selected_resource-resource:0));
   if(resource<selected_resource){
-    row(f,"REFUSED host_system_resource_reservation_shortfall real_kernel_value=1\n");
-    nx2_nup_close();fclose(f);
-    snprintf(outcome,sizeof(outcome),
-             "Host system-resource reservation too small: %llu < %u bytes.",
-             (unsigned long long)resource,selected_resource);
-    if(crash){row(crash,"PRELAUNCH_STOP phase=RESOURCE_SHORTFALL\n");fclose(crash);}
-    return;
+    /* NPDM system-resource size is not the game's RAM requirement.
+     * Some modern application processes legitimately have zero private
+     * system-resource bytes. Do not reject a guest solely for declaring
+     * a larger NPDM value: let the actual kernel VM operations decide.
+     * This is host-agnostic, not a Pokopia/guest-specific exception.
+     * Guest MapPhysicalMemory can still fail with InvalidState when the
+     * host's process uses optimized allocation with no private resource. */
+    row(f,"WARNING_HOST_RESOURCE_MODE mode=kernel_enforced_compat host_resource_bytes=%llu guest_npdm_bytes=%u physical_mapping_may_fail=%u\n",
+        (unsigned long long)resource,selected_resource,resource==0);
+    if(crash)row(crash,"WARNING_HOST_RESOURCE_MODE mode=kernel_enforced_compat host_resource_bytes=%llu guest_npdm_bytes=%u physical_mapping_may_fail=%u\n",
+        (unsigned long long)resource,selected_resource,resource==0);
   }
   launch_phase="ROMFS_INDEX";
   screen(rebuild_index ? "Rebuilding game index..." : "Loading game index...");
