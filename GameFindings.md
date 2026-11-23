@@ -370,3 +370,15 @@ Implement a universal, low-overhead **freeze-point liveness recorder**, applicab
 
 ### 2026-11-23 — DK/NUP experiment request fidelity diagnostics
 - No changes to game-specific launch, DLC, save layouts, or native FSP boundaries. New complete IPC metadata logging and explicit `COMPAT_SYNTHETIC_SUCCESS_NO_KERNEL_CALL` / `COMPAT_SYNTHETIC_RO_INIT_SUCCESS` markers make synthetic SDK outcomes distinguishable from native IPC returns. DK hang still uncorrected and hard MKW close persists in previous hardware tests. Hardware validation pending.
+
+
+### 2026-11-23 22:18–22:44 — Full-trace game matrix
+| Game / source | New outcome | Last verified progress | Decisive difference |
+| --- | --- | --- | --- |
+| DK Bananza folder (22:18) | freezes | 191 native Presents returned; 2097/2097 host RPCs; 1986/1986 ROM reads; pending=0 | No active file read when presentation stalled; unlike earlier folder backend hangs |
+| DK Bananza NUP (22:20) | freezes | 1922 native Presents returned; 2139/2139 host RPCs; 2021/2021 ROM reads; pending=0 | No active ROM RPC when presentation stalled; NOT same observed state as earlier folder hangs |
+| Zelda OOT NUP (22:21) | ends early/no frames | 0 frames, ~8.9s, 609 guest fs reads entered, 607 returned, 2 pending | Insufficient duration to establish deadlock; no explicit SDK break in this capture |
+| Zelda OOT folder (22:22) | ends early/no frames | 0 frames, ~7.0s, 463 fs reads entered, 461 returned, 2 pending | Insufficient duration to establish deadlock; no explicit SDK break in this capture |
+| Starfox folder (22:24) | user reports successful launch/play/load | 3218 native Presents, 2776/2776 reads, no outstanding ROM RPC at ~64.5s | Proven preservation of working title under full tracing; RO synthetic init marker is not necessarily fatal |
+
+Detailed facts: DK folder `crash(20261123-221823)`+`gameplay(20261123-221825)`; DK NUP `crash(20261123-222055)`+`nup(20261123-222058)`; OOT NUP `crash/nup(20261123-222159)`; OOT folder `crash/gameplay(20261123-222250)`; Starfox `crash(20261123-222439)`+`gameplay(20261123-222441)`. Full text trace loses events: Starfox ~207082 and DK NUP 31132 `IPC_EVENTS_DROPPED`; these are observer overruns, not guest IPC rejects. Starfox's `chat:u` 0x4e2 CMIF and `bsd:s`/`bsd:a` 0x1015 do not prevent gameplay. DK/OOT pctl 0x1015 is shared and not proven fatal. No game fix implemented in this log-review pass.
