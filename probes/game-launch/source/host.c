@@ -147,7 +147,7 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
       /* Never substitute the parent directory for an existing per-user
        * tree: that would look like lost save data and risk mixed profiles. */
       if(named_profile){
-        logline(h,"WARNING_LAUNCH_USER_UNAVAILABLE existing_profile_tree=1 refusing_unsafe_fallback\\n");
+        logline(h,"WARNING_LAUNCH_USER_UNAVAILABLE existing_profile_tree=1 refusing_unsafe_fallback\n");
         return 0;
       }
       /* For a new game with no HBL UserId, keep the older game-name
