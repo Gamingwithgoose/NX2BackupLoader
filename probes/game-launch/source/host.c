@@ -119,11 +119,11 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
       /* No profile is provided in HBL environment: retain the old
        * game-name layout rather than claiming a guessed profile. */
       n=snprintf(h->save_root,sizeof(h->save_root),"%s",game_root);
-      logline(h,"WARNING_LAUNCH_USER_UNAVAILABLE source=hbl_environment save_mode=legacy_game_name\\n");
+      logline(h,"WARNING_LAUNCH_USER_UNAVAILABLE source=hbl_environment save_mode=legacy_game_name\n");
     }
   }
   if(n<0||n>=(int)sizeof(h->save_root))return 0;
-  logline(h,"SAVE_NAMESPACE strategy=%s guest=%016llx root=%s\\n",
+  logline(h,"SAVE_NAMESPACE strategy=%s guest=%016llx root=%s\n",
           legacy_title?"existing_title_id":
           legacy_name?"existing_game_name":
           h->new_save_layout?"game_name_launch_user":"game_name_unscoped",
@@ -138,7 +138,7 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   paths[path_count++]=h->save_root;
   for(size_t i=0;i<path_count;i++){
     Result rc=mkdir_one(h->sd,paths[i]);
-    logline(h,"PRIVATE_SAVE_DIRECTORY path=%s result=%08x\\n",paths[i],rc);
+    logline(h,"PRIVATE_SAVE_DIRECTORY path=%s result=%08x\n",paths[i],rc);
     if(R_FAILED(rc))return 0;
   }
   return 1;
