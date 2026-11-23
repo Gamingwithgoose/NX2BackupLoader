@@ -171,6 +171,36 @@ typedef struct {
 static Nx2StorageService nx2_storage_service;
 /* Bounded, host-only wait evidence. This never polls a guest service,
  * mutates an RPC slot, or tries to "unstick" the game with fake results. */
+/* Reconstruct the last 64 GPU boundary events at a suspected stall.
+ * Ring is best-effort under concurrency. Check each committed sequence
+ * before and after copying, and skip records in the middle of overwrite.
+ * Calls still run entirely native and no guest thread blocks for logging. */
+static void report_gpu_boundary_history(FILE *out,Nx2Launch *l,uint64_t now){
+ if(!out || !(l->nvn_gameplay_trace || l->nvn_driver_passthrough==0))return;
+ uint32_t next=__atomic_load_n(&l->gpu_boundary_next,__ATOMIC_ACQUIRE);
+ uint32_t count=next<64?next:64;
+ row(out,"WARNING_GPU_BOUNDARY_HISTORY produced=%u last=%u "
+         "kind=10/11_present_in/out_20/21_submit_22/23_flush_"
+         "24/25_finish_26/27_window_acquire_28/29_queue_acquire\n",next,count);
+ for(uint32_t i=count;i;i--){
+  uint32_t ticket=next-i;
+  const Nx2GpuBoundary *source=&l->gpu_boundary[ticket%NX2_GPU_BOUNDARY_RING_SLOTS];
+  uint32_t sequence=__atomic_load_n(&source->sequence,__ATOMIC_ACQUIRE);
+  if(sequence!=ticket+1)continue;
+  Nx2GpuBoundary snapshot=*source;
+  if(__atomic_load_n(&source->sequence,__ATOMIC_ACQUIRE)!=sequence)continue;
+  uint64_t age=(snapshot.tick && now>=snapshot.tick)?
+    armTicksToNs(now-snapshot.tick)/1000000ULL:0;
+  row(out,"WARNING_GPU_BOUNDARY_EVENT seq=%u kind=%u age_ms=%llu "
+          "tls=%016llx caller=%016llx queue=%016llx "
+          "window=%016llx texture=%d\n",
+      sequence,snapshot.kind,(unsigned long long)age,
+      (unsigned long long)snapshot.thread_tls,
+      (unsigned long long)snapshot.caller,
+      (unsigned long long)snapshot.queue,
+      (unsigned long long)snapshot.window,snapshot.texture_index);
+ }
+}
 static void report_unresolved_waits(FILE *out,Nx2Launch *l,Nx2Host *host,
                                     uint64_t now_tick,const char *reason){
  if(!out)return;
@@ -940,6 +970,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                       "kernel_result=%08x terminated=%u\n",
                 gh,state_rc,(unsigned)R_SUCCEEDED(state_rc));
           }
+          report_gpu_boundary_history(crash,l,now);
           report_unresolved_waits(crash,l,host,now,"present_stalled");
           fflush(crash);
         }
