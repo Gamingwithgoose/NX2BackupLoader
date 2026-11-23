@@ -435,12 +435,18 @@ int nx2_nup_open(const char *path) {
        (codec==0 && stored!=size))goto fail;
   }
   mounted=m;
-  /* Once the archive TOC and extents are verified, open the SAME SD file
-   * through the real Horizon filesystem interface. This is title-neutral
-   * and does not change the archive's contents or private save namespace.
-   * If the native open is unavailable, retain the previously working
-   * devoptab stdio read path rather than failing the entire launch. */
-  if(!strncmp(path,"sdmc:",5)){
+  /* Regression-safe backend selection: the original FILE* reader is
+   * the default for EVERY title and EVERY package, not only Star Fox.
+   * Native fsFileRead was previously made the unconditional default and
+   * the first verified Star Fox black-screen regression followed. Reads
+   * completed but guest graphics startup changed; causality is unproven.
+   * Keep native available for an explicit comparative SD test only.
+   * No archive extraction, title-specific exceptions, or fake bytes. */
+  int request_native=0;
+  FILE *backend_flag=fopen(
+      "sdmc:/switch/BackupLoaderMKW/native-nup-read.flag","rb");
+  if(backend_flag){request_native=1;fclose(backend_flag);}
+  if(request_native && !strncmp(path,"sdmc:",5)){
     FsFileSystem *sd=fsdevGetDeviceFileSystem("sdmc");
     if(sd && R_SUCCEEDED(fsFsOpenFile(sd,path+5,FsOpenMode_Read,
                                     &mounted.native_file)))
