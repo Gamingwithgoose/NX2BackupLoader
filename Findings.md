@@ -937,3 +937,5 @@ Source audit shows normal A previously returned launcher-owned NVN wrapper stubs
 
 
 - **Same-batch late addition:** `main.c` stores storage worker kernel handle at thread start and on stale-worker freeze uses `svcWaitSynchronization(handle, timeout=0)` **nonblocking** to determine if thread handle is signaled (terminated). Emits `WARNING_WORKER_TERMINATION_PROBE handle=... kernel_result=... terminated=0/1`. A timed-out probe indicates worker has **not signaled exit**, NOT that it is actively running. No worker restart, no thread kill, no ROM data alteration. Commit `2a790a0b3167d99e9c958c99dc8363ef722bc32d`. This directly distinguishes dead worker from not-exited-but-stalled. 
+
+- Final defensive tracer correction: for RPC slots only CLAIMED (state=1, unpublished), watchdog now reports `unpublished=1` without reading stale request parameters from an earlier occupant. Only published state>=2 includes request op, age, TLS, ticket and offsets. Commit `056684f178d6ae4a715cc21b270d5e1c84cc6dd2`. This is diagnostics-only; no guest timing or filesystem semantics changed.
