@@ -159,6 +159,8 @@ typedef struct {
   Nx2Host *host;
   Nx2Launch *launch;
   uint64_t last_poll_tick;
+  uint64_t loop_count;
+  uint32_t phase; /* 1 enter poll, 2 returned poll, 3 idle sleep */
   uint32_t running;
 } Nx2StorageService;
 static Nx2StorageService nx2_storage_service;
@@ -167,10 +169,16 @@ static void storage_service_entry(void *opaque){
   Nx2StorageService *svc=(Nx2StorageService*)opaque;
   __atomic_store_n(&svc->running,1,__ATOMIC_RELEASE);
   for(;;){
+    __atomic_store_n(&svc->phase,1,__ATOMIC_RELEASE);
     __atomic_store_n(&svc->last_poll_tick,armGetSystemTick(),__ATOMIC_RELEASE);
     int completed=nx2_host_poll(svc->host,svc->launch);
+    __atomic_store_n(&svc->phase,2,__ATOMIC_RELEASE);
+    __atomic_fetch_add(&svc->loop_count,1,__ATOMIC_RELAXED);
     __atomic_store_n(&svc->last_poll_tick,armGetSystemTick(),__ATOMIC_RELEASE);
-    if(!completed)svcSleepThread(100000);
+    if(!completed){
+      __atomic_store_n(&svc->phase,3,__ATOMIC_RELEASE);
+      svcSleepThread(100000);
+    }
   }
 }
 static int start_storage_service(FILE *f,Nx2Host *host,Nx2Launch *launch,
@@ -191,6 +199,8 @@ static int start_storage_service(FILE *f,Nx2Host *host,Nx2Launch *launch,
   nx2_storage_service.launch=launch;
   nx2_storage_service.last_poll_tick=armGetSystemTick();
   nx2_storage_service.running=0;
+  nx2_storage_service.phase=0;
+  nx2_storage_service.loop_count=0;
   /* Kernel-permitted scheduling priority selected from guest demand. */
   rc=threadCreate(thread,storage_service_entry,&nx2_storage_service,
                   NULL,0x80000,priority,core);
