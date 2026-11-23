@@ -470,7 +470,8 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       rc = NX2_INVALID;
     return rc;
   }
-  if (r->op >= RPC_SAVE_CREATE && r->op <= RPC_SAVE_OPEN) {
+  if ((r->op >= RPC_SAVE_CREATE && r->op <= RPC_SAVE_OPEN) ||
+      r->op == RPC_SAVE_QUERY_ENTRY) {
     if (!nx2_save_path(p, sizeof(p), h->save_root, r->path))
       return NX2_INVALID;
   }
