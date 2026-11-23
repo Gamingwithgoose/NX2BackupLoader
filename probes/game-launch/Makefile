@@ -22,11 +22,6 @@ ASFLAGS := -g $(ARCH)
 LDFLAGS := -Wl,--undefined=nx2_launch_layout,--undefined=nx2_preflight_worker -specs=$(LIBNX)/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LIBS := -lnx
 LIBDIRS := $(PORTLIBS) $(LIBNX)
-# Only the explicitly requested developer build links the kaiHEN IPC client.
-ifeq ($(NX2_DEV_TRACE),1)
-CFLAGS += -DNX2_DEV_TRACE
-LIBDIRS += $(DEVKITPRO)/libounce
-endif
 export NO_ICON := 1
 export NO_NACP := 1
 
