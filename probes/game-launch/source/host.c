@@ -82,23 +82,64 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   int n=snprintf(old_root,sizeof(old_root),
                  "/switch/BackupLoaderMKW/%s",save_key);
   if(n<0||n>=(int)sizeof(old_root))return 0;
-  int legacy=(!guest_id)||legacy_archive_present(h->sd,old_root);
-  if(legacy)
+  /* Preserve every pre-existing title-ID and display-name save, without
+   * migrating or deleting the archive/primary-user markers that reference
+   * its full pathname. New saves get a human-readable game directory. */
+  char title_root[512],game_root[512],save_parent[512];
+  n=snprintf(title_root,sizeof(title_root),
+             "/switch/BackupLoaderMKW/title-%016llx",
+             (unsigned long long)guest_id);
+  if(n<0||n>=(int)sizeof(title_root))return 0;
+  n=snprintf(game_root,sizeof(game_root),
+             "/switch/BackupLoaderMKW/%s",save_key);
+  if(n<0||n>=(int)sizeof(game_root))return 0;
+  int legacy_name=legacy_archive_present(h->sd,old_root);
+  int legacy_title=guest_id && legacy_archive_present(h->sd,title_root);
+  if(legacy_name || !guest_id)
     n=snprintf(h->save_root,sizeof(h->save_root),"%s",old_root);
-  else
-    n=snprintf(h->save_root,sizeof(h->save_root),
-               "/switch/BackupLoaderMKW/title-%016llx",
-               (unsigned long long)guest_id);
+  else if(legacy_title)
+    n=snprintf(h->save_root,sizeof(h->save_root),"%s",title_root);
+  else {
+    /* UserIdStorage comes from the homebrew launch environment. No new
+     * account service session, attach, or privileged probe is attempted. */
+    const AccountUid *selected=envGetUserIdStorage();
+    if(selected && (selected->uid[0] || selected->uid[1])) {
+      h->launch_uid=(Nx2UserId){selected->uid[0],selected->uid[1]};
+      h->launch_uid_valid=1;
+    }
+    n=snprintf(save_parent,sizeof(save_parent),"%s/saves",game_root);
+    if(n<0||n>=(int)sizeof(save_parent))return 0;
+    if(h->launch_uid_valid){
+      n=snprintf(h->save_root,sizeof(h->save_root),
+                 "%s/%016llx%016llx",save_parent,
+                 (unsigned long long)h->launch_uid.lo,
+                 (unsigned long long)h->launch_uid.hi);
+      h->new_save_layout=1;
+    }else {
+      /* No profile is provided in HBL environment: retain the old
+       * game-name layout rather than claiming a guessed profile. */
+      n=snprintf(h->save_root,sizeof(h->save_root),"%s",game_root);
+      logline(h,"WARNING_LAUNCH_USER_UNAVAILABLE source=hbl_environment save_mode=legacy_game_name\\n");
+    }
+  }
   if(n<0||n>=(int)sizeof(h->save_root))return 0;
-  logline(h,"SAVE_NAMESPACE strategy=%s guest=%016llx root=%s\n",
-          legacy?"existing_legacy":"canonical_program_id",
+  logline(h,"SAVE_NAMESPACE strategy=%s guest=%016llx root=%s\\n",
+          legacy_title?"existing_title_id":
+          legacy_name?"existing_game_name":
+          h->new_save_layout?"game_name_launch_user":"game_name_unscoped",
           (unsigned long long)guest_id,h->save_root);
-  const char *paths[] = {"/switch/BackupLoaderMKW", h->save_root};
-  for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
-    Result rc = mkdir_one(h->sd, paths[i]);
-    logline(h, "PRIVATE_SAVE_DIRECTORY path=%s result=%08x\n", paths[i], rc);
-    if (R_FAILED(rc))
-      return 0;
+  const char *paths[5];
+  size_t path_count=0;
+  paths[path_count++]="/switch/BackupLoaderMKW";
+  if(h->new_save_layout){
+    paths[path_count++]=game_root;
+    paths[path_count++]=save_parent;
+  }
+  paths[path_count++]=h->save_root;
+  for(size_t i=0;i<path_count;i++){
+    Result rc=mkdir_one(h->sd,paths[i]);
+    logline(h,"PRIVATE_SAVE_DIRECTORY path=%s result=%08x\\n",paths[i],rc);
+    if(R_FAILED(rc))return 0;
   }
   return 1;
 }
