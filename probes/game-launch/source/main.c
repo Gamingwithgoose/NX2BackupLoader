@@ -65,9 +65,13 @@ static void drain_ipc_events(FILE *f,Nx2Launch *l,uint32_t *cursor,
      (v.cmif_result!=0 && v.cmif_result!=UINT32_MAX)));
   const int important=full_text||v.phase>=3||v.kind==2||v.kind==3||
                       abnormal||(v.phase==2&&v.kind==1&&v.command==1);
+  const char *origin=v.phase==1?"REQUEST":v.phase==2?"KERNEL_RETURN":
+                      v.phase==3?"GUEST_VIRTUAL_FS":
+                      v.phase==4?"LOCAL_UNSUPPORTED_REPLY":
+                      v.phase==5?"LOCAL_REJECT":"UNKNOWN";
   if(important)
-    fprintf(f,"IPC_EVENT seq=%u call=%u phase=%u service=%s kind=%u handle=%08x hipc=%u command=%u domain_object=%08x flags=%02x hdr0=%08x hdr1=%08x special=%08x kernel=%08x cmif=%08x caller=%016llx tick=%llu\n",
-            expected,v.call_id,v.phase,v.service,v.kind,v.handle,
+    fprintf(f,"IPC_EVENT seq=%u call=%u phase=%u origin=%s service=%s kind=%u handle=%08x hipc=%u command=%u domain_object=%08x flags=%02x hdr0=%08x hdr1=%08x special=%08x kernel=%08x cmif=%08x caller=%016llx tick=%llu\n",
+            expected,v.call_id,v.phase,origin,v.service,v.kind,v.handle,
             v.request_type,v.command,v.object_id,v.flags,v.hdr0,v.hdr1,
             v.special,v.kernel_result,v.cmif_result,
             (unsigned long long)v.caller,(unsigned long long)v.tick);
@@ -737,15 +741,15 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   u64 trace_sample = began;
   u64 ipc_event_flush=began;
   uint32_t ipc_event_cursor=0,ipc_event_dropped=0;
-  /* Opt into exhaustive text output only for short debugging runs by
-   * placing full-ipc-trace.flag under /switch/BackupLoaderMKW on SD.
-   * No flag means complete in-memory capture with sparse persistent logs. */
-  int ipc_full_text=0;
-  FILE *trace_flag=fopen("sdmc:/switch/BackupLoaderMKW/full-ipc-trace.flag","rb");
-  if(trace_flag){ipc_full_text=1;fclose(trace_flag);}
-  row(f,"IPC_CAPTURE mode=%s ring=%u request_reply=1 crash_tail=1 payloads=omitted\n",
-      ipc_full_text?"full_text_opt_in":"memory_plus_important_text",
+  /* Persist every observable guest IPC request and outcome in this
+   * experimental diagnostic build. No payloads or UID buffers are copied.
+   * Guest threads still only publish lock-free in-memory metadata. */
+  int ipc_full_text=1;
+  row(f,"IPC_CAPTURE mode=complete_request_result_metadata ring=%u request_reply=1 "
+      "crash_tail=1 payloads=omitted local_decisions=labeled\n",
       NX2_IPC_EVENT_SLOTS);
+  row(f,"IPC_EVENT_PHASES 1=REQUEST 2=KERNEL_RETURN 3=GUEST_VIRTUAL_FS "
+      "4=LOCAL_UNSUPPORTED_REPLY 5=LOCAL_REJECT\n");
   u64 crash_sample = began;
   u64 crash_detail_tick=began;
   int crash_detail_written=0;
@@ -792,7 +796,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       last_fsp_route_stage=fs_stage;
     }
     drain_ipc_events(f,l,&ipc_event_cursor,&ipc_event_dropped,ipc_full_text);
-    if(armTicksToNs(armGetSystemTick()-ipc_event_flush)>=250000000ULL){
+    if(armTicksToNs(armGetSystemTick()-ipc_event_flush)>=2000000000ULL){
       ipc_event_flush=armGetSystemTick();
       fflush(f);
     }
