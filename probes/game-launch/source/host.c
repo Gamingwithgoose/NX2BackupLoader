@@ -445,12 +445,28 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       h->cache[slot].logged = 0;
     }
     h->cache[slot].used = h->calls;
+    /* The folder backend previously passed an arbitrarily large guest
+     * destination to one synchronous native FS IPC. NUP payloads already
+     * use bounded operations. Keep exact semantics while limiting each
+     * folder IPC to 256 KiB; an incomplete read is NEVER successful. */
+    if((r->c&&!r->buffer) || r->b>INT64_MAX ||
+       r->c>(uint64_t)INT64_MAX-r->b)return NX2_INVALID;
     u64 read = 0;
-    rc = fsFileRead(&h->cache[slot].file, r->b, r->buffer, r->c,
-                    FsReadOption_None, &read);
+    do {
+      u64 want=r->c-read;
+      if(want>0x40000U)want=0x40000U;
+      u64 got=0;
+      rc=fsFileRead(&h->cache[slot].file,(s64)(r->b+read),
+                    want?(unsigned char*)r->buffer+(size_t)read:r->buffer,
+                    want,FsReadOption_None,&got);
+      if(R_FAILED(rc))break;
+      if(got>want){rc=NX2_INVALID;break;}
+      read+=got;
+      if(got!=want){rc=NX2_INVALID;break;}
+    } while(read<r->c);
     __atomic_fetch_add(&h->bytes, read, __ATOMIC_RELAXED);
-    /* A successful-but-short ROMFS IStorage read would expose stale bytes
-     * from the guest buffer or cache. Report actual invalid data instead. */
+    /* A successful-but-short ROMFS IStorage read must never expose stale
+     * data in the destination or speculative cache buffer. */
     if(R_SUCCEEDED(rc)&&read!=r->c)rc=NX2_INVALID;
     /* Startup may read hundreds of files in parallel. Every successful
      * asset log is an SD-card flush on the host and a blocking guest RPC.
