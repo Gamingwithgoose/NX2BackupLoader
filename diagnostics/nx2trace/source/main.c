@@ -33,8 +33,10 @@ typedef struct {
  * limited to those records. The plugin never opens an SM service itself. */
 static void persist_record(TraceContext *ctx, const TraceRecord *rec) {
     FsFileSystem sd = {0};
-    Result rc = fsOpenSdCardFileSystem(&sd);
+    Result rc = fsInitialize();
     if (R_FAILED(rc)) { ctx->write_failures++; return; }
+    rc = fsOpenSdCardFileSystem(&sd);
+    if (R_FAILED(rc)) { ctx->write_failures++; fsExit(); return; }
     const char *path = "/BackupLoaderMKW-trace.log";
     FsFile file = {0};
     rc = fsFsOpenFile(&sd, path, FsOpenMode_Write, &file);
@@ -66,6 +68,7 @@ static void persist_record(TraceContext *ctx, const TraceRecord *rec) {
     }
     if (R_FAILED(rc)) ctx->write_failures++;
     fsFsClose(&sd);
+    fsExit();
 }
 static Result trace_command(u32 cmd, const void *input, size_t input_size,
                             void *output, size_t *output_size, void *context) {
