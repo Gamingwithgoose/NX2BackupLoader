@@ -457,26 +457,37 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   u64 title = 0;
   Result rc = svcGetInfo(&title, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0);
   row(f, "HOST result=%08x title=%016llx\n", rc, (unsigned long long)title);
-  /* Keep the proven MKW override path. As an opt-in identity-correct
-   * alternative, allow the *same* installed Switch 2 title to host its
-   * own backup under title override. This is a real kernel ProgramId,
-   * not a fabricated guest service response or an arbitrary host ACL.
-   * The existing heap/NPDM and kernel capability checks still apply. */
+  /* Keep MKW as the established host baseline, but permit the real
+   * installed Pokopia application as a SECOND experimental process host.
+   * This selects an existing process context: it neither changes the real
+   * kernel ProgramId nor impersonates the backup title. The regular
+   * kernel resource/priority/core/memory checks remain authoritative. */
   const int host_is_mkw=title==UINT64_C(0x0400c3f00006e000);
+  const int host_is_pokopia=title==UINT64_C(0x0400a3a01ee4c000);
   const int host_is_guest=game->id!=0 && title==game->id;
-  if (R_FAILED(rc) || (!host_is_mkw && !host_is_guest)) {
+  const char *host_mode=host_is_mkw?"mkw_compat":
+                        host_is_pokopia?"pokopia_experimental":
+                        host_is_guest?"same_title_native":"unapproved";
+  if (R_FAILED(rc) || (!host_is_mkw && !host_is_pokopia && !host_is_guest)) {
     row(f, "REFUSED_HOST_IDENTITY host=%016llx guest=%016llx "
-           "reason=host_must_be_mkw_or_exact_guest_title\n",
+           "reason=host_not_approved_mkw_pokopia_or_exact_guest\n",
         (unsigned long long)title,(unsigned long long)game->id);
     fclose(f);
     snprintf(outcome, sizeof(outcome),
-             "Use MKW override or the selected game's own title override.");
+             "Launch via MKW, Pokopia, or the selected game's own title.");
     if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
   row(f, "HOST_IDENTITY_MODE mode=%s host=%016llx guest=%016llx\n",
-      host_is_mkw?"mkw_compat":"same_title_native",
-      (unsigned long long)title,(unsigned long long)game->id);
+      host_mode,(unsigned long long)title,(unsigned long long)game->id);
+  /* Survive warning-only logs and short system-level exits without
+   * dumping account identifiers or confusing Pokopia with MKW. */
+  row(f,"WARNING_HOST_COMPARISON host_mode=%s host=%016llx guest=%016llx "
+        "separate_guest_process=0 native_host_identity=1\n",
+      host_mode,(unsigned long long)title,(unsigned long long)game->id);
+  if(crash)row(crash,"WARNING_HOST_COMPARISON host_mode=%s host=%016llx guest=%016llx "
+                       "separate_guest_process=0 native_host_identity=1\n",
+      host_mode,(unsigned long long)title,(unsigned long long)game->id);
   if (snprintf(selected_save, sizeof(selected_save), "%s", game->name) >= (int)sizeof(selected_save)) {
     row(f, "REFUSED save name too long\n");
     fclose(f);
@@ -571,7 +582,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     nx2_nup_close();
     fclose(f);
     snprintf(outcome, sizeof(outcome),
-             "This backup requires more resources than MKW provides.");
+             "This backup requires more resources than this host provides.");
     if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
