@@ -62,6 +62,19 @@ def main() -> int:
                 print(f"[WARN] Could not delete invalid {target}: {exc}")
             failed += 1
             continue
+        # The native NUP launcher overlays the newest compatible update
+        # but does not yet expose DLC through Horizon's AOC interface.
+        # Show exact package records, rather than implying that a valid
+        # multi-package archive automatically means the DLC is playable.
+        print(f"[PACKAGES] {target.name}:", flush=True)
+        details = subprocess.run([sys.executable, "-m", "nup.cli", "info", str(target)],
+                                 check=False)
+        if details.returncode:
+            print(f"[ERROR] Could not inspect NUP package inventory for {folder.name}.")
+            failed += 1
+            continue
+        print("[NOTE] Updates are overlaid by the experimental Switch 2 reader.")
+        print("[NOTE] DLC records can be packaged but DLC mount/AOC is not yet implemented.")
         print(f"[OK] {target.name}", flush=True)
         good += 1
     print(f"\n[SUMMARY] Built: {good}  Skipped existing: {skipped}  Failed: {failed}")
