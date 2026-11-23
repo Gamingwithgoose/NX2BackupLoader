@@ -510,9 +510,14 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
       return;
     }
-    row(f,"NUP_PAYLOAD_READER backend=%s archive=%s\n",
-        nx2_nup_native_fs_active()?"native_horizon_fs":"stdio_fallback",
-        game->root);
+    /* Quiet reports must state the actual reader; otherwise a black
+     * screen cannot be correlated with backend selection. */
+    row(f,"WARNING_NUP_READER_SELECTION backend=%s native_explicit_opt_in=%u archive=%s\n",
+        nx2_nup_native_fs_active()?"native_horizon_fs":"stdio_proven_default",
+        (unsigned)nx2_nup_native_fs_active(),game->root);
+    if(crash)row(crash,"WARNING_NUP_READER_SELECTION backend=%s native_explicit_opt_in=%u\n",
+        nx2_nup_native_fs_active()?"native_horizon_fs":"stdio_proven_default",
+        (unsigned)nx2_nup_native_fs_active());
     row(f,"NUP_CONTENT_APPLY update_version=%u addon_packages=%u addon_content_mounted=0 mode=base_plus_update_overlay\n",
         nx2_nup_applied_update_version(),nx2_nup_addon_count());
     size_t npdm_size=0;
