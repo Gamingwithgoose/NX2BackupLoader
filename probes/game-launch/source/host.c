@@ -90,6 +90,48 @@ static int named_profile_root_present(FsFileSystem *sd,const char *root){
   fsDirClose(&dir);
   return only_saves;
 }
+/* The HBL UserIdStorage key is optional. In particular, forwarders and
+ * some applet/HEN launch chains do not pass it even when an actual account
+ * launched the host application. Resolve that real account while the host
+ * account/app-proxy context is still alive, before starting foreign code.
+ * Never manufacture a UID from the guest title or save directory name. */
+static int resolve_launch_user(Nx2Host *h){
+ const AccountUid *from_hbl=envGetUserIdStorage();
+ if(from_hbl && accountUidIsValid(from_hbl)){
+   h->launch_uid=(Nx2UserId){from_hbl->uid[0],from_hbl->uid[1]};
+   h->launch_uid_valid=1;
+   logline(h,"SAVE_LAUNCH_USER_SOURCE source=hbl_user_id_storage valid=1\n");
+   return 1;
+ }
+ Result rc=accountInitialize(AccountServiceType_Application);
+ if(R_FAILED(rc)){
+   logline(h,"WARNING_SAVE_LAUNCH_USER_ACCOUNT_INIT_FAILED result=%08x\n",rc);
+   return 0;
+ }
+ AccountUid selected={0};
+ Result pre=accountGetPreselectedUser(&selected);
+ if(R_SUCCEEDED(pre) && accountUidIsValid(&selected)){
+   h->launch_uid=(Nx2UserId){selected.uid[0],selected.uid[1]};
+   h->launch_uid_valid=1;
+   logline(h,"SAVE_LAUNCH_USER_SOURCE source=account_preselected valid=1\n");
+ }else {
+   /* This is the real OS last-opened account, not a fabricated UID. It
+    * should match the MKW launcher user, but cannot prove user selection
+    * in launchers that do not expose a preselected account. */
+   AccountUid last={0};
+   Result last_rc=accountGetLastOpenedUser(&last);
+   if(R_SUCCEEDED(last_rc) && accountUidIsValid(&last)){
+     h->launch_uid=(Nx2UserId){last.uid[0],last.uid[1]};
+     h->launch_uid_valid=1;
+     logline(h,"WARNING_SAVE_LAUNCH_USER_SOURCE source=account_last_opened_fallback preselected_result=%08x\n",pre);
+   }else {
+     logline(h,"WARNING_SAVE_LAUNCH_USER_MISSING preselected_result=%08x last_opened_result=%08x\n",pre,last_rc);
+   }
+ }
+ accountExit();
+ return h->launch_uid_valid!=0;
+}
+
 int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
                   const char *save_key,uint64_t guest_id) {
   memset(h, 0, sizeof(*h));
@@ -101,6 +143,9 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   if (snprintf(h->rom_root, sizeof(h->rom_root), "%s/romfs", rom + 5) >=
       (int)sizeof(h->rom_root))
     return 0;
+  /* The profile must be captured before we choose either new or legacy
+   * save storage, not only in the new-layout branch. */
+  (void)resolve_launch_user(h);
   if (!save_key || !save_key[0] || !strcmp(save_key, ".") ||
       !strcmp(save_key, "..") || strchr(save_key, '/') ||
       strchr(save_key, '\\') || strchr(save_key, ':'))
@@ -128,13 +173,6 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   else if(legacy_title)
     n=snprintf(h->save_root,sizeof(h->save_root),"%s",title_root);
   else {
-    /* UserIdStorage comes from the homebrew launch environment. No new
-     * account service session, attach, or privileged probe is attempted. */
-    const AccountUid *selected=envGetUserIdStorage();
-    if(selected && (selected->uid[0] || selected->uid[1])) {
-      h->launch_uid=(Nx2UserId){selected->uid[0],selected->uid[1]};
-      h->launch_uid_valid=1;
-    }
     n=snprintf(save_parent,sizeof(save_parent),"%s/saves",game_root);
     if(n<0||n>=(int)sizeof(save_parent))return 0;
     if(h->launch_uid_valid){
@@ -144,16 +182,10 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
                  (unsigned long long)h->launch_uid.hi);
       h->new_save_layout=1;
     }else {
-      /* Never substitute the parent directory for an existing per-user
-       * tree: that would look like lost save data and risk mixed profiles. */
-      if(named_profile){
-        logline(h,"WARNING_LAUNCH_USER_UNAVAILABLE existing_profile_tree=1 refusing_unsafe_fallback\n");
-        return 0;
-      }
-      /* For a new game with no HBL UserId, keep the older game-name
-       * fallback instead of fabricating a user identity. */
-      n=snprintf(h->save_root,sizeof(h->save_root),"%s",game_root);
-      logline(h,"WARNING_LAUNCH_USER_UNAVAILABLE source=hbl_environment save_mode=legacy_game_name\n");
+      /* A missing launch identity must not create a new shared save tree,
+       * or make another profile's data appear as this user's save. */
+      logline(h,"WARNING_SAVE_LAUNCH_USER_UNRESOLVED refusing_new_unscoped_save=1 existing_profile_tree=%d\n",named_profile);
+      return 0;
     }
   }
   if(n<0||n>=(int)sizeof(h->save_root))return 0;
