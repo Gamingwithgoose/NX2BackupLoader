@@ -1409,50 +1409,6 @@ failed:
   snprintf(outcome,sizeof(outcome),"R+A: Horizon probe unavailable (%08x)",rc);
   fclose(report);
 }
-/* Read-only capability baseline inside the existing MKW-hosted loader.
- * Never attach to another process, modify kernel state, or touch guest memory. */
-static void system_capability_probe(void) {
-  FILE *report=fopen("sdmc:/BackupLoaderMKW-capabilities.log","w");
-  if(!report){
-    snprintf(outcome,sizeof(outcome),"Capability report could not be opened on SD");
-    return;
-  }
-  fprintf(report,"NX2_CAPABILITY_PROBE version=1 scope=current_process_only mode=read_only\n");
-  fprintf(report,"SAFETY debug_attach=not_attempted process_list=not_attempted kernel_patch=none system_changes=none\n");
-  u64 pid=0;
-  Result rc=svcGetProcessId(&pid,CUR_PROCESS_HANDLE);
-  fprintf(report,"CURRENT_PROCESS_ID result=%08x pid=%016llx\n",rc,(unsigned long long)pid);
-  u64 core_mask=0,priority_mask=0;
-  rc=svcGetInfo(&core_mask,InfoType_CoreMask,CUR_PROCESS_HANDLE,0);
-  fprintf(report,"KERNEL_INFO name=CoreMask result=%08x value=%016llx\n",rc,(unsigned long long)core_mask);
-  rc=svcGetInfo(&priority_mask,InfoType_PriorityMask,CUR_PROCESS_HANDLE,0);
-  fprintf(report,"KERNEL_INFO name=PriorityMask result=%08x value=%016llx\n",rc,(unsigned long long)priority_mask);
-  MemoryInfo mem={0};
-  u32 page_info=0;
-  rc=svcQueryMemory(&mem,&page_info,(u64)(uintptr_t)&system_capability_probe);
-  fprintf(report,"QUERY_SELF_CODE result=%08x addr=%016llx size=%016llx perm=%08x type=%08x\n",
-          rc,(unsigned long long)mem.addr,(unsigned long long)mem.size,
-          (unsigned)mem.perm,(unsigned)mem.type);
-  /* Acquire and close services only; no commands sent to acquired handles.
-   * Probe real host-side permissions without simulating guest success. */
-  static const char *const services[]={
-    "pctl","pctl:s","pctl:a","pctl:r",
-    "bsd:u","bsd:s","bsd:a","nifm:u","ssl","ssl:s",
-    "appletOE","acc:u0","nvdrv","vi:u","fsp-srv","fatal:u","lm"
-  };
-  for(unsigned i=0;i<sizeof(services)/sizeof(services[0]);i++){
-    Handle h=INVALID_HANDLE;
-    Result result=smGetServiceOriginal(&h,smEncodeName(services[i]));
-    fprintf(report,"SERVICE_LOOKUP name=%s result=%08x acquired=%u\n",
-            services[i],result,(unsigned)(R_SUCCEEDED(result)&&h!=INVALID_HANDLE));
-    if(R_SUCCEEDED(result)&&h!=INVALID_HANDLE)
-      svcCloseHandle(h);
-  }
-  fprintf(report,"PROBE_COMPLETE other_process_tracking=not_attempted\n");
-  fflush(report);
-  fclose(report);
-  snprintf(outcome,sizeof(outcome),"Capability report: /BackupLoaderMKW-capabilities.log");
-}
 static void draw(const Nx2Catalog *catalog, size_t selected) {
   consoleClear();
   printf("BackupLoaderMKW 0.14\n\n");
@@ -1471,7 +1427,6 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
 
          "B+A: rebuild index   R+A: Horizon check\n"
-         "Y: safe system capability probe\n"
          "X: refresh   +: exit\n\n%s\n",
          outcome);
   consoleUpdate(NULL);
@@ -1492,8 +1447,6 @@ int main(int argc, char **argv) {
     u64 down = padGetButtonsDown(&pad), held = padGetButtons(&pad);
     if (down & HidNpadButton_Plus)
       break;
-    if (down & HidNpadButton_Y)
-      system_capability_probe();
     if (down & HidNpadButton_X) {
       nx2_catalog_free(&catalog);
       nx2_catalog("sdmc:/games", &catalog);
