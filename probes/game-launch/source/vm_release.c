@@ -21,8 +21,20 @@ int nx2_release_heap_for_vm(FILE *f,const Nx2HeapPlan *p,uint64_t min_resource,
         row(f,"VM_HOST_INFO type=%u result=%08x value=%016llx\n",kinds[i],rc,(unsigned long long)*outputs[i]);
         if(R_FAILED(rc))return 0;
     }
-    if(resource<min_resource||alias_size<min_alias||!alias||alias_size>UINT64_MAX-alias){
-        row(f,"VM_REFUSED inadequate real system-resource/alias capacity\n");return 0;
+    /* Recheck after NSO mapping: this remains the host process's genuine
+     * kernel-managed memory-management reservation, not free application
+     * RAM. A shortage is different from an unavailable alias region. */
+    if(resource<min_resource){
+        row(f,"WARNING_VM_SYSTEM_RESOURCE_SHORTFALL available_bytes=%llu requested_bytes=%llu deficit_bytes=%llu\n",
+            (unsigned long long)resource,(unsigned long long)min_resource,
+            (unsigned long long)(min_resource-resource));
+        return 0;
+    }
+    if(alias_size<min_alias||!alias||alias_size>UINT64_MAX-alias){
+        row(f,"VM_REFUSED invalid_alias_capacity alias_base=%016llx alias_bytes=%llu min_bytes=%llu\n",
+            (unsigned long long)alias,(unsigned long long)alias_size,
+            (unsigned long long)min_alias);
+        return 0;
     }
     MemoryInfo tail;u32 page=0;Result rc=svcQueryMemory(&tail,&page,p->game_begin);
     if(R_FAILED(rc)){row(f,"VM_TAIL_QUERY result=%08x\n",rc);return 0;}
