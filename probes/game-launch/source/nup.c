@@ -170,6 +170,10 @@ typedef struct {
   uint64_t blob_start, file_length;
   uint64_t ndirs, nfiles;
   uint32_t exefs_dir, romfs_dir;
+  uint32_t base_exefs_dir,base_romfs_dir;
+  uint32_t update_exefs_dir,update_romfs_dir;
+  uint32_t update_version,addons;
+  uint64_t selected_title_id;
   uint64_t meta_offset, meta_size;
   const unsigned char *dirs, *files, *children, *pool;
   uint64_t child_count, pool_size;
@@ -247,26 +251,38 @@ static uint32_t lookup_child(NupMount *m,uint32_t dir,
   }
   return UINT32_MAX;
 }
-static uint32_t lookup_file(const char *path) {
-  if(!mounted.f||!path)return UINT32_MAX;
-  uint32_t dir;
-  if(!strncmp(path,"romfs/",6)) {
-    dir=mounted.romfs_dir;path+=6;
-  } else if(!strncmp(path,"exefs/",6)) {
-    dir=mounted.exefs_dir;path+=6;
-  } else return UINT32_MAX;
-  if(dir==UINT32_MAX)return UINT32_MAX;
+/* A single NUP can store base, updates and add-ons in separate roots.
+ * Lookup is update-first and base-fallback. An update may omit files which
+ * remain valid from the base; no archive bytes or guest storage are changed. */
+static uint32_t lookup_node_from(uint32_t dir,const char *path) {
+  if(dir>=mounted.ndirs || !path || !*path)return UINT32_MAX;
   while(*path) {
     const char *slash=strchr(path,'/');
     size_t len=slash?(size_t)(slash-path):strlen(path);
     if(!len||len>255)return UINT32_MAX;
     uint32_t node=lookup_child(&mounted,dir,path,len);
     if(node==UINT32_MAX)return UINT32_MAX;
-    if(!slash)return node>=mounted.ndirs?node-mounted.ndirs:UINT32_MAX;
+    if(!slash)return node;
     if(node>=mounted.ndirs)return UINT32_MAX;
     dir=node;path=slash+1;
   }
   return UINT32_MAX;
+}
+static uint32_t lookup_file(const char *path) {
+  if(!mounted.f||!path)return UINT32_MAX;
+  uint32_t updated=UINT32_MAX,base=UINT32_MAX;
+  if(!strncmp(path,"romfs/",6)) {
+    updated=mounted.update_romfs_dir;
+    base=mounted.base_romfs_dir;
+    path+=6;
+  }else if(!strncmp(path,"exefs/",6)) {
+    updated=mounted.update_exefs_dir;
+    base=mounted.base_exefs_dir;
+    path+=6;
+  }else return UINT32_MAX;
+  uint32_t node=lookup_node_from(updated,path);
+  if(node==UINT32_MAX)node=lookup_node_from(base,path);
+  return node>=mounted.ndirs?node-mounted.ndirs:UINT32_MAX;
 }
 void nx2_nup_close(void) {
   if(mounted.native_active)fsFileClose(&mounted.native_file);
@@ -333,20 +349,64 @@ int nx2_nup_open(const char *path) {
   m.children=toc+children_start;m.pool=toc+pool_off;
   m.child_count=(pool_off-children_start)/4;m.pool_size=pool_len;
   m.exefs_dir=m.romfs_dir=UINT32_MAX;
+  m.base_exefs_dir=m.base_romfs_dir=UINT32_MAX;
+  m.update_exefs_dir=m.update_romfs_dir=UINT32_MAX;
   for(unsigned j=0;j<2;j++)m.cached_file[j]=UINT32_MAX;
   for(unsigned j=0;j<2;j++)large_stream[j].file=UINT32_MAX;
+  /* First select the base, independently of package record ordering.
+   * A standalone update is allowed only in archives without a base.
+   * Update IDs can be base IDs or the conventional base+0x800 variation.
+   * Do not accidentally overlay unrelated programs in multi-title NUPs. */
+  int base_index=-1,standalone_index=-1,update_index=-1;
+  uint32_t best_version=0;
   for(uint32_t i=0;i<pc;i++){
     const unsigned char *p=toc+48+(size_t)i*64;
-    if(p[24]==0 || (p[24]==1 && (p[25]&1))){
-      m.exefs_dir=rd32(p+12);
-      m.romfs_dir=rd32(p+16);
-      m.meta_offset=rd64(p+32);
-      m.meta_size=rd32(p+40);
-      break;
+    if(p[24]==0 && base_index<0)base_index=(int)i;
+    if(p[24]==1 && (p[25]&1) && standalone_index<0)
+      standalone_index=(int)i;
+    if(p[24]==2)m.addons++;
+  }
+  int selected=base_index>=0?base_index:standalone_index;
+  if(selected>=0) {
+    const unsigned char *p=toc+48+(size_t)selected*64;
+    m.selected_title_id=rd64(p);
+    m.base_exefs_dir=rd32(p+12);
+    m.base_romfs_dir=rd32(p+16);
+    m.meta_offset=rd64(p+32);
+    m.meta_size=rd32(p+40);
+  }
+  if(base_index>=0)for(uint32_t i=0;i<pc;i++){
+    const unsigned char *p=toc+48+(size_t)i*64;
+    if(p[24]!=1)continue;
+    const uint64_t id=rd64(p);
+    const uint32_t version=rd32(p+20);
+    if(m.selected_title_id && id && id!=m.selected_title_id &&
+       !(m.selected_title_id<=UINT64_MAX-0x800 &&
+         id==m.selected_title_id+0x800))continue;
+    if(update_index<0 || version>best_version) {
+      best_version=version;
+      update_index=(int)i;
     }
   }
+  if(update_index>=0) {
+    const unsigned char *p=toc+48+(size_t)update_index*64;
+    m.update_exefs_dir=rd32(p+12);
+    m.update_romfs_dir=rd32(p+16);
+    m.update_version=best_version;
+    /* Prefer the applicable update's NPDM when supplied. */
+    if(m.update_exefs_dir!=UINT32_MAX && rd32(p+40)) {
+      m.meta_offset=rd64(p+32);
+      m.meta_size=rd32(p+40);
+    }
+  }
+  m.exefs_dir=m.update_exefs_dir!=UINT32_MAX?
+               m.update_exefs_dir:m.base_exefs_dir;
+  m.romfs_dir=m.update_romfs_dir!=UINT32_MAX?
+               m.update_romfs_dir:m.base_romfs_dir;
   probe_error="NUP executable or RomFS root invalid";
-  if(m.exefs_dir>=nd||m.romfs_dir>=nd)goto fail;
+  if(m.base_exefs_dir>=nd||m.base_romfs_dir>=nd ||
+     (m.update_exefs_dir!=UINT32_MAX&&m.update_exefs_dir>=nd) ||
+     (m.update_romfs_dir!=UINT32_MAX&&m.update_romfs_dir>=nd))goto fail;
   probe_error="NUP invalid directory child/metadata";
   /* Validate every directory edge and file extent before exposing paths. */
   for(uint64_t i=0;i<nd;i++){
@@ -786,8 +846,31 @@ static int walk_dir(uint32_t d,char path[1024],unsigned depth,
   }
   return 1;
 }
+typedef struct {
+  Nx2NupVisit visit;
+  void *ctx;
+  uint32_t update_root;
+} NupOverlayWalk;
+static int walk_base_only(void *arg,const char *path,int dir,uint64_t size) {
+  NupOverlayWalk *w=(NupOverlayWalk*)arg;
+  /* Update-first enumeration: suppress duplicate paths, but visit all
+   * unique base children even when their parent directory is shared. */
+  if(lookup_node_from(w->update_root,path)!=UINT32_MAX)return 1;
+  return w->visit(w->ctx,path,dir,size);
+}
 int nx2_nup_romfs_walk(Nx2NupVisit visit,void *context) {
-  if(!mounted.f||mounted.romfs_dir>=mounted.ndirs||!visit)return 0;
+  if(!mounted.f||mounted.base_romfs_dir>=mounted.ndirs||!visit)return 0;
   char path[1024]={0};uint32_t stack[65]={0};
-  return walk_dir(mounted.romfs_dir,path,0,visit,context,stack);
+  if(mounted.update_romfs_dir<mounted.ndirs) {
+    if(!walk_dir(mounted.update_romfs_dir,path,0,visit,context,stack))
+      return 0;
+  }
+  NupOverlayWalk overlay={visit,context,mounted.update_romfs_dir};
+  return walk_dir(mounted.base_romfs_dir,path,0,walk_base_only,&overlay,stack);
+}
+uint32_t nx2_nup_applied_update_version(void) {
+  return mounted.f?mounted.update_version:0;
+}
+uint32_t nx2_nup_addon_count(void) {
+  return mounted.f?mounted.addons:0;
 }
