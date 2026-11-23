@@ -30,6 +30,8 @@ if errorlevel 1 goto fail
 echo [BUILD] Private nx2trace.nso...
 "%BASH%" -l < "%CD%\scripts\build-dev-plugin-msys.sh"
 if errorlevel 1 goto fail
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CD%\scripts\verify-private-plugin.ps1" -Path "%PLUGIN_OUT%"
+if errorlevel 1 goto fail
 echo [SUCCESS] Developer NRO: release\switch\BackupLoaderMKW\BackupLoaderMKW.nro
 echo [SUCCESS] Optional plugin: release\developer\kaihen\plugins\nx2trace.nso
 echo [NOTE] Never copy release\developer to public distributions.
