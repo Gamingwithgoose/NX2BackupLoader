@@ -165,11 +165,6 @@ typedef struct {
    * Keep original FILE* for validated TOC and fallback compatibility. */
   FsFile native_file;
   uint32_t native_active;
-  /* Native HOS file reads use an aligned, host-owned buffer, not a
-   * destination that may belong to the guest's mapped address range.
-   * The storage worker serializes all payload reads through this buffer. */
-  unsigned char *io_bounce_alloc;
-  unsigned char *io_bounce;
   unsigned char *toc;
   size_t toc_size;
   uint64_t blob_start, file_length;
@@ -293,7 +288,6 @@ static uint32_t lookup_file(const char *path) {
 void nx2_nup_close(void) {
   if(mounted.native_active)fsFileClose(&mounted.native_file);
   if(mounted.f)fclose(mounted.f);
-  free(mounted.io_bounce_alloc);
   free(mounted.toc);
   for(unsigned j=0;j<2;j++){
     free(mounted.cached_bytes[j]);
@@ -449,20 +443,8 @@ int nx2_nup_open(const char *path) {
   if(!strncmp(path,"sdmc:",5)){
     FsFileSystem *sd=fsdevGetDeviceFileSystem("sdmc");
     if(sd && R_SUCCEEDED(fsFsOpenFile(sd,path+5,FsOpenMode_Read,
-                                    &mounted.native_file))) {
-      /* 64 KiB payload chunks, 4 KiB-aligned for native IPC. Allocate
-       * once per mount; never send guest-owned buffers into native FSP. */
-      mounted.io_bounce_alloc=malloc(0x10000U+0xfffU);
-      if(mounted.io_bounce_alloc){
-        uintptr_t aligned=((uintptr_t)mounted.io_bounce_alloc+0xfffU)&
-                          ~(uintptr_t)0xfffU;
-        mounted.io_bounce=(unsigned char*)aligned;
-        mounted.native_active=1;
-      } else {
-        fsFileClose(&mounted.native_file);
-        memset(&mounted.native_file,0,sizeof(mounted.native_file));
-      }
-    }
+                                    &mounted.native_file)))
+      mounted.native_active=1;
   }
   probe_error="NUP mounted successfully";
   return 1;
@@ -560,7 +542,7 @@ static int read_exact_chunks(FILE *f,uint64_t absolute,void *dst,size_t length){
   if(mounted.native_active){
    u64 transferred=0;
    Result rc=fsFileRead(&mounted.native_file,(s64)(absolute+pos),
-                        mounted.io_bounce,want,FsReadOption_None,&transferred);
+                        p+pos,want,FsReadOption_None,&transferred);
    if(R_FAILED(rc)){
     snprintf(probe_details,sizeof(probe_details),
              "Native NUP fsFileRead failed result=%08x offset=%llu",
@@ -573,7 +555,6 @@ static int read_exact_chunks(FILE *f,uint64_t absolute,void *dst,size_t length){
     return 0;
    }
    got=(size_t)transferred;
-   if(got==want)memcpy(p+pos,mounted.io_bounce,got);
   }else got=fread(p+pos,1,want,f);
   if(got)__atomic_fetch_add(&read_progress.sd_bytes,(uint64_t)got,__ATOMIC_RELAXED);
   if(got!=want){
