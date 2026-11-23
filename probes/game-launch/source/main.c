@@ -182,6 +182,17 @@ static void report_unresolved_waits(FILE *out,Nx2Launch *l,Nx2Host *host,
      (unsigned long long)worker_age,
      __atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE),
      (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE));
+ if(__atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE) &&
+    __atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED)==RPC_ROM_READ){
+   uint32_t phase=__atomic_load_n(&host->rpc_rom_phase,__ATOMIC_ACQUIRE);
+   uint32_t file=__atomic_load_n(&host->rpc_rom_file,__ATOMIC_RELAXED);
+   const char *path=file<l->rom.count?nx2_rom_path(&l->rom,file):NULL;
+   row(out,"WARNING_ROM_READ_STAGE reason=%s phase=%u file=%u "
+           "offset=%llu bytes=%llu path=%s\n",reason,phase,file,
+       (unsigned long long)__atomic_load_n(&host->rpc_rom_offset,__ATOMIC_RELAXED),
+       (unsigned long long)__atomic_load_n(&host->rpc_rom_bytes,__ATOMIC_RELAXED),
+       path?path:"[invalid/unavailable]");
+ }
  if(worker_age>=1000){
    Handle h=__atomic_load_n(&nx2_storage_service.handle,__ATOMIC_ACQUIRE);
    if(h){
