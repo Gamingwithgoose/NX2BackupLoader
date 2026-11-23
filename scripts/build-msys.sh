@@ -24,7 +24,15 @@ if [[ ! -f "$DEVKITPRO/libounce/switch.specs" ]]; then
 fi
 if ! command -v make >/dev/null 2>&1; then echo "[ERROR] make missing"; exit 1; fi
 echo "[INFO] Native Switch 2 libounce rules found: $DEVKITPRO/libounce/switch2_rules"
+mode=public
+if [[ "${NX2_DEV_TRACE:-0}" == "1" ]]; then mode=developer; fi
+mode_file=probes/game-launch/.nx2-last-build-mode
+if [[ ! -f "$mode_file" || "$(cat "$mode_file")" != "$mode" ]]; then
+  echo "[INFO] Build mode changed: clean rebuild to prevent public/dev object mixing."
+  make -C probes/game-launch clean
+fi
 make -C probes/game-launch -j2
+printf '%s\n' "$mode" > "$mode_file"
 test -s probes/game-launch/BackupLoaderMKW.nro
 if ! command -v powershell.exe >/dev/null 2>&1; then echo "[ERROR] Windows PowerShell verifier missing"; exit 1; fi
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$PWD/scripts/package-current-test.ps1")" -Root "$(cygpath -w "$PWD")"
