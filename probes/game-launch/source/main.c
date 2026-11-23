@@ -743,6 +743,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       ipc_full_text?"full_text_opt_in":"memory_plus_important_text",
       NX2_IPC_EVENT_SLOTS);
   u64 crash_sample = began;
+  /* Low-rate crash-only baseline survives quiet-mode gameplay. */
+  u64 last_crash_progress = began;
   u64 last_no_present_warning=0,last_storage_warning=0;
   u64 crash_detail_tick=began;
   int crash_detail_written=0;
@@ -928,6 +930,39 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           slot,__atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED),
           (unsigned long long)age_ms,
           (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_RELAXED));
+    }
+    /* Save a compact durable checkpoint even when startup warnings stop.
+     * No new threads, service calls, or changes to guest execution. */
+    if(crash && armTicksToNs(stamp-last_crash_progress)>=10000000000ULL){
+      last_crash_progress=stamp;
+      row(crash,"HOST_SNAPSHOT_PERIODIC elapsed_ms=%llu stage=%u "
+                "fault_state=%u main=%llu frames=%llu rpc=%llu rom_bytes=%llu "
+                "nvn_bootstrap=%u getproc=%u device=%u/%u queue=%u/%u "
+                "window=%u/%u present=%u/%u ipc=%u/%u "
+                "active_storage_slot=%u storage_age_ms=%llu "
+                "guest_abort=%u host_abort=%u\n",
+          (unsigned long long)(since_start/1000000ULL),
+          stage,__atomic_load_n(&nx2_fault.state,__ATOMIC_ACQUIRE),
+          (unsigned long long)__atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE),
+          (unsigned long long)frames,
+          (unsigned long long)host->calls,
+          (unsigned long long)host->bytes,
+          __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_device_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_device_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE),
+          slot,(unsigned long long)age_ms,
+          __atomic_load_n(&l->abort_requested,__ATOMIC_ACQUIRE),
+          host->abort);
+      fflush(crash);
     }
     int captured_snapshot=0;
     if(crash && (nx2_log_verbose || warn_first || warn_io) &&
