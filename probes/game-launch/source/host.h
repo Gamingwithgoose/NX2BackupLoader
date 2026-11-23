@@ -36,6 +36,9 @@ typedef struct {
   /* Storage worker publishes this before blocking SD operations. */
   uint64_t rpc_started_tick,rpc_completed_count;
   uint32_t rpc_active_slot,rpc_active_op;
+  /* Serialized worker breadcrumbs, read by the watchdog only. */
+  uint32_t rpc_rom_phase,rpc_rom_file;
+  uint64_t rpc_rom_offset,rpc_rom_bytes;
   int abort;
 } Nx2Host;
 int nx2_host_init(Nx2Host *, FILE *, const char *, const char *,uint64_t);
