@@ -327,11 +327,9 @@ static void trace_reply_handles(const unsigned char *p,uint64_t n,
    uint32_t child=word(p+off+4U*i);
    if(!child)continue;
    trace_owner(child,owner,root);
-   /* Handle ownership remains tracked after save mount, but successful
-    * child acquisition needn't block its caller on a diagnostic RPC. */
-   if(!__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE))
-     nx2_rpc(RPC_LOG,child,parent,i>=copies,sh,0,
-             "IPC_RETURNED_HANDLE",owner,0);
+   /* Preserve handle provenance in the native tracker. The IPC breadcrumb
+   * already records the enclosing call; no synchronous storage-worker RPC
+   * is needed just to report a successfully returned handle. */
  }
 }
 /* Only MOVED handles returned by an IPC method become child sessions.
@@ -388,13 +386,11 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  uint32_t call_id=__atomic_add_fetch(&nx2_launch->ipc_call_next,1,__ATOMIC_RELAXED);
  ipc_event_emit(call_id,1,h,kind,d,request_type,flags,hdr0,hdr1,
                 special,UINT32_MAX,UINT32_MAX,caller,trace_label);
- /* A first request to a newly acquired SM service is a valuable
-  * last-operation marker if the process exits before any snapshot. */
- int first_root_method=(kind==0 && request_type!=2 && owner[0] &&
-                        trace_claim_first_root(h));
- if(first_root_method)
-   nx2_rpc(RPC_LOG,h,request_type,cmd,caller,0,
-           "SERVICE_ROOT_FIRST_IPC_BEGIN",owner,0);
+ /* The pre-native IPC_EVENT is the first-method breadcrumb. Retain
+  * the once-per-service tracking state without synchronously entering
+  * the SD-backed RPC worker before a real SM service method. */
+ if(kind==0 && request_type!=2 && owner[0])
+   (void)trace_claim_first_root(h);
  /* Snapshot before SVC: kernel may replace TLS request bytes with its
   * reply. No payload contents, guest pointers, or sensitive IDs logged. */
  /* Classify native filesystem capabilities by interface and command.
@@ -554,9 +550,8 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  ipc_event_emit(call_id,2,h,kind,d,request_type,flags,hdr0,hdr1,
                 special,rc,reply_decoded?service_result:UINT32_MAX,
                 caller,trace_label);
- if(first_root_method)
-   nx2_rpc(RPC_LOG,h,rc,reply_decoded?service_result:UINT32_MAX,cmd,0,
-           "SERVICE_ROOT_FIRST_IPC_RESULT",owner,0);
+ /* IPC_EVENT and IPC breadcrumb above retain the real native and CMIF
+  * results; no second SD-backed diagnostic RPC after service dispatch. */
  if(crumb && reply_decoded)
    __atomic_store_n(&crumb->service_result,service_result,__ATOMIC_RELEASE);
  if(graphics_crumb && reply_decoded)
