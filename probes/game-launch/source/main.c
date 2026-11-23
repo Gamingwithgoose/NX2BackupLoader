@@ -192,6 +192,11 @@ static void report_unresolved_waits(FILE *out,Nx2Launch *l,Nx2Host *host,
        (unsigned long long)__atomic_load_n(&host->rpc_rom_offset,__ATOMIC_RELAXED),
        (unsigned long long)__atomic_load_n(&host->rpc_rom_bytes,__ATOMIC_RELAXED),
        path?path:"[invalid/unavailable]");
+   row(out,"WARNING_ROM_BACKEND_PROGRESS completed=%llu chunk_bytes=%u last_result=%08x "
+           "note=phase8_open_phase9_fs_read\n",
+       (unsigned long long)__atomic_load_n(&host->rpc_rom_completed,__ATOMIC_ACQUIRE),
+       __atomic_load_n(&host->rpc_rom_chunk_bytes,__ATOMIC_RELAXED),
+       __atomic_load_n(&host->rpc_rom_result,__ATOMIC_RELAXED));
  }
  if(worker_age>=1000){
    Handle h=__atomic_load_n(&nx2_storage_service.handle,__ATOMIC_ACQUIRE);
