@@ -164,6 +164,60 @@ typedef struct {
   uint32_t running;
 } Nx2StorageService;
 static Nx2StorageService nx2_storage_service;
+/* Bounded, host-only wait evidence. This never polls a guest service,
+ * mutates an RPC slot, or tries to "unstick" the game with fake results. */
+static void report_unresolved_waits(FILE *out,Nx2Launch *l,Nx2Host *host,
+                                    uint64_t now_tick,const char *reason){
+ if(!out)return;
+ uint64_t last=__atomic_load_n(&nx2_storage_service.last_poll_tick,__ATOMIC_ACQUIRE);
+ uint64_t worker_age=now_tick>=last?
+   armTicksToNs(now_tick-last)/1000000ULL:0;
+ row(out,"WARNING_WORKER_LIVENESS reason=%s running=%u phase=%u "
+         "poll_loops=%llu last_poll_age_ms=%llu active_slot=%u "
+         "completed=%llu\n",
+     reason,__atomic_load_n(&nx2_storage_service.running,__ATOMIC_ACQUIRE),
+     __atomic_load_n(&nx2_storage_service.phase,__ATOMIC_ACQUIRE),
+     (unsigned long long)__atomic_load_n(&nx2_storage_service.loop_count,__ATOMIC_ACQUIRE),
+     (unsigned long long)worker_age,
+     __atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE),
+     (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE));
+ for(unsigned i=0;i<NX2_RPC_SLOTS;i++){
+   Nx2Request *r=&l->requests[i];
+   uint32_t state=__atomic_load_n(&r->state,__ATOMIC_ACQUIRE);
+   if(!state)continue;
+   uint64_t published=__atomic_load_n(&r->diagnostic_published_tick,__ATOMIC_RELAXED);
+   uint64_t age=(state>=2&&published&&now_tick>=published)?
+     armTicksToNs(now_tick-published)/1000000ULL:0;
+   row(out,"WARNING_UNRESOLVED_RPC reason=%s slot=%u state=%u "
+           "op=%u age_ms=%llu ticket=%u owner_tls=%016llx "
+           "arg_a=%016llx arg_b=%016llx arg_c=%016llx\n",
+       reason,i,state,r->op,(unsigned long long)age,
+       __atomic_load_n(&r->diagnostic_ticket,__ATOMIC_RELAXED),
+       (unsigned long long)__atomic_load_n(&r->diagnostic_owner_tls,__ATOMIC_RELAXED),
+       (unsigned long long)r->a,(unsigned long long)r->b,(unsigned long long)r->c);
+ }
+ unsigned reported=0;
+ for(unsigned i=0;i<NX2_SYNC_FLIGHT_SLOTS;i++){
+   Nx2SyncFlight *flight=&l->sync_flights[i];
+   if(__atomic_load_n(&flight->phase,__ATOMIC_ACQUIRE)!=1)continue;
+   uint64_t started=__atomic_load_n(&flight->started_tick,__ATOMIC_RELAXED);
+   uint64_t age=started&&now_tick>=started?
+     armTicksToNs(now_tick-started)/1000000ULL:0;
+   if(age<1000)continue;
+   row(out,"WARNING_NATIVE_SYNC_IN_FLIGHT reason=%s slot=%u age_ms=%llu "
+           "tls=%016llx caller=%016llx handle=%08x hipc=%u "
+           "raw_hdr0=%08x raw_hdr1=%08x call_id=%u\n",
+       reason,i,(unsigned long long)age,
+       (unsigned long long)flight->thread_tls,
+       (unsigned long long)flight->caller,flight->handle,
+       flight->request_type,flight->header0,flight->header1,flight->call_id);
+   if(++reported==16)break;
+ }
+ row(out,"WARNING_SYNC_TRACE_COVERAGE collisions=%u "
+         "pending_native_waits_reported=%u note=trace_not_kernel_stack\n",
+   __atomic_load_n(&l->sync_flight_collisions,__ATOMIC_ACQUIRE),reported);
+}
+
 static int nx2_storage_core = -1;
 static void storage_service_entry(void *opaque){
   Nx2StorageService *svc=(Nx2StorageService*)opaque;
@@ -675,6 +729,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   u64 passive_last_frame=0,passive_frame_tick=began;
   u64 passive_ipc_at_progress=0,passive_rom_at_progress=0;
   int passive_reported=0;
+  u64 last_unserved_rpc_warning_tick=began;
   /* Preserve flushed prelaunch evidence. Once guest execution begins,
    * batch independent crash-report writes and flush each complete sample.
    * Reduces SD sync I/O without weakening the CPU exception fast path. */
@@ -765,6 +820,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                 phase,snap.service,snap.command,snap.result,
                 snap.service_result,(unsigned long long)snap.caller);
           }
+          report_unresolved_waits(crash,l,host,now,"present_stalled");
           fflush(crash);
         }
         row(f,"WARNING_SUSPECTED_PRESENT_STALL duration_ms=%llu "
@@ -773,6 +829,25 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
             (unsigned long long)elapsed,(unsigned long long)frames,slot,
             (unsigned long long)(ipc_now-passive_ipc_at_progress),
             (unsigned long long)(rom_now-passive_rom_at_progress));
+      }
+    }
+    /* Capture persistent *published* RPCs even when there has never
+     * been a first frame, and when normal presentation is still active.
+     * Rate-limit to 10 seconds and only report after 3s unsatisfied. */
+    if(crash &&
+       armTicksToNs(armGetSystemTick()-last_unserved_rpc_warning_tick)>=10000000000ULL){
+      uint64_t sample=armGetSystemTick();
+      last_unserved_rpc_warning_tick=sample;
+      for(unsigned i=0;i<NX2_RPC_SLOTS;i++){
+        Nx2Request *request=&l->requests[i];
+        uint32_t state=__atomic_load_n(&request->state,__ATOMIC_ACQUIRE);
+        uint64_t published=__atomic_load_n(&request->diagnostic_published_tick,__ATOMIC_RELAXED);
+        if(state==2 && published && sample>=published &&
+           armTicksToNs(sample-published)>=3000000000ULL){
+          report_unresolved_waits(crash,l,host,sample,"published_rpc_timeout");
+          fflush(crash);
+          break;
+        }
       }
     }
     if (frames && (!previous_frames || frames - previous_frames >= 300)) {
