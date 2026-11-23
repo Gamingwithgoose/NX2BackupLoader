@@ -143,3 +143,156 @@ Sources: https://switchbrew.org/wiki/NPDM and https://switchbrew.org/wiki/SVC an
 - **Minecraft:** 4 NSOs, very large ~301MiB declared text, 88MiB RO, **2MiB** main stack, 16MiB reserve; user encountered system “software needed to close”. Could have a distinct high-memory or engine dynamic-module issue.
 - **Welcome Tour:** **8 NSOs** / **5 subsdks**, 16MiB reserve, large static data/RO; earlier launch failures but no precise last-call trace in this report. Module count alone doesn't explain: Star Fox has 7 and works.
 - **MKW host:** installed game version is real host. Supplied archive has MKW base 4 NSOs and update 917504 with 5, differing SDK ID; both META declare 64MiB reserve, priority44, core0, stack1MiB. The launcher takes MKW PID/kernel capability/host applet, and maps guest NSOs/ROM virtual FS in same process; guest's NPDM requests are NOT automatically inherited. This is a cross-title systemic architecture constraint.
+
+## 6. Direct comparison matrix — SAME / DIFFERENT / UNKNOWN (MKW guest runs only)
+
+| Factor | Star Fox WORKING | Fast Fusion WORKING | Yoshi FREEZES | DK FREEZES | Drag FREEZES | OOT STARTUP | Kirby STARTUP | Significance |
+|---|---|---|---|---|---|---|---|---|
+| Host PID/title | **MKW** | **MKW** | **MKW** | **MKW** | **MKW** | **MKW** | **MKW** | SAME; host identity alone doesn't choose outcome |
+| Separate guest kernel process | No | No | No | No | No | No | No | SAME; architecture limitation shared |
+| Visible in-game frames | Yes | Yes | Yes, intermittent | Yes, intermittent | Partial | No confirmed | No confirmed | DIFFERENT stage of failure |
+| Long-lived stable gameplay | Yes | Yes | No | No | No | No | No | Observed user outcome |
+| Source NUP/folder matters | NUP works | Format U | **Folder freezes** | **Both** with distinct failure modes | Source effect U | NUP fails | NUP fails | NUP-only theory disproved by folder freezes |
+| MMU byte 0x0C | 0x37 | **0x27** | 0x37 | **0x27** | **0x27** | 0x37 | 0x37 | **No clean stability partition** |
+| NPDM private sysresource | 16MiB | **0** | 20MiB | **0** | **0** | 48MiB | 32MiB | Host MKW 64MiB; Fast Fusion counterexample |
+| NPDM requested priority | 44 | 44 | 44 | 44 | 44 | 44 | 44 | SAME across all; exclude as static discriminator |
+| NPDM default core | 0 | 0 | 0 | 0 | 0 | 0 | 0 | SAME |
+| NPDM main stack | 1MiB | 1MiB | **64KiB** | 1MiB | 1MiB | 1MiB | 1MiB | Yoshi-specific candidate, NOT shared DK/Drag cause |
+| NSO modules | 7 | 5 | 6 | 3 | 3 | 4 | 5 | No stability partition |
+| Native PresentTexture return | >70k in stable log | U count | >400 before sampled stop | >5k then frozen | Earlier ~160 | Not confirmed | Not confirmed | App-side count != display scanout |
+| ROM service idle **at stop** | No stop | No stop | Unknown | **Yes** some folder tests | U | Not applicable | Not applicable | DK late freeze not SD read |
+| Native NUP SD blocked | Not in stable run | U | U | **Yes** separate NUP test | U | No in cited read sample | U | Different failure mode |
+| Audio callback completions | U (audible user gameplay) | U | **U at freeze**, user reports silence | U | U | U | U | High-value missing observable |
+| Real NVN fence/flush wait stack | U | U | U | U | U | U | U | High-value missing observable |
+| Host watchdog continuing while guest frozen | N/A | N/A | Trace stops before event | **YES** in folder logs | U | N/A | N/A | Distinguish guest deadlock from killed host |
+| Last guest IPC callsite at freeze | N/A | N/A | U | U (idle IPC) | U | Limited early tail | Limited early tail | Missing block reason |
+| Real game engine identified from ExeFS | U | U | U | U | U | U | U | **Do NOT invent engine names** |
+| Full native update/patch match verified | U | Single archive | Single archive | Base and update differ | Base/update in archive | Base archive | Base/update in archive | Package match matters |
+| Actual GPU memory usage | U | U | U | U | U | U | U | Needed for GPU/VM hypothesis |
+| Actual per-thread core/priority/wait | U | U | U | U | U | U | U | Needed to test scheduler hypothesis |
+
+**Negative conclusions proven by counterexamples:** 
+1. “0 MiB private system-resource games freeze” → contradicted by **Fast Fusion working**.
+2. “Huge binaries can't run” → contradicted by **Star Fox's 190MiB NSO text, 7 modules, sustained gameplay**.
+3. “Folder fixes every freeze” → contradicted by **Yoshi and DK folder late freezes**.
+4. “All freezes are blocked native SD I/O” → contradicted by **DK folder storage-idle repeated samples**.
+5. “Completed present calls prove visible frames” → contradicted by **abandoned Star Fox A-mode regression**, native PresentTexture returns with visible black output.
+6. “Missing system-resource reservation is just no RAM” → false; it is private KProcess metadata reservation, not total process memory.
+7. “All games have different main-thread priority” → false; actual priority is **44 in all provided META**.
+
+## 7. Prioritized *unproven* root-cause register and fix candidates
+
+**Rank is for investigation yield/reproducibility; not claimed likelihood.** Each hypothesis has evidence FOR / AGAINST or missing information / a *real* corrective approach. For the existing baseline, any change requires targeted review and protected regression comparison.
+
+### P1 H1: NVN queue, GPU fence, VI event or blocked graphics synchronization
+- **For:** Yoshi, DK and Drag stop rendering after some visible gameplay; DK folder idle freeze keeps watchdog alive while app-side frames, IPC, ROM RPC all stop simultaneously. A single blocked high-level game/render thread could stall producer threads or a game-level mutex.
+- **Against/unknown:** Native GPU queue-submit/flush/finish/acquire *return* phases and fence completion were not recorded at freeze. Star Fox's stable video does not rule out a workload-specific GPU condition. User audio silence may be downstream of game tick starvation.
+- **Fix/test:** Keep original NVN function ABI, intercept only with exact typed wrappers that atomically stamp call begin/end and driver/native return; track nvN QueueSubmitCommands/Flush/Finish, WindowAcquireTexture, QueueAcquireTexture, QueuePresentTexture; include VI layer/vsync and NVDRV ioctl result. On 3–5-second liveness gap, watchdog writes one bounded freeze snapshot of last active call and queue/window. If GPU fence stuck, correct queue ownership, event/fence semantics, VI handle, or GPU buffer cache coherency. **Do NOT fake GPU fence completion or skip flush.**
+
+### P1 H2: Native audio service/renderer voice/output wait
+- **For:** Yoshi's *observed* sound and video halt at about the same time; some games block their game tick on audio event/renderer buffer state. Source services include aud:u / auddmg:u / audsmx:u; execution patterns unknown.
+- **Against/unknown:** No independent submitted/completed audio-buffer counters, audren service timestamps or live wait stacks. Silence can result from *another* thread stalling first.
+- **Fix/test:** RAM-only ring for audren/audout service begin/end + voice/render-buffer sequence/timestamps, kernel handle/event wait, audout buffer release. Compare **order** of first stalled audio event vs first stalled NVN callback. Fix real audio buffer-lifecycle or event ownership, priority/affinity only if observed. **No fake audio success or discarding audio requests.**
+
+### P1 H3: HID/vibration/haptic sync during interaction
+- **For:** Previous Yoshi freeze near Joy-Con vibration / HID214, DK stops near mining action, Drag may use advanced motion/controller facilities. Gameplay transition triggers richer calls than menus.
+- **Against/unknown:** No repeatable blocked command 214 at precise late-freeze sample. Star Fox/Fast Fusion can use HID too. A correlation with input is not causation.
+- **Fix/test:** Track real HID and vibration command + caller, begin/end and returned CMIF. Reproduce with input type changes/rumble disabled only as **explicit diagnostic A/B**; if caller blocks, correct native service object/event/permissions, not globally discard haptics or forge OK replies.
+
+### P1 H4: Guest thread deadlock, priority starvation, waiting on shared synchronization primitive
+- **For:** DK folder shows entire guest work visibly idle for 40+ seconds while watchdog still runs. This is classic signature of blocked guest work/deadlock but not a proof of *which* lock. Distinct SDK/engine thread topology under MKW process may create incompatible core or service assumptions.
+- **Against/unknown:** NPDM priority44/core0 are SAME across all games. No complete guest thread list or wait-object dump available. One rendering thread can block without all threads deadlocking, even when ROM/IPC counters flat.
+- **Fix/test:** Low-frequency thread-state samples, per-thread last successful progress and active wait call, permitted core mask/actual affinity, guest thread creation and stack guard, RTOS/kernel wait result. If deadlock, repair lock ordering or async completion, split storage worker from any synchronous guest callback, preserve actual priority permissions.
+
+### P2 H5: Shared ROM RPC ring/re-entrancy/worker lock inversion
+- **For:** All games use host-serviced ROMFS virtual file range RPC. Native NUP blocking can starve the whole storage worker. A synchronous callback into the same worker or ownership bug could stop guest reads.
+- **Against:** DK folder idle-freeze shows *no active storage request*. That rules out “currently blocked sd read” at that moment, NOT a guest thread waiting elsewhere for an unissued or unpublished RPC.
+- **Fix/test:** Stamp ownership/state transition (claim/publish/serve/complete/release) for RPC slots; record uncompleted vs unpublished queue entries and per-worker tick. Inspect lock order between guest file mutex and synchronous storage API. Fix only verified race, fairness or re-entrancy; no forced status successes.
+
+### P2 H6: Title process identity, RO registration, FSP child/interface and applet service incompatibility
+- **For:** Guest has MKW's PID/service permissions; real user account, save/caches and SDK may require their own title. Early Kirby/Star Fox experimental RO 0x1759 and DK Pokopia SDK Break highlight this class.
+- **Against:** Star Fox + Fast Fusion work in same architecture; appletOE CMIF 0x480 occurs in a working Star Fox run. An error code existing in a tail does not prove it is the cause.
+- **Fix/test:** Identify *first truly fatal* native CMIF/kernel result and SDK callsite, actual owner and object kind, actual RO registration process handle; use guest-aware real API adapter or a separate kernel process if essential. **Do not implement generic stubs/null/skips for required services.** Early OOT/Kirby should be investigated separately from DK/Yoshi late freeze.
+
+### P2 H7: Memory plan, heap/alias fragmentation, VM access/cache coherency, stack safety
+- **For:** Yoshi 64KiB declared main stack and large 81MiB static data; DK/Drag optimized 0-resource MMU; native NVN and audio allocations evolve after entering gameplay. Also possible GPU command/data coherency problem.
+- **Against:** Fast Fusion shares optimized MMU mode and works; Star Fox is much larger code; no measured VM error at DK idle freeze.
+- **Fix/test:** Measure real heap, alias free region, physical committed, BSS/stack guard and guest thread high-water, QueryMemory permission states, NVN GPU heap allocations/caches at freeze, actual native invalid-memory returns. Restore correct allocation/permissions and memory mode based on kernel results, not fabricated metadata. Separately verify Yoshi's **actual allocated** stack (the NPDM number alone is not proof of kernel stack size).
+
+### P2 H8: Display layer ownership and host applet lifecycle
+- **For:** Abandoned experimental Star Fox displayed solid black despite successful PresentTexture calls, while code still executed and IPC completed. Such a failure cannot be explained by slow ROM reads alone.
+- **Against:** Reverted baseline once visibly played Star Fox; cannot assume same display failure causes Yoshi/DK late stop. Other causes include drawing black, driver/GPU command fault.
+- **Fix/test:** Compare exact host appletExit/VI layer creation and visibility, NVN acquired textures, queue/window pointer lifetime, native results and display release between baseline working and an isolated reproducer. Repair real VI surface ownership; avoid force-presenting a fake buffer.
+
+### P2 H9: Cache/save content, guest metadata/update mismatch or service runtime configuration
+- **For:** DK differs between new save and existing save and NUP update variant can differ from extracted folder. ExeFS collection has distinct DK base/update SDKs and MKW host updates. Stale per-profile cache, wrong update overlay, savedata compatibility may trigger an otherwise valid game to wait.
+- **Against:** DK freezes after actual gameplay and storage-idle, so missing NUP content is not always the immediate cause. Fast Fusion stable on same SD/host.
+- **Fix/test:** Validate title-ID and active base/update/sd savedata mapping in log, cache key versioning, exact file-level SHA and update priority. Replay same known-compatible save and new save without modifying live save. Implement missing real FS methods rather than pretend file exists or bypass errors.
+
+### P3 H10: Blocking native NUP storage/read backend
+- **For:** DK NUP actual storage slot >230 seconds old; earlier native FS read partial bytes. This is **proven in that individual run** even though cause inside kernel FS is U.
+- **Against:** DK folder late freezes with storage idle; Yoshi folder freezes; Star Fox NUP streams >7GB successfully in good session.
+- **Fix/test:** Bound native reads, exact results, robust returned-error recovery, bounded staged buffers, isolate SD request worker so read stalls do not block watchdog; genuine cancellation/reopen only if kernel API allows. Distinguish short read vs blocking call. Do not retry forever, invent missing bytes, force extraction, or prefetch entire huge NUP.
+
+### P3 H11: NUP indexing, metadata, compressed random reads and cache miss overhead
+- **For:** User observes NUP loading slower than folder; NUP has container TOC, package and update overlays, Zstd frame compression, additional random seek and SHA/decode; folder has direct SD files.
+- **Against:** Initial Star Fox NUP read ~212MB in 10s in failed experimental build; high throughput doesn't imply visible game, and NUP speed cannot fix folder idle deadlock.
+- **Fix/test:** Benchmark wall-clock TOC parse, SHA, index creation, exact fsFileRead, Zstd read/restart, decompressed cache hit/miss, speculative raw read-ahead, first *visible* frame. Persistent validated TOC/ROM index keyed on archive size/mtime/header hash, safe extent-page caching, bounded prefetch and package update overlay lookup; preserve exact byte offsets, zstd SHA check, and no extractions. Optimize only shown bottleneck and test Star Fox + Fast Fusion controls before rollout.
+
+### P3 H12: Logging overhead, SD driver, external host suspension or runtime HEN state
+- **For:** Heavy diagnostic flushes previously contended with storage, SD read blocked in some DK NUP runs, stopping video/audio could be system-wide. HOME close sometimes crashes.
+- **Against:** DK folder watchdog continued writing periodic state while game counters were frozen; entire host was not dead there. Star Fox uses same SD successfully.
+- **Fix/test:** Collect counters in RAM (not per-frame SD), watchdog writes only one low-rate failure snapshot, track log flush time, host storage last-poll and raw SD IO latency, inspect libounce/HEN termination separately. Do not induce freeze by adding exhaustive logging.
+
+### P3 H13: NSO load/relocation ABI, SDK assumptions or dynamic modules
+- **For:** OOT 0xff NSO flags, Kirby multiple subsdks and previous RO issue, DLL-like dynamic modules can expect guest process identity.
+- **Against:** OOT codec handled/verified earlier; Star Fox has 7 NSOs and works; small DK sometimes loads gameplay. No current map fault proves a loader ABI bug.
+- **Fix/test:** Verify every NSO segment hash, relocation+RELR+branch entries, TLS, static initializers and genuine dynamic RO registration against **actual variant**. Fix isolated genuine relocation/ABI bug, not title-specific null stubs.
+
+### P3 H14: Guest clock/tick, AV pacing, event sequence, asynchronous state or time-dependent scene transition
+- **For:** Some runs last dozens of seconds then stop around a menu, save, action or scene; audio and graphics may share a single game-loop barrier.
+- **Against:** Need precise freeze time, last game action and per-thread/event waits. Delayed freeze alone could be anything.
+- **Fix/test:** Record monotonic host timestamp and guest thread tick, last input category, game read phase, audio/gfx completion and last event wait; isolate reproducible action rather than adding arbitrary timeout skipping.
+
+## 8. Design for the **one** high-value executable investigation (NOT YET IMPLEMENTED)
+
+Implement a universal, low-overhead **freeze-point liveness recorder**, applicable to all guests, on an isolated experimental commit AFTER verifying the rollback:
+1. Atomic counters/time of **enter and return** for native NVN present, submit, flush, finish, texture acquire, VI, NVDRV; preserve exact ABIs and native return codes. If no native callback hook for a function, mark it **unobserved**, not zero usage.
+2. Atomic last IPC service/command/object/caller and completion, main/worker scheduler progress, storage RPC slot/op/time, native file handle and exact (file, offset, length) for blocking I/O. Reuse existing in-memory IPC ring; never add synchronous RPC solely for diagnostics.
+3. Independent **audio renderer/output** submit/completion/event timestamp and HID/vibration IPC native result. Label buffer/fence sequence, not personal user data.
+4. Watchdog checks every ~2s: when *actual guest progress* stops for >=3–5s and host/watchdog continues, freeze one **bounded snapshot** with the most recent outstanding native operations and per-thread wait if available. Do **not** kill the game or fabricate completion. Avoid heavy SD writes while game is healthy.
+5. Reproduce on Yoshi folder and DK folder with same MKW host; compare Star Fox and Fast Fusion under same code commit and A mode. Distinguish **native wait entered but never returned** vs **no calls issued because game loop blocked upstream** vs **host/watchdog stopped entirely**.
+6. Only then patch the identified real operation: correct NVN/fence/surface ownership, audio event lifecycle, HID command, lock order, memory permission or storage worker. Add acceptance tests verifying *real user-visible play and audio* beyond previous freeze point. No title-specific hardcoded “ignore error” behavior.
+
+**Potential test outcomes:** (a) NVN flush entered and not returned → GPU/fence/queue handle; (b) audio event wait first → audio backpressure; (c) HID214 never returns → controller/haptic path; (d) all native work returns yet game-loop stalls → guest mutex/fiber/time barrier; (e) storage op active for many seconds → SD service thread; (f) storage idle and all app counters flat while watchdog alive → guest-side deadlock/unobserved wait; (g) watchdog stops too → host/system termination/suspension. These outcomes discriminate hypotheses instead of generating indefinite generic logs.
+
+## 9. Engineering guardrails, sequence and acceptance
+
+- **P0:** Preserve actual playable source branch baseline-playable-2026-11-22-848a47d. experimental-nup-support now uses identical baseline executable and tests, with only tracking files added. Do not “optimize” the working games without targeted rollback-safe verification.
+- **P1:** A single GPU/audio/HID/thread **freeze-point collector** from section 8. Do not change scheduling, memory policy or service success values until the collector identifies a concrete native stalled call/thread or live error.
+- **P2:** Address specific late-freeze mechanism, with Yoshi folder and DK folder regressions first and Drag next. Validate Star Fox and Fast Fusion *visibly* play and that audio remains live; metric-only “frames” is inadequate.
+- **P3:** Independently benchmark NUP performance, correctly handle actual native storage stalls and optimize validated cache/metadata bottlenecks without extracting NUP or compromising update overlays. Compare same title/variant in folder vs NUP, wall-clock seconds to first visible frame, not just aggregate ROM byte counter.
+- **P4:** OOT and Kirby before-first-frame crashes require separate SDK/RO/FSP/graphics readiness investigation.
+- No GitHub Actions, no PRs, local build.bat + user hardware. No changes to existing save data, no guest SDK success stubs, no wholesale bypass of required API. Keep all Findings/HANDOFF history append-only.
+
+## 10. Remaining unknowns / limits of this COMPLETE inventory
+
+1. **Not yet known:** exact blocking PC/thread/wait object for Yoshi/DK/Drag late freeze; actual independent audio callback progression, GPU fence statuses, driver error and actual display scanout timing.
+2. **Not yet known:** true runtime engine names/versions and whether these games share game engines. Static 3-NSO counts are not evidence of the same engine.
+3. **Not yet known:** full detailed ACID/ACI0 capability bitfield decoding and title-specific actual service access traces for each game, true host installed update version, and exact NUP update manifest used during each test.
+4. **Not yet known:** exact Fast Fusion controlled log timeline or NUP backend; working status is based on user's real gameplay report, not fabricated counters.
+5. **Not yet known:** 100% decompilation or comparison of arbitrary NSO code; header and SDK build-ID audit is complete for supplied archive, but full binary reverse-engineering/trace instrumentation is different work.
+6. **Not yet known:** comparative physical memory, alias/heap, GPU heap high-water, async audio buffers, and user-input milestone at each freeze; proposed recorder exists only as an engineering specification.
+7. **Not included:** Pokopia's NPDM binary. Collection has 11 titles listed above, not Pokopia; historical Pokopia GetInfo16=0 is hardware evidence, not direct ExeFS audit.
+
+**Interpretation:** “Comprehensive investigation” here means ALL available ExeFS titles, metadata, module/SDK build variants, known hardware behaviors, contradictory controls, a diagnosis/fix matrix and the missing evidence explicitly inventoried. It does **not** falsely mean we have already proved a unique freeze root or fully reverse engineered every module. A successful fix requires hardware confirmation.
+
+## 11. Source evidence index
+- Archive: user-provided 7-part “exefs collections” with eleven title groups. Actual META fields and NSO headers programmatically enumerated in a Python one-pass audit; build IDs read from NSO header offset 0x40; sizes from segment descriptors, not guessed from ZIP compressed size.
+- Stable MKW Star Fox: BackupLoaderMKW-crash(20261123-050542).log.
+- DK NUP blocked native read: BackupLoaderMKW-crash(20261123-043533).log. DK folder idle freezes: (...043823).log and (...051251).log; DK NUP additional progress: (...051534).log.
+- Yoshi MKW folder: BackupLoaderMKW-crash(20261123-194406).log and -gameplay(20261123-194406).log.
+- Post-baseline Star Fox **reverted experiment**: (...194215).log L+A, (...194943).log A with stdio; no graphics visibility despite counters. Do not assume that is baseline behavior.
+- OOT early runs: BackupLoaderMKW-crash(20261123-164105).log and (...175418).log. Kirby, Drag, earlier HID and RO findings documented with build-specific details in chronological append-only Findings.md and HANDOFF_2026-11-21.md.
+- Preserved playable Git branch baseline-playable-2026-11-22-848a47d = 848a47dcf26fbdb8499aa2b552bfebd4fe2de170. Rollback commit b1f446f51919bfcb8088cc6cb2e9402aaddfed82.
+- Verified definitions/background: https://switchbrew.org/wiki/NPDM ; https://switchbrew.org/wiki/SVC ; https://switchbrew.org/wiki/17.0.0 ; https://switchbrew.org/wiki/NV%20services .
