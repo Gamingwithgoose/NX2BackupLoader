@@ -134,6 +134,12 @@ typedef struct {
  uint32_t nvn_stage_entered[NX2_NVN_STAGE_COUNT];
  uint32_t nvn_stage_returned[NX2_NVN_STAGE_COUNT];
  uint32_t nvn_stage_result[NX2_NVN_STAGE_COUNT];
+ /* Optional gameplay GPU tracing, sampled by host watchdog. */
+ uint32_t nvn_gameplay_trace;
+ uint64_t nvn_stage_last_caller[NX2_NVN_STAGE_COUNT];
+ uint64_t nvn_stage_last_tls[NX2_NVN_STAGE_COUNT];
+ uint64_t nvn_stage_last_tick[NX2_NVN_STAGE_COUNT];
+ uint64_t nvn_stage_return_tick[NX2_NVN_STAGE_COUNT];
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
  Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
  uint32_t ipc_call_next,ipc_event_next;
