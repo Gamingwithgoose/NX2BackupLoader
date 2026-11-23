@@ -424,7 +424,9 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            "FSP_IPC_CLOSE_FORWARDED",owner,0);
  if(kind==2 && !closing &&
     !(reader_domain?nx2_ipc_save_reader_allowed(d):
-      native_domain?nx2_ipc_fsp_native_child_allowed(d,domain_kind):
+      native_domain?(nx2_ipc_fsp_native_child_allowed(d,domain_kind) ||
+                     (domain_kind==6 &&
+                      nx2_ipc_fsp_storage_range_allowed(p,n,d))):
                     nx2_ipc_fsp_allowed(d))){
    nx2_rpc(RPC_LOG,((uint64_t)hdr0<<32)|hdr1,
            ((uint64_t)special<<32)|request_type,
@@ -453,7 +455,9 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
    return fail;
  }
  if(!closing && ((kind==3&&!nx2_ipc_save_reader_allowed(d)) ||
-    ((kind==4||kind==5||kind==6)&&!nx2_ipc_fsp_native_child_allowed(d,kind)))){
+    ((kind==4||kind==5||kind==6) &&
+     !nx2_ipc_fsp_native_child_allowed(d,kind) &&
+     !(kind==6&&nx2_ipc_fsp_storage_range_allowed(p,n,d))))){
    if(nx2_guest_fsp_unsupported(p,n,d)){
      ipc_event_emit(call_id,4,h,kind,d,request_type,flags,hdr0,hdr1,
                     special,0,NX2_FS_UNSUPPORTED,caller,trace_label);
@@ -731,7 +735,8 @@ uint32_t nx2_async(uint32_t *out,void *p,uint64_t n,uint32_t h){
  /* The real native child service is allowed to determine completion.
   * Enforce read-only child capability BEFORE native asynchronous IPC. */
  if((kind==4||kind==5||kind==6) &&
-    !nx2_ipc_fsp_native_child_allowed(d,kind)){
+    !nx2_ipc_fsp_native_child_allowed(d,kind) &&
+    !(kind==6&&nx2_ipc_fsp_storage_range_allowed(p,n,d))){
    ipc_event_emit(call_id,4,h,kind,d,type,0x40U,hdr0,hdr1,special,
                   NX2_FS_UNSUPPORTED,UINT32_MAX,caller,owner);
    return NX2_FS_UNSUPPORTED;
