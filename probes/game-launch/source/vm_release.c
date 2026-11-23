@@ -25,10 +25,15 @@ int nx2_release_heap_for_vm(FILE *f,const Nx2HeapPlan *p,uint64_t min_resource,
      * kernel-managed memory-management reservation, not free application
      * RAM. A shortage is different from an unavailable alias region. */
     if(resource<min_resource){
-        row(f,"WARNING_VM_SYSTEM_RESOURCE_SHORTFALL available_bytes=%llu requested_bytes=%llu deficit_bytes=%llu\n",
+        /* The NPDM reservation is a process memory-manager setting, not
+         * the physical-memory budget checked below. On zero-reservation
+         * hosts the real kernel may refuse physical mappings; that
+         * decision belongs to svcMapPhysicalMemory at first use, not to
+         * an unconditional host-identity/NPDM comparison. Do NOT skip
+         * heap ownership, alias bounds, free physical RAM or kernel RCs. */
+        row(f,"WARNING_VM_HOST_RESOURCE_DIFFERENCE available_bytes=%llu guest_npdm_bytes=%llu deficit_bytes=%llu policy=kernel_enforced\n",
             (unsigned long long)resource,(unsigned long long)min_resource,
             (unsigned long long)(min_resource-resource));
-        return 0;
     }
     if(alias_size<min_alias||!alias||alias_size>UINT64_MAX-alias){
         row(f,"VM_REFUSED invalid_alias_capacity alias_base=%016llx alias_bytes=%llu min_bytes=%llu\n",
