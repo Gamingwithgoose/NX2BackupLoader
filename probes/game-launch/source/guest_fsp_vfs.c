@@ -343,7 +343,7 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
                       unsigned char out[192],uint32_t *out_size){
  char pa[NX2_PATH_MAX],pb[NX2_PATH_MAX];
  char a[NX2_PATH_MAX],b[NX2_PATH_MAX];
- int needs_path=cmd<=9||cmd==11||cmd==12||cmd==13||cmd==14;
+ int needs_path=cmd<=9||cmd==11||cmd==12||cmd==13||cmd==14||cmd==15;
  if(needs_path){
   if(!path_argument(rq,0,pa)||!scoped_path(obj,pa,a))
    return NX2_INVALID;
@@ -390,6 +390,14 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
    rc=nx2_rpc(RPC_SAVE_TIMESTAMP,0,0,0,0,out,a,0,0);
    if(!rc)*out_size=32;
    return rc;
+  case 15:
+   /* QueryEntry 0 is SetConcatenationFileAttribute. This is a real
+    * write to the guest-private SD tree, never to the MKW save.
+    * Unknown query IDs may read system metadata or alter native storage:
+    * do not fabricate a reply or forward them under the host PID. */
+   if(obj->read_only || len<4 || read32(in)!=0)
+    return NX2_FS_UNSUPPORTED;
+   return nx2_rpc(RPC_SAVE_QUERY_ENTRY,0,0,0,0,0,a,0,0);
   case 16:
    /* Query native SD backing filesystem; do not invent 0xc0-byte limits. */
    rc=nx2_rpc(RPC_SAVE_ATTRIBUTE,0,0,0,0,out,0,0,0);
