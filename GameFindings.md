@@ -362,3 +362,7 @@ Implement a universal, low-overhead **freeze-point liveness recorder**, applicab
 ### 2026-11-23 21:54 — DK Bananza failed 64-KiB folder-read experiment
 - 21:54:15 folder gameplay/crash logs: game 2761 frames then freezes, 3371 completed / 3372 attempted RPCs. File stuck **at opening**, not reading: `WARNING_ROM_READ_STAGE phase=8 file=36238 offset=0 bytes=334 path=Tex/DonkeyKongBody_Nrm.bntx.zs`, progress completed=0 chunk_bytes=0; same pending ticket more than 40 seconds. Host close from HOME remains prolonged/forced error. User confirms slower folder loading from 64-KiB chunking without benefit.
 - **Reverted** slower per-64-KiB folder read behavior in `e3b8a011c7fe12f244a1ea0be21a517ca27fac83`; preserved open/read-stage tracing. DK remains not stable; issue involves potentially blocking native FS operations, not exclusively large files. NUP unchanged.
+
+
+### 2026-11-23 — All-games guest IPC logging policy (experimental)
+- DK Bananza folder + NUP remain not stable; no game-specific fix in this pass. User directs launcher to favor native kernel/service results, except required isolated guest saves and host process safety. New primary-log `IPC_EVENT origin=` disambiguates all intercepted/native/virtual/rejected IPC request/result events, persisted by default (may generate large logs); SD flush cadence 2s, not per IPC. Optional `sparse-ipc-trace.flag` restores lighter persistence; in-memory ring/crash tail remain. No new automatic DLC support, no fake successful file reads, no removal of required fsp-srv isolation, and no proven host-freeze fix.
