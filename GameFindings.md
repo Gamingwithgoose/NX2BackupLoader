@@ -366,3 +366,7 @@ Implement a universal, low-overhead **freeze-point liveness recorder**, applicab
 
 ### 2026-11-23 — All-games guest IPC logging policy (experimental)
 - DK Bananza folder + NUP remain not stable; no game-specific fix in this pass. User directs launcher to favor native kernel/service results, except required isolated guest saves and host process safety. New primary-log `IPC_EVENT origin=` disambiguates all intercepted/native/virtual/rejected IPC request/result events, persisted by default (may generate large logs); SD flush cadence 2s, not per IPC. Optional `sparse-ipc-trace.flag` restores lighter persistence; in-memory ring/crash tail remain. No new automatic DLC support, no fake successful file reads, no removal of required fsp-srv isolation, and no proven host-freeze fix.
+
+
+### 2026-11-23 — DK/NUP experiment request fidelity diagnostics
+- No changes to game-specific launch, DLC, save layouts, or native FSP boundaries. New complete IPC metadata logging and explicit `COMPAT_SYNTHETIC_SUCCESS_NO_KERNEL_CALL` / `COMPAT_SYNTHETIC_RO_INIT_SUCCESS` markers make synthetic SDK outcomes distinguishable from native IPC returns. DK hang still uncorrected and hard MKW close persists in previous hardware tests. Hardware validation pending.
