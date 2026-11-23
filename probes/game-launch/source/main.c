@@ -11,6 +11,7 @@
 #include "raw_svc.h"
 #include "vm_release.h"
 #include "log_policy.h"
+#include "nx2_trace_client.h"
 #include <malloc.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -416,6 +417,8 @@ static void scan_progress(uint32_t files, void *unused) {
 }
 /* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
 static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
+  nx2_trace_begin(game->id);
+  nx2_trace_event(NX2_TRACE_LAUNCH_SELECTED, (uint64_t)(unsigned)nvn_profile);
   FILE *flag=fopen("sdmc:/BackupLoaderMKW-verbose.flag","rb");
   nx2_log_verbose=flag!=NULL;
   if(flag)fclose(flag);
@@ -483,6 +486,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
+  nx2_trace_event(NX2_TRACE_HOST_APPROVED,title);
   launch_phase="PACKAGE_OPEN";
   selected_resource = game->resource;
   uint32_t declared_main_stack = game->main_stack_size;
@@ -665,12 +669,14 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   }
   screen("Preparing the selected game...");
   if (!prepare_phase(f, game->root, images, l, host, map, map_bytes, 1, game->id)) {
+    nx2_trace_event(NX2_TRACE_PREPARE_FAILED,0);
     row(f, "LAUNCH_PREPARATION_REFUSED\n");
     snprintf(outcome, sizeof(outcome),
              game->is_nup ? "NUP preparation failed; see BackupLoaderMKW-nup.log." :
                             "Game preparation failed; see BackupLoaderMKW-gameplay.log.");
     goto done;
   }
+  nx2_trace_event(NX2_TRACE_MODULE_READY,images->count);
   row(f,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
       game->is_nup?"nup":"folder",(unsigned long long)game->id,
       images->count,(unsigned long long)l->heap_capacity);
@@ -697,6 +703,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     row(f,"NVN_NATIVE_OBSERVABILITY bootstrap_only=1 "
           "getproc_and_present_counters_unobserved=1\n");
   launch_phase="GUEST_EXECUTE";
+  nx2_trace_event(NX2_TRACE_GUEST_START,(uint64_t)(uintptr_t)l->api.rtld);
   row(f,"DIAGNOSTIC_PROFILE version=2 guest_fs_callsite=1 save_gate=1 exit_observer=existing CPU_exception_observer=libounce\n");
   if(crash)row(crash,"GUEST_EXECUTION_BEGIN phase=%s\n",launch_phase);
   row(f, "ACTUAL_ENTRY_ABOUT_TO_EXECUTE rtld=%016llx physical_budget=%llu\n",
@@ -935,6 +942,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
      * No new threads, service calls, or changes to guest execution. */
     if(crash && armTicksToNs(stamp-last_crash_progress)>=10000000000ULL){
       last_crash_progress=stamp;
+      nx2_trace_event(NX2_TRACE_GUEST_HEARTBEAT,frames);
       row(crash,"HOST_SNAPSHOT_PERIODIC elapsed_ms=%llu stage=%u "
                 "fault_state=%u main=%llu frames=%llu rpc=%llu rom_bytes=%llu "
                 "nvn_bootstrap=%u getproc=%u device=%u/%u queue=%u/%u "
@@ -1319,6 +1327,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     svcSleepThread(1000000);
   }
 done:
+  nx2_trace_event(NX2_TRACE_CLEAN_EXIT,(uint64_t)(unsigned)(launch_phase[0]));
   row(f, "REPORT_END game_entry_attempted=0 phase=%s\n",launch_phase);
   if(crash)row(crash,"PRELAUNCH_STOP phase=%s report_end=1\n",launch_phase);
   fclose(f);
