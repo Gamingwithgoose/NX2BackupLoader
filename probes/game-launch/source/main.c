@@ -744,9 +744,12 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   /* Persist every observable guest IPC request and outcome in this
    * experimental diagnostic build. No payloads or UID buffers are copied.
    * Guest threads still only publish lock-free in-memory metadata. */
-  int ipc_full_text=1;
-  /* Escape hatch for known-working titles when exhaustive text I/O itself
-   * disturbs timing; the shared-memory request/reply ring remains active. */
+  /* Hardware full-text IPC overran the ring; keep errors, local
+   * decisions and important service activity on disk by default. */
+  int ipc_full_text=0;
+  FILE *full_flag=fopen("sdmc:/switch/BackupLoaderMKW/full-ipc-trace.flag","rb");
+  if(full_flag){ipc_full_text=1;fclose(full_flag);}
+  /* Explicit sparse override has precedence over full trace. */
   FILE *sparse_flag=fopen("sdmc:/switch/BackupLoaderMKW/sparse-ipc-trace.flag","rb");
   if(sparse_flag){ipc_full_text=0;fclose(sparse_flag);}
   row(f,"IPC_CAPTURE mode=%s ring=%u request_reply=1 "
@@ -775,6 +778,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   u64 passive_last_frame=0,passive_frame_tick=began;
   u64 passive_ipc_at_progress=0,passive_rom_at_progress=0;
   int passive_reported=0;
+  u64 passive_last_report_tick=0;
   u64 last_unserved_rpc_warning_tick=began;
   /* Preserve flushed prelaunch evidence. Once guest execution begins,
    * batch independent crash-report writes and flush each complete sample.
@@ -826,9 +830,13 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
         passive_rom_at_progress=
           __atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE);
         passive_reported=0;
-      }else if(!passive_reported && frames>=30 &&
-         armTicksToNs(now-passive_frame_tick)>=8000000000ULL){
+        passive_last_report_tick=0;
+      }else if(frames>=30 &&
+         armTicksToNs(now-passive_frame_tick)>=8000000000ULL &&
+         (!passive_reported ||
+          armTicksToNs(now-passive_last_report_tick)>=10000000000ULL)){
         passive_reported=1;
+        passive_last_report_tick=now;
         u64 ipc_now=__atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE);
         u64 rom_now=__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE);
         u32 slot=__atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE);
@@ -866,6 +874,29 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                 phase,snap.service,snap.command,snap.result,
                 snap.service_result,(unsigned long long)snap.caller);
           }
+          /* Guest-thread / graphics triage. All counts are sampled from
+           * shared memory; no guest-side waits, heap allocation or IPC. */
+          static const char *nvn_names[]={
+            "submit","flush","finish","window_acquire","queue_acquire"
+          };
+          for(unsigned n=0;n<NX2_NVN_STAGE_COUNT;n++){
+            row(crash,"WARNING_STALL_NVN_STAGE name=%s entered=%u returned=%u "
+                      "result=%08x observed=%u\n",
+                nvn_names[n],
+                __atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE),
+                __atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE),
+                __atomic_load_n(&l->nvn_stage_result[n],__ATOMIC_ACQUIRE),
+                (unsigned)(l->nvn_driver_passthrough==0));
+          }
+          row(crash,"WARNING_STALL_GUEST_EXECUTION main_entered=%llu "
+                    "main_returned=%u ipc_started=%u ipc_finished=%u "
+                    "sync_collisions=%u storage_active=%u\n",
+              (unsigned long long)__atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->guest_main_returned,__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->sync_flight_collisions,__ATOMIC_ACQUIRE),
+              slot);
           report_unresolved_waits(crash,l,host,now,"present_stalled");
           fflush(crash);
         }
