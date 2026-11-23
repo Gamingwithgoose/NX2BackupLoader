@@ -37,8 +37,8 @@ $header=New-Object byte[] 0x38
 [Array]::Copy([Text.Encoding]::ASCII.GetBytes('ASET'),0,$header,0,4)
 [Array]::Copy([BitConverter]::GetBytes($iconOffset),0,$header,8,8)
 [Array]::Copy([BitConverter]::GetBytes([uint64]$jpg.Length),0,$header,16,8)
-[Array]::Copy([BitConverter]::GetBytes($nacpOffset),0,$header,0x28,8)
-[Array]::Copy([BitConverter]::GetBytes([uint64]$nacp.Length),0,$header,0x30,8)
+[Array]::Copy([BitConverter]::GetBytes($nacpOffset),0,$header,0x18,8)
+[Array]::Copy([BitConverter]::GetBytes([uint64]$nacp.Length),0,$header,0x20,8)
 $stream=[IO.File]::Open($Nro,[IO.FileMode]::Append,[IO.FileAccess]::Write)
 try{
  $stream.Write($header,0,$header.Length)
@@ -50,8 +50,8 @@ $check=[IO.File]::ReadAllBytes($Nro)
 $asetStart=[int]$size
 if([Text.Encoding]::ASCII.GetString($check,$asetStart,4) -ne 'ASET' -or
    [BitConverter]::ToUInt64($check,$asetStart+16) -ne $jpg.Length -or
-   [BitConverter]::ToUInt64($check,$asetStart+0x28) -ne $nacpOffset -or
-   [BitConverter]::ToUInt64($check,$asetStart+0x30) -ne $nacp.Length){
+   [BitConverter]::ToUInt64($check,$asetStart+0x18) -ne $nacpOffset -or
+   [BitConverter]::ToUInt64($check,$asetStart+0x20) -ne $nacp.Length){
  throw 'NRO icon/NACP asset header validation failed'
 }
 $actualAuthor=[Text.Encoding]::UTF8.GetString($check,
