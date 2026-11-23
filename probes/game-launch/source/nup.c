@@ -282,7 +282,7 @@ static uint32_t lookup_file(const char *path) {
   }else return UINT32_MAX;
   uint32_t node=lookup_node_from(updated,path);
   if(node==UINT32_MAX)node=lookup_node_from(base,path);
-  return node>=mounted.ndirs?node-mounted.ndirs:UINT32_MAX;
+  return node!=UINT32_MAX && node>=mounted.ndirs?node-mounted.ndirs:UINT32_MAX;
 }
 void nx2_nup_close(void) {
   if(mounted.native_active)fsFileClose(&mounted.native_file);
@@ -394,7 +394,7 @@ int nx2_nup_open(const char *path) {
     m.update_romfs_dir=rd32(p+16);
     m.update_version=best_version;
     /* Prefer the applicable update's NPDM when supplied. */
-    if(m.update_exefs_dir!=UINT32_MAX && rd32(p+40)) {
+    if(rd32(p+40)) {
       m.meta_offset=rd64(p+32);
       m.meta_size=rd32(p+40);
     }
