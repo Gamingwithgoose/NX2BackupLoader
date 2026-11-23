@@ -835,6 +835,16 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       return NX2_INVALID;
     rc = fsFsGetFileTimeStampRaw(h->sd, p, r->buffer);
     break;
+  case RPC_SAVE_QUERY_ENTRY:
+    /* IFileSystem::QueryEntry ID 0 modifies only the virtual guest's
+     * SD-backed directory attribute. Never target the namespace root,
+     * and never forward a guest path into MKW's fsp-srv. */
+    if(r->a!=0 || !strcmp(p,h->save_root))return NX2_INVALID;
+    rc=fsFsSetConcatenationFileAttribute(h->sd,p);
+    if(R_FAILED(rc))
+      logline(h,"VIRTUAL_QUERY_ENTRY_FAILED id=%llu result=%08x path=%s\n",
+              (unsigned long long)r->a,rc,p);
+    break;
   case RPC_SAVE_ATTRIBUTE:
     if(!r->buffer)return NX2_INVALID;
     rc=fsFsGetFileSystemAttribute(h->sd,(FsFileSystemAttribute *)r->buffer);
