@@ -929,6 +929,17 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
               __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE),
               __atomic_load_n(&l->sync_flight_collisions,__ATOMIC_ACQUIRE),
               slot);
+          /* A zero-timeout kernel check distinguishes a terminated guest
+           * main worker from a living/stalled one; it does not reveal why a
+           * living thread is blocked or its kernel stack. */
+          {
+            Handle gh=worker.handle;
+            s32 signaled=-1;
+            Result state_rc=svcWaitSynchronization(&signaled,&gh,1,0);
+            row(crash,"WARNING_GUEST_WORKER_TERMINATION_PROBE handle=%08x "
+                      "kernel_result=%08x terminated=%u\n",
+                gh,state_rc,(unsigned)R_SUCCEEDED(state_rc));
+          }
           report_unresolved_waits(crash,l,host,now,"present_stalled");
           fflush(crash);
         }
