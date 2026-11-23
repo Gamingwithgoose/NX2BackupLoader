@@ -432,7 +432,15 @@ uint32_t nx2_ensure_save(uint64_t *required){
  if(required)*required=0;
  return nx2_provision_save();
 }
-uint32_t nx2_save_ok(void){return 0;}
+/* Compatibility-only success, not a native kernel or real archive mutation.
+ * Record the deception explicitly until guest-scoped expansion is supported.
+ * This helper is currently used by ExtendSaveData and access-log mode hooks. */
+uint32_t nx2_save_ok(void){
+  nx2_rpc(RPC_LOG,(uint64_t)(uintptr_t)__builtin_return_address(0),0,0,0,0,
+          "COMPAT_SYNTHETIC_SUCCESS_NO_KERNEL_CALL",
+          "save_extend_or_access_log_mode",0);
+  return 0;
+}
 void nx2_main_gate(void){__atomic_store_n(&nx2_launch->main_entered,1,__ATOMIC_RELEASE);nx2_rpc(RPC_MAIN_ENTERED,0,0,0,0,0,0,0,0);nx2_launch->api.original_main();__atomic_store_n(&nx2_launch->guest_main_returned,1,__ATOMIC_RELEASE);nx2_rpc(RPC_ABORT,0,0,0,0,0,"nnMain returned",0,0);for(;;)wait();}
 static uint32_t preflight_fs_policy(uint32_t result){(void)result;return 2;}
 void nx2_preflight_worker(Nx2Launch *l){
@@ -606,7 +614,7 @@ uintptr_t nx2_bootstrap_gate(const char *name){
  * SDK exports nn::ro::Initialize; actual dynamic NRO loads still need a
  * correctly isolated, process-aware loader implementation. */
 uint32_t nx2_ro_initialize_compat(void){
- nx2_rpc(RPC_LOG,0,0,0,0,0,"RO_INIT_COMPAT","host-owned ldr:ro initialization skipped; dynamic modules not yet virtualized",0);
+ nx2_rpc(RPC_LOG,0,0,0,0,0,"COMPAT_SYNTHETIC_RO_INIT_SUCCESS","no kernel RO init; host process owns ldr:ro; dynamic modules unsupported",0);
  return 0;
 }
 uint32_t nx2_save_sizes(int64_t *size,int64_t *journal){if(size)*size=0x20000000;if(journal)*journal=0;return 0;}
