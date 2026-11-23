@@ -355,26 +355,13 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       h->cache[slot].logged = 0;
     }
     h->cache[slot].used = h->calls;
-    /* Preserve exact guest read semantics while limiting each native FS
-     * request to 64 KiB. Short reads and kernel failures remain failures. */
     u64 read = 0;
-    rc = 0;
-    while(read < r->c){
-      u64 chunk = r->c-read;
-      if(chunk > 0x10000U)chunk=0x10000U;
-      u64 got=0;
-      __atomic_store_n(&h->rpc_rom_completed,read,__ATOMIC_RELAXED);
-      __atomic_store_n(&h->rpc_rom_chunk_bytes,(uint32_t)chunk,__ATOMIC_RELAXED);
-      __atomic_store_n(&h->rpc_rom_phase,9,__ATOMIC_RELEASE);
-      rc=fsFileRead(&h->cache[slot].file,r->b+read,
-                    (unsigned char*)r->buffer+read,chunk,
-                    FsReadOption_None,&got);
-      __atomic_store_n(&h->rpc_rom_result,rc,__ATOMIC_RELAXED);
-      if(got>chunk){rc=NX2_INVALID;break;}
-      read+=got;
-      __atomic_store_n(&h->rpc_rom_completed,read,__ATOMIC_RELEASE);
-      if(R_FAILED(rc)||got!=chunk)break;
-    }
+    __atomic_store_n(&h->rpc_rom_phase,9,__ATOMIC_RELEASE);
+    __atomic_store_n(&h->rpc_rom_chunk_bytes,(uint32_t)(r->c>UINT32_MAX?UINT32_MAX:r->c),__ATOMIC_RELAXED);
+    rc = fsFileRead(&h->cache[slot].file, r->b, r->buffer, r->c,
+                    FsReadOption_None, &read);
+    __atomic_store_n(&h->rpc_rom_result,rc,__ATOMIC_RELAXED);
+    __atomic_store_n(&h->rpc_rom_completed,read,__ATOMIC_RELEASE);
     __atomic_fetch_add(&h->bytes,read,__ATOMIC_RELAXED);
     /* A successful-but-short ROMFS IStorage read would expose stale bytes
      * from the guest buffer or cache. Report actual invalid data instead. */
