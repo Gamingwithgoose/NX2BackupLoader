@@ -11,7 +11,6 @@
 #include "raw_svc.h"
 #include "vm_release.h"
 #include "log_policy.h"
-#include "nx2_trace_client.h"
 #include <malloc.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -332,15 +331,6 @@ static void write_fault_report(FILE *f, const Nx2Images *images) {
 static void check_fault(FILE *f, FILE *crash, const Nx2Images *images) {
   if (__atomic_load_n(&nx2_fault.state, __ATOMIC_ACQUIRE) != 2)
     return;
-  /* Report actual libounce-captured exception registers to independent logger.
-   * No debugger or privileged SM service request. Best-effort async events;
-   * the existing synchronous crash.log remains the authoritative report. */
-  const ThreadExceptionDump *fault=&nx2_fault.dump;
-  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_DESC,fault->error_desc);
-  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_PC,fault->pc.x);
-  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_LR,fault->lr.x);
-  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_FAR,fault->far.x);
-  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_ESR,fault->esr);
   if (crash) {
     row(crash,"CRASH_CAPTURED_CPU_EXCEPTION exception_handler=libounce\n");
     write_fault_report(crash,images);
@@ -426,8 +416,6 @@ static void scan_progress(uint32_t files, void *unused) {
 }
 /* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
 static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
-  nx2_trace_begin(game->id);
-  nx2_trace_event(NX2_TRACE_LAUNCH_SELECTED, (uint64_t)(unsigned)nvn_profile);
   FILE *flag=fopen("sdmc:/BackupLoaderMKW-verbose.flag","rb");
   nx2_log_verbose=flag!=NULL;
   if(flag)fclose(flag);
@@ -495,7 +483,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
-  nx2_trace_event(NX2_TRACE_HOST_APPROVED,title);
   launch_phase="PACKAGE_OPEN";
   selected_resource = game->resource;
   uint32_t declared_main_stack = game->main_stack_size;
@@ -678,14 +665,12 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   }
   screen("Preparing the selected game...");
   if (!prepare_phase(f, game->root, images, l, host, map, map_bytes, 1, game->id)) {
-    nx2_trace_event(NX2_TRACE_PREPARE_FAILED,0);
     row(f, "LAUNCH_PREPARATION_REFUSED\n");
     snprintf(outcome, sizeof(outcome),
              game->is_nup ? "NUP preparation failed; see BackupLoaderMKW-nup.log." :
                             "Game preparation failed; see BackupLoaderMKW-gameplay.log.");
     goto done;
   }
-  nx2_trace_event(NX2_TRACE_MODULE_READY,images->count);
   row(f,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
       game->is_nup?"nup":"folder",(unsigned long long)game->id,
       images->count,(unsigned long long)l->heap_capacity);
@@ -712,7 +697,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     row(f,"NVN_NATIVE_OBSERVABILITY bootstrap_only=1 "
           "getproc_and_present_counters_unobserved=1\n");
   launch_phase="GUEST_EXECUTE";
-  nx2_trace_event(NX2_TRACE_GUEST_START,(uint64_t)(uintptr_t)l->api.rtld);
   row(f,"DIAGNOSTIC_PROFILE version=2 guest_fs_callsite=1 save_gate=1 exit_observer=existing CPU_exception_observer=libounce\n");
   if(crash)row(crash,"GUEST_EXECUTION_BEGIN phase=%s\n",launch_phase);
   row(f, "ACTUAL_ENTRY_ABOUT_TO_EXECUTE rtld=%016llx physical_budget=%llu\n",
@@ -951,7 +935,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
      * No new threads, service calls, or changes to guest execution. */
     if(crash && armTicksToNs(stamp-last_crash_progress)>=10000000000ULL){
       last_crash_progress=stamp;
-      nx2_trace_event(NX2_TRACE_GUEST_HEARTBEAT,frames);
       row(crash,"HOST_SNAPSHOT_PERIODIC elapsed_ms=%llu stage=%u "
                 "fault_state=%u main=%llu frames=%llu rpc=%llu rom_bytes=%llu "
                 "nvn_bootstrap=%u getproc=%u device=%u/%u queue=%u/%u "
@@ -1336,7 +1319,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     svcSleepThread(1000000);
   }
 done:
-  nx2_trace_event(NX2_TRACE_RUN_ENDED,(uint64_t)(unsigned)(launch_phase[0]));
   row(f, "REPORT_END game_entry_attempted=0 phase=%s\n",launch_phase);
   if(crash)row(crash,"PRELAUNCH_STOP phase=%s report_end=1\n",launch_phase);
   fclose(f);
@@ -1427,6 +1409,50 @@ failed:
   snprintf(outcome,sizeof(outcome),"R+A: Horizon probe unavailable (%08x)",rc);
   fclose(report);
 }
+/* Read-only capability baseline inside the existing MKW-hosted loader.
+ * Never attach to another process, modify kernel state, or touch guest memory. */
+static void system_capability_probe(void) {
+  FILE *report=fopen("sdmc:/BackupLoaderMKW-capabilities.log","w");
+  if(!report){
+    snprintf(outcome,sizeof(outcome),"Capability report could not be opened on SD");
+    return;
+  }
+  fprintf(report,"NX2_CAPABILITY_PROBE version=1 scope=current_process_only mode=read_only\n");
+  fprintf(report,"SAFETY debug_attach=not_attempted process_list=not_attempted kernel_patch=none system_changes=none\n");
+  u64 pid=0;
+  Result rc=svcGetProcessId(&pid,CUR_PROCESS_HANDLE);
+  fprintf(report,"CURRENT_PROCESS_ID result=%08x pid=%016llx\n",rc,(unsigned long long)pid);
+  u64 core_mask=0,priority_mask=0;
+  rc=svcGetInfo(&core_mask,InfoType_CoreMask,CUR_PROCESS_HANDLE,0);
+  fprintf(report,"KERNEL_INFO name=CoreMask result=%08x value=%016llx\n",rc,(unsigned long long)core_mask);
+  rc=svcGetInfo(&priority_mask,InfoType_PriorityMask,CUR_PROCESS_HANDLE,0);
+  fprintf(report,"KERNEL_INFO name=PriorityMask result=%08x value=%016llx\n",rc,(unsigned long long)priority_mask);
+  MemoryInfo mem={0};
+  u32 page_info=0;
+  rc=svcQueryMemory(&mem,&page_info,(u64)(uintptr_t)&system_capability_probe);
+  fprintf(report,"QUERY_SELF_CODE result=%08x addr=%016llx size=%016llx perm=%08x type=%08x\n",
+          rc,(unsigned long long)mem.addr,(unsigned long long)mem.size,
+          (unsigned)mem.perm,(unsigned)mem.type);
+  /* Acquire and close services only; no commands sent to acquired handles.
+   * Probe real host-side permissions without simulating guest success. */
+  static const char *const services[]={
+    "pctl","pctl:s","pctl:a","pctl:r",
+    "bsd:u","bsd:s","bsd:a","nifm:u","ssl","ssl:s",
+    "appletOE","acc:u0","nvdrv","vi:u","fsp-srv","fatal:u","lm"
+  };
+  for(unsigned i=0;i<sizeof(services)/sizeof(services[0]);i++){
+    Handle h=INVALID_HANDLE;
+    Result result=smGetServiceOriginal(&h,smEncodeName(services[i]));
+    fprintf(report,"SERVICE_LOOKUP name=%s result=%08x acquired=%u\n",
+            services[i],result,(unsigned)(R_SUCCEEDED(result)&&h!=INVALID_HANDLE));
+    if(R_SUCCEEDED(result)&&h!=INVALID_HANDLE)
+      svcCloseHandle(h);
+  }
+  fprintf(report,"PROBE_COMPLETE other_process_tracking=not_attempted\n");
+  fflush(report);
+  fclose(report);
+  snprintf(outcome,sizeof(outcome),"Capability report: /BackupLoaderMKW-capabilities.log");
+}
 static void draw(const Nx2Catalog *catalog, size_t selected) {
   consoleClear();
   printf("BackupLoaderMKW 0.14\n\n");
@@ -1445,6 +1471,7 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
 
          "B+A: rebuild index   R+A: Horizon check\n"
+         "Y: safe system capability probe\n"
          "X: refresh   +: exit\n\n%s\n",
          outcome);
   consoleUpdate(NULL);
@@ -1465,6 +1492,8 @@ int main(int argc, char **argv) {
     u64 down = padGetButtonsDown(&pad), held = padGetButtons(&pad);
     if (down & HidNpadButton_Plus)
       break;
+    if (down & HidNpadButton_Y)
+      system_capability_probe();
     if (down & HidNpadButton_X) {
       nx2_catalog_free(&catalog);
       nx2_catalog("sdmc:/games", &catalog);
