@@ -1327,7 +1327,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     svcSleepThread(1000000);
   }
 done:
-  nx2_trace_event(NX2_TRACE_CLEAN_EXIT,(uint64_t)(unsigned)(launch_phase[0]));
+  nx2_trace_event(NX2_TRACE_RUN_ENDED,(uint64_t)(unsigned)(launch_phase[0]));
   row(f, "REPORT_END game_entry_attempted=0 phase=%s\n",launch_phase);
   if(crash)row(crash,"PRELAUNCH_STOP phase=%s report_end=1\n",launch_phase);
   fclose(f);
