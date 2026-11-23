@@ -16,6 +16,9 @@
 enum {RPC_ROM_READ=1,RPC_SAVE_CREATE,RPC_SAVE_DELETE,RPC_SAVE_MKDIR,RPC_SAVE_RMDIR,RPC_SAVE_RMTREE,RPC_SAVE_CLEAN,RPC_SAVE_RENAME_FILE,RPC_SAVE_RENAME_DIR,RPC_SAVE_TYPE,RPC_SAVE_FREE,RPC_SAVE_TOTAL,RPC_SAVE_OPEN,RPC_SAVE_READ,RPC_SAVE_WRITE,RPC_SAVE_FLUSH,RPC_SAVE_RESIZE,RPC_SAVE_SIZE,RPC_SAVE_CLOSE,RPC_DIR_OPEN,RPC_DIR_READ,RPC_DIR_COUNT,RPC_DIR_CLOSE,RPC_COMMIT,RPC_LOG,RPC_ABORT,RPC_MAIN_ENTERED,RPC_ROM_MOUNT,RPC_SAVE_MOUNT,RPC_IPC,RPC_SAVE_TIMESTAMP,RPC_BREAK,RPC_PHYSICAL_MEMORY,RPC_CACHE_CREATE,RPC_CACHE_CHECK,RPC_VFS_PREPARE_ROOT,RPC_SAVE_ARCHIVE_EXISTS,RPC_SAVE_ARCHIVE_CREATE,RPC_CACHE_ENUM,RPC_SAVE_OPERATE_RANGE,RPC_CACHE_QUERY_SIZE,RPC_CACHE_PROVISION,RPC_SAVE_PROFILE_BIND,RPC_SAVE_PROFILE_EXISTS,RPC_SAVE_PROFILE_CREATE,RPC_SAVE_ATTRIBUTE};
 typedef struct {
  uint32_t state,op,result,reserved;
+ /* Published before state=2; observed by watchdog without altering RPC. */
+ uint64_t diagnostic_published_tick,diagnostic_owner_tls;
+ uint32_t diagnostic_ticket,diagnostic_reserved;
  uint64_t a,b,c,d,answer;
  void *buffer;
  char path[NX2_PATH_MAX],path2[NX2_PATH_MAX];
@@ -73,6 +76,15 @@ typedef struct {
 /* Experimental all-service IPC metadata trace; 0 bytes of guest payload. */
 #define NX2_IPC_EVENT_SLOTS 16384U
 #define NX2_NVN_STAGE_COUNT 5
+#define NX2_SYNC_FLIGHT_SLOTS 128U
+/* Observe only the outer native sync IPC call. Entry/return snapshots
+ * cannot identify kernel wait reason without additional OS support. */
+typedef struct {
+ uint64_t thread_tls,caller,started_tick;
+ uint32_t handle,request_type,header0,header1;
+ uint32_t call_id,phase,result,collision;
+} Nx2SyncFlight;
+
 /* NVN stages: 0 submit, 1 flush, 2 finish, 3 window acquire, 4 queue acquire. */
 typedef struct {
  uint64_t handle,caller;
@@ -125,6 +137,8 @@ typedef struct {
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
  Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
  uint32_t ipc_call_next,ipc_event_next;
+ uint32_t sync_flight_collisions;
+ Nx2SyncFlight sync_flights[NX2_SYNC_FLIGHT_SLOTS];
  Nx2IpcEvent ipc_events[NX2_IPC_EVENT_SLOTS];
  /* Native FSP router stage published in shared RAM without a blocking
   * guest-to-host logging RPC from intercepted synchronous IPC.
