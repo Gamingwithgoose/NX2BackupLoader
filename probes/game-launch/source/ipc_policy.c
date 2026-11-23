@@ -120,6 +120,32 @@ int nx2_ipc_reply_result(const void *buffer,uint64_t size,uint32_t request_type,
 }
 
 
+/* A native IStorage child is generally read-only; Operation 5 is safe
+ * only for non-destructive range maintenance. Validate the *request data*,
+ * not merely the command number, before letting it reach Horizon. */
+int nx2_ipc_fsp_storage_range_allowed(const void *buffer,uint64_t size,
+                                      Nx2IpcDecision d){
+ if(!buffer||!d.valid||d.control||d.close_kind||d.command!=5)return 0;
+ const unsigned char *p=buffer;
+ uint64_t off=0,end=0;
+ if(!data_area(p,size,&off,&end))return 0;
+ uint64_t at=(off+15U)&~UINT64_C(15);
+ if(at>end||end-at<16)return 0;
+ if(word(p+at)!=0x49434653U){
+  if(!d.domain||at>end||end-at<32||
+     word(p+at)!=1U||word(p+at+16)!=0x49434653U)return 0;
+  at+=16;
+ }
+ if(end-at<40||word(p+at+8)!=5)return 0;
+ uint32_t operation=word(p+at+16);
+ uint64_t offset=(uint64_t)word(p+at+24)|
+                 ((uint64_t)word(p+at+28)<<32);
+ uint64_t length=(uint64_t)word(p+at+32)|
+                 ((uint64_t)word(p+at+36)<<32);
+ return (operation==2U||operation==3U) &&
+        offset<=INT64_MAX && length<=INT64_MAX &&
+        offset<=INT64_MAX-length;
+}
 /* HIPC control 1 (CopyFromCurrentDomain) converts a domain object to a
  * separate session handle. Preserve its interface kind after this operation.
  * Decode only the 4-byte object ID in a bounded control SFCI request. */
