@@ -319,6 +319,7 @@ static void trace_forget(uint32_t h){
  * than the provided request/reply buffer, and emit only handle IDs. */
 static void trace_reply_handles(const unsigned char *p,uint64_t n,
                                 uint32_t parent,const char *owner,int root){
+ (void)parent;
  if(!p||n<12||!(word(p+4)&0x80000000U))return;
  uint32_t sh=word(p+8),copies=(sh>>1)&15U,moves=(sh>>5)&15U;
  uint64_t off=12+((sh&1U)?8U:0U);
