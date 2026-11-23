@@ -1033,8 +1033,10 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
     __atomic_store_n(&h->rpc_rom_phase,5,__ATOMIC_RELEASE);
      result=serve(h,l,r);
    }
-  }else __atomic_store_n(&h->rpc_rom_phase,5,__ATOMIC_RELEASE);
-     result=serve(h,l,r);
+  }else{
+   __atomic_store_n(&h->rpc_rom_phase,5,__ATOMIC_RELEASE);
+   result=serve(h,l,r);
+  }
  }
  if(!result){
   h->rom_windows[slot].last_end=offset+bytes;
