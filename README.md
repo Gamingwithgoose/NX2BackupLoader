@@ -33,7 +33,7 @@ Create a folder called **games** at the root of the SD card. Extracted games can
         BackupLoaderMKW/
           BackupLoaderMKW.nro
 
-Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs. Updates are not merged into the base game automatically.
+Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs. NUP archives containing a base game and recognized update package now use the highest-version compatible update as a **read-time ExeFS/RomFS overlay**, with base-file fallback. No game data is rewritten. Separate extracted folders do not gain automatic update overlay. DLC packages may be present in a NUP, but are **not** yet mounted through add-on-content services; they cannot be assumed playable.
 
 ## Running the loader
 
@@ -100,7 +100,7 @@ Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro**. Copy 
 
 ## Current limitations
 
-**Yoshi and the Mysterious Book Demo** has reached gameplay in extracted-folder form and title/profile selection using a fast NUP. Other games remain unverified or have known startup failures. It selects a base package, or a standalone-update package explicitly marked with the NUP v1 standalone flag; ordinary updates and DLC are not merged. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
+**Yoshi and the Mysterious Book Demo** has reached gameplay in extracted-folder form and title/profile selection using a fast NUP. Other games remain unverified or have known startup failures. It selects the base package and overlays the highest-version compatible update where one exists, or runs an explicitly standalone update if no base is present; DLC is not yet mounted through Horizon add-on-content services. Large compressed files may load slowly because they must be decompressed from the beginning when accessed at random offsets. Some games require services or memory that MKW does not have. The startup timeout is five minutes before game main entry, but there is no gameplay timer.
 
 **Early experimental release. Use at your own risk.**
 
