@@ -147,7 +147,12 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
     return 0;
   /* The profile must be captured before we choose either new or legacy
    * save storage, not only in the new-layout branch. */
-  (void)resolve_launch_user(h);
+  if(!resolve_launch_user(h)){
+    /* Do not open a legacy shared save when launch account identity is
+     * missing: that can silently expose another user's data. */
+    logline(h,"WARNING_SAVE_LAUNCH_USER_REQUIRED refusing_unscoped_save=1\n");
+    return 0;
+  }
   if (!save_key || !save_key[0] || !strcmp(save_key, ".") ||
       !strcmp(save_key, "..") || strchr(save_key, '/') ||
       strchr(save_key, '\\') || strchr(save_key, ':'))
