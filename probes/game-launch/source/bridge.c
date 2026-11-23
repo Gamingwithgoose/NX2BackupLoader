@@ -517,33 +517,46 @@ static uint32_t window_init_gate(void *obj,const void *builder){
 /* Post-initialization NVN instrumentation. These wrappers always forward to
  * the genuine driver; no synchronous logging, allocation, or RPC is performed.
  * The exact integer/pointer signatures preserve the guest ABI. */
+/* Lightweight opt-in NVN boundary trace. No SD, RPC or allocations here. */
+static __attribute__((noinline)) void nvn_stage_enter(unsigned stage,uintptr_t caller){
+ uint64_t tls=0;
+ __asm__ volatile("mrs %0,tpidrro_el0":"=r"(tls));
+ __atomic_store_n(&nx2_launch->nvn_stage_last_tls[stage],tls,__ATOMIC_RELAXED);
+ __atomic_store_n(&nx2_launch->nvn_stage_last_caller[stage],caller,__ATOMIC_RELAXED);
+ __atomic_store_n(&nx2_launch->nvn_stage_last_tick[stage],armGetSystemTick(),__ATOMIC_RELAXED);
+ __atomic_fetch_add(&nx2_launch->nvn_stage_entered[stage],1,__ATOMIC_RELEASE);
+}
+static __attribute__((noinline)) void nvn_stage_exit(unsigned stage){
+ __atomic_store_n(&nx2_launch->nvn_stage_return_tick[stage],armGetSystemTick(),__ATOMIC_RELAXED);
+ __atomic_fetch_add(&nx2_launch->nvn_stage_returned[stage],1,__ATOMIC_RELEASE);
+}
 static void queue_submit_gate(void *queue,int count,const uint64_t *handles){
- __atomic_fetch_add(&nx2_launch->nvn_stage_entered[0],1,__ATOMIC_RELAXED);
+ nvn_stage_enter(0,(uintptr_t)__builtin_return_address(0));
  nx2_launch->api.original_queue_submit(queue,count,handles);
- __atomic_fetch_add(&nx2_launch->nvn_stage_returned[0],1,__ATOMIC_RELEASE);
+ nvn_stage_exit(0);
 }
 static void queue_flush_gate(void *queue){
- __atomic_fetch_add(&nx2_launch->nvn_stage_entered[1],1,__ATOMIC_RELAXED);
+ nvn_stage_enter(1,(uintptr_t)__builtin_return_address(0));
  nx2_launch->api.original_queue_flush(queue);
- __atomic_fetch_add(&nx2_launch->nvn_stage_returned[1],1,__ATOMIC_RELEASE);
+ nvn_stage_exit(1);
 }
 static void queue_finish_gate(void *queue){
- __atomic_fetch_add(&nx2_launch->nvn_stage_entered[2],1,__ATOMIC_RELAXED);
+ nvn_stage_enter(2,(uintptr_t)__builtin_return_address(0));
  nx2_launch->api.original_queue_finish(queue);
- __atomic_fetch_add(&nx2_launch->nvn_stage_returned[2],1,__ATOMIC_RELEASE);
+ nvn_stage_exit(2);
 }
 static uint32_t window_acquire_gate(void *window,void *sync,int *index){
- __atomic_fetch_add(&nx2_launch->nvn_stage_entered[3],1,__ATOMIC_RELAXED);
+ nvn_stage_enter(3,(uintptr_t)__builtin_return_address(0));
  uint32_t rc=nx2_launch->api.original_window_acquire(window,sync,index);
  __atomic_store_n(&nx2_launch->nvn_stage_result[3],rc,__ATOMIC_RELEASE);
- __atomic_fetch_add(&nx2_launch->nvn_stage_returned[3],1,__ATOMIC_RELEASE);
+ nvn_stage_exit(3);
  return rc;
 }
 static uint32_t queue_acquire_gate(void *queue,void *window,int *index){
- __atomic_fetch_add(&nx2_launch->nvn_stage_entered[4],1,__ATOMIC_RELAXED);
+ nvn_stage_enter(4,(uintptr_t)__builtin_return_address(0));
  uint32_t rc=nx2_launch->api.original_queue_acquire(queue,window,index);
  __atomic_store_n(&nx2_launch->nvn_stage_result[4],rc,__ATOMIC_RELEASE);
- __atomic_fetch_add(&nx2_launch->nvn_stage_returned[4],1,__ATOMIC_RELEASE);
+ nvn_stage_exit(4);
  return rc;
 }
 static uintptr_t getproc_gate(void *device,const char *name){
@@ -552,9 +565,20 @@ static uintptr_t getproc_gate(void *device,const char *name){
  /* Mode 1 (A) passes native NVN pointers except observed PresentTexture.
   * Mode 2 (L+A) passes all native pointers; ZR+A instruments all stages.
   * Keep this check safe even for a retained GetProcAddress wrapper. */
- if(nx2_launch->nvn_driver_passthrough==2 ||
-    (nx2_launch->nvn_driver_passthrough==1 &&
-     !equal(name,"nvnQueuePresentTexture"))) return result;
+ if(nx2_launch->nvn_driver_passthrough==2) return result;
+ /* Normal A launches unchanged by default. Explicit SD marker opts into
+  * tracing these five native driver calls without changing other pointers. */
+ if(nx2_launch->nvn_driver_passthrough==1 &&
+    !nx2_launch->nvn_gameplay_trace &&
+    !equal(name,"nvnQueuePresentTexture"))return result;
+ if(nx2_launch->nvn_driver_passthrough==1 &&
+    nx2_launch->nvn_gameplay_trace &&
+    !equal(name,"nvnQueuePresentTexture") &&
+    !equal(name,"nvnQueueSubmitCommands") &&
+    !equal(name,"nvnQueueFlush") &&
+    !equal(name,"nvnQueueFinish") &&
+    !equal(name,"nvnWindowAcquireTexture") &&
+    !equal(name,"nvnQueueAcquireTexture"))return result;
  if(result&&equal(name,"nvnQueueSubmitCommands")){
    __atomic_store_n(&nx2_launch->api.original_queue_submit,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_submit_gate;
