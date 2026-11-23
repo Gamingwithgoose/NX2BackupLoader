@@ -48,13 +48,15 @@ If the list is empty, check that extracted games have valid exefs and romfs fold
 
 ## Where saves go
 
-Each game now gets its own folder:
+New games with no existing save now use the human-readable game name and the user ID provided by Homebrew Menu's launch environment:
 
-    SD:/switch/BackupLoaderMKW/(game folder name)/
+    SD:/switch/BackupLoaderMKW/<Game Name>/saves/<Launch User ID>/
 
-The folder name is the same one shown under SD:/games. Renaming the game folder changes its save location.
+The launcher does not open another account service or run a capability probe to determine this. If Homebrew Menu does not provide a selected user ID, a new game uses the original game-name root and writes a warning. Once a per-user layout exists, the loader will refuse to silently fall back to the parent folder without that ID.
 
-**Coming from NX2BackupLoader?** Old saves are still under SD:/switch/nx2-backup-loader/saves/. This update does **not** move or delete them automatically. Back them up, then copy the old save folder's contents into the new game-named folder. The previously working Yoshi demo used the old **yoshi-demo** save folder. Keep your old saves until you've checked the new copy.
+**Existing saves are never auto-moved or renamed.** If the old `title-<program-id>` folder or a legacy game-name save contains data, it keeps using that exact folder, including its archive and first-user markers. Back up saves before any manual migration; changing only the folder name can invalidate pathname-derived marker references.
+
+The launch-user directory is the root of the existing guest-save and virtual cache implementation. Further guest-profile subdirectories remain available beneath it. BCAT is **not yet mounted to SD**; this save change does not resolve `bcat:u` IPC or DLC entitlement behavior.
 
 ## Gameplay / crash log
 
