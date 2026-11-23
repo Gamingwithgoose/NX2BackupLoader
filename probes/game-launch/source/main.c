@@ -694,6 +694,19 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       images->count,(unsigned long long)l->heap_capacity);
   /* A restores the best-observed compatibility baseline; other paths
    * stay selectable for direct comparisons, independent of game title. */
+  /* Single-file opt-in for the gameplay GPU boundary tracer. The A-mode
+   * baseline stays untouched unless marker is explicitly present. */
+  l->nvn_gameplay_trace=0;
+  if(nvn_profile==1){
+    FILE *gpu_trace=fopen("sdmc:/switch/BackupLoaderMKW/gameplay-gpu-trace.flag","rb");
+    if(gpu_trace){l->nvn_gameplay_trace=1;fclose(gpu_trace);}
+  }
+  row(f,"GAMEPLAY_GPU_TRACE enabled=%u mode=%d functions=submit,flush,finish,window_acquire,queue_acquire "
+        "native_results_unchanged=1 source=%s\n",
+      l->nvn_gameplay_trace,nvn_profile,
+      l->nvn_gameplay_trace?"sd_flag":"default_off");
+  if(crash)row(crash,"GAMEPLAY_GPU_TRACE enabled=%u nvn_mode=%d\n",
+               l->nvn_gameplay_trace,nvn_profile);
   l->nvn_driver_passthrough=(uint32_t)nvn_profile;
   const char *profile=nvn_profile==2?"full_native":
                       nvn_profile==1?"native_present_observed":"diagnostic_full";
@@ -887,7 +900,25 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                 __atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE),
                 __atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE),
                 __atomic_load_n(&l->nvn_stage_result[n],__ATOMIC_ACQUIRE),
-                (unsigned)(l->nvn_driver_passthrough==0));
+                (unsigned)(l->nvn_driver_passthrough==0 || l->nvn_gameplay_trace));
+          }
+          if(l->nvn_driver_passthrough==0 || l->nvn_gameplay_trace){
+            for(unsigned n=0;n<NX2_NVN_STAGE_COUNT;n++){
+              u64 started=__atomic_load_n(&l->nvn_stage_last_tick[n],__ATOMIC_ACQUIRE);
+              u64 returned_tick=__atomic_load_n(&l->nvn_stage_return_tick[n],__ATOMIC_ACQUIRE);
+              u32 entered=__atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE);
+              u32 returned=__atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE);
+              row(crash,"WARNING_STALL_NVN_PROVENANCE stage=%u entered=%u returned=%u "
+                        "outstanding=%u caller=%016llx thread_tls=%016llx "
+                        "last_enter_age_ms=%llu last_return_age_ms=%llu\n",
+                  n,entered,returned,(unsigned)(entered!=returned),
+                  (unsigned long long)__atomic_load_n(&l->nvn_stage_last_caller[n],__ATOMIC_ACQUIRE),
+                  (unsigned long long)__atomic_load_n(&l->nvn_stage_last_tls[n],__ATOMIC_ACQUIRE),
+                  (unsigned long long)(started && now>=started?
+                                       armTicksToNs(now-started)/1000000ULL:0),
+                  (unsigned long long)(returned_tick && now>=returned_tick?
+                                       armTicksToNs(now-returned_tick)/1000000ULL:0));
+            }
           }
           row(crash,"WARNING_STALL_GUEST_EXECUTION main_entered=%llu "
                     "main_returned=%u ipc_started=%u ipc_finished=%u "
@@ -1305,6 +1336,15 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           pending,host->abort,
           __atomic_load_n(&l->abort_requested,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->stage,__ATOMIC_ACQUIRE),late);
+      if(l->nvn_gameplay_trace || l->nvn_driver_passthrough==0){
+        for(unsigned n=0;n<NX2_NVN_STAGE_COUNT;n++)
+          row(f,"GPU_BOUNDARY stage=%u entered=%u returned=%u caller=%016llx thread_tls=%016llx\n",
+              n,
+              __atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE),
+              (unsigned long long)__atomic_load_n(&l->nvn_stage_last_caller[n],__ATOMIC_ACQUIRE),
+              (unsigned long long)__atomic_load_n(&l->nvn_stage_last_tls[n],__ATOMIC_ACQUIRE));
+      }
       row(f,"GRAPHICS_PATH bootstrap=%u getproc=%u present_lookups=%u present_entered=%u present_returned=%u\n",
           __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
           __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
