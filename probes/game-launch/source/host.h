@@ -13,6 +13,9 @@ typedef struct {
   FsFileSystem *sd;
   FILE *report;
   char rom_root[1200], save_root[512];
+  /* Launch-profile namespace for NEW games. Existing save trees are untouched. */
+  Nx2UserId launch_uid;
+  uint32_t launch_uid_valid,new_save_layout;
   Nx2HostFile *handles;
   size_t handle_capacity;
   struct {
