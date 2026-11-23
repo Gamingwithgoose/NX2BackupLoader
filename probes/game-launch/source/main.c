@@ -502,6 +502,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     row(f,"NUP_PAYLOAD_READER backend=%s archive=%s\n",
         nx2_nup_native_fs_active()?"native_horizon_fs":"stdio_fallback",
         game->root);
+    row(f,"NUP_CONTENT_APPLY update_version=%u addon_packages=%u addon_content_mounted=0 mode=base_plus_update_overlay\n",
+        nx2_nup_applied_update_version(),nx2_nup_addon_count());
     size_t npdm_size=0;
     uint64_t npdm_file_size=0;
     unsigned npdm_codec=0;
