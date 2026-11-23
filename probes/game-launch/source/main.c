@@ -879,9 +879,17 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
      * not proof the renderer is faulty. */
     int overdue_first=(!frames && since_start>=650000000ULL &&
       __atomic_load_n(&l->main_entered,__ATOMIC_ACQUIRE));
+    /* An unloaded game may legitimately stream assets for 40+ seconds.
+     * Writing two flushed SD log records every 750 ms for the whole
+     * interval competes with those reads. Preserve dense early failure
+     * evidence, then sample sparsely while the 10-second independent
+     * host snapshot continues to preserve progress. */
+    uint64_t no_present_interval=since_start<5000000000ULL
+      ?750000000ULL:since_start<15000000000ULL
+      ?3000000000ULL:10000000000ULL;
     int warn_first=overdue_first&&
       (!last_no_present_warning ||
-       armTicksToNs(stamp-last_no_present_warning)>=750000000ULL);
+       armTicksToNs(stamp-last_no_present_warning)>=no_present_interval);
     int warn_io=age_ms>=1500&&
       (!last_storage_warning ||
        armTicksToNs(stamp-last_storage_warning)>=5000000000ULL);
