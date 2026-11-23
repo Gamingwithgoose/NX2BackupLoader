@@ -745,8 +745,13 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
    * experimental diagnostic build. No payloads or UID buffers are copied.
    * Guest threads still only publish lock-free in-memory metadata. */
   int ipc_full_text=1;
-  row(f,"IPC_CAPTURE mode=complete_request_result_metadata ring=%u request_reply=1 "
+  /* Escape hatch for known-working titles when exhaustive text I/O itself
+   * disturbs timing; the shared-memory request/reply ring remains active. */
+  FILE *sparse_flag=fopen("sdmc:/switch/BackupLoaderMKW/sparse-ipc-trace.flag","rb");
+  if(sparse_flag){ipc_full_text=0;fclose(sparse_flag);}
+  row(f,"IPC_CAPTURE mode=%s ring=%u request_reply=1 "
       "crash_tail=1 payloads=omitted local_decisions=labeled\n",
+      ipc_full_text?"complete_request_result_metadata":"sparse_metadata_override",
       NX2_IPC_EVENT_SLOTS);
   row(f,"IPC_EVENT_PHASES 1=REQUEST 2=KERNEL_RETURN 3=GUEST_VIRTUAL_FS "
       "4=LOCAL_UNSUPPORTED_REPLY 5=LOCAL_REJECT\n");
