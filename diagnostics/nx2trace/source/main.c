@@ -17,10 +17,6 @@ typedef struct {
     Handle exit_write;
     u64 sequence;
     u32 write_failures;
-    Mutex log_lock;
-    Thread observe_thread;
-    u8 observe_stack[0x8000] __attribute__((aligned(16)));
-    u32 observer_started;
 } TraceContext;
 
 /* Fixed-size, scalar IPC record. Caller controls event code and numeric data.
@@ -36,12 +32,11 @@ typedef struct {
 /* Only a small number of launch milestones are sent; SD I/O is intentionally
  * limited to those records. The plugin never opens an SM service itself. */
 static void persist_record(TraceContext *ctx, const TraceRecord *rec) {
-    mutexLock(&ctx->log_lock);
     FsFileSystem sd = {0};
     Result rc = fsInitialize();
-    if (R_FAILED(rc)) { ctx->write_failures++; mutexUnlock(&ctx->log_lock); return; }
+    if (R_FAILED(rc)) { ctx->write_failures++; return; }
     rc = fsOpenSdCardFileSystem(&sd);
-    if (R_FAILED(rc)) { ctx->write_failures++; fsExit(); mutexUnlock(&ctx->log_lock); return; }
+    if (R_FAILED(rc)) { ctx->write_failures++; fsExit(); return; }
     const char *path = "/BackupLoaderMKW-trace.log";
     FsFile file = {0};
     rc = fsFsOpenFile(&sd, path, FsOpenMode_Write, &file);
@@ -74,58 +69,6 @@ static void persist_record(TraceContext *ctx, const TraceRecord *rec) {
     if (R_FAILED(rc)) ctx->write_failures++;
     fsFsClose(&sd);
     fsExit();
-    mutexUnlock(&ctx->log_lock);
-}
-/* One dedicated, non-critical observer thread. Uses only pm:dmnt's
- * GetProcessId lookup for the *known* MKW host program. Never subscribes
- * to or consumes Horizon's system process-event queue, attaches a debugger,
- * manipulates a process or scans service names. It can detect disappearance,
- * NOT retrieve the exception/error that caused it.
- *
- * A service lookup may itself block; we isolate it from the plugin's
- * ready signal and main loop. On rejection this worker exits permanently.
- */
-#define NX2_HOST_MKW_ID UINT64_C(0x0400c3f00006e000)
-static void observe_host(void *arg) {
-    TraceContext *ctx = (TraceContext*)arg;
-    Service pm = {0};
-    Result rc = smGetService(&pm, "pm:dmnt");
-    TraceRecord record={ TRACE_MAGIC, 20, NX2_HOST_MKW_ID, rc };
-    persist_record(ctx,&record);
-    if (R_FAILED(rc)) return;
-    u64 last_pid=0;
-    u32 failures=0;
-    for(;;) {
-        /* Horizon pm:dmnt GetProcessId = command 2 on current HOS.
-         * No process enumeration or lifecycle event queue consumption. */
-        const u64 target=NX2_HOST_MKW_ID;
-        u64 pid=0;
-        rc=serviceDispatchInOut(&pm,2,target,pid);
-        if(R_SUCCEEDED(rc)) {
-            failures=0;
-            if(pid && last_pid!=pid) {
-                record=(TraceRecord){TRACE_MAGIC,21,NX2_HOST_MKW_ID,pid};
-                persist_record(ctx,&record);
-            }
-            last_pid=pid;
-        } else {
-            if(last_pid) {
-                record=(TraceRecord){TRACE_MAGIC,22,NX2_HOST_MKW_ID,last_pid};
-                persist_record(ctx,&record);
-                record=(TraceRecord){TRACE_MAGIC,23,NX2_HOST_MKW_ID,rc};
-                persist_record(ctx,&record);
-                last_pid=0;
-            }
-            /* Never repeatedly hammer an unrecognized/denied service. */
-            if(++failures>=3) {
-                record=(TraceRecord){TRACE_MAGIC,24,NX2_HOST_MKW_ID,rc};
-                persist_record(ctx,&record);
-                break;
-            }
-        }
-        svcSleepThread(1000000000LL);
-    }
-    serviceClose(&pm);
 }
 static Result trace_command(u32 cmd, const void *input, size_t input_size,
                             void *output, size_t *output_size, void *context) {
@@ -153,18 +96,6 @@ int main(void) {
     rc = svcCreateEvent(&ctx.exit_write, &exit_read);
     if (R_SUCCEEDED(rc)) rc = pluginServiceStart(&service, control, trace_command, &ctx);
     if (R_SUCCEEDED(rc)) rc = svcSignalEvent(ready);
-    /* Start external observer ONLY after plugin signaled ready to HEN.
-     * Any unavailable or hanging PM service affects this worker alone. */
-    if (R_SUCCEEDED(rc)) {
-        Result obs=threadCreate(&ctx.observe_thread,observe_host,&ctx,
-                                ctx.observe_stack,sizeof(ctx.observe_stack),
-                                0x2c,-2);
-        if (R_SUCCEEDED(obs)) {
-            obs=threadStart(&ctx.observe_thread);
-            if (R_SUCCEEDED(obs)) ctx.observer_started=1;
-            else threadClose(&ctx.observe_thread);
-        }
-    }
     if (R_SUCCEEDED(rc)) rc = svcWaitSynchronizationSingle(exit_read, UINT64_MAX);
     if (service.started) pluginServiceStop(&service);
     if (exit_read != INVALID_HANDLE) svcCloseHandle(exit_read);
