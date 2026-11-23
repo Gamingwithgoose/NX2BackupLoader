@@ -332,6 +332,15 @@ static void write_fault_report(FILE *f, const Nx2Images *images) {
 static void check_fault(FILE *f, FILE *crash, const Nx2Images *images) {
   if (__atomic_load_n(&nx2_fault.state, __ATOMIC_ACQUIRE) != 2)
     return;
+  /* Report actual libounce-captured exception registers to independent logger.
+   * No debugger or privileged SM service request. Best-effort async events;
+   * the existing synchronous crash.log remains the authoritative report. */
+  const ThreadExceptionDump *fault=&nx2_fault.dump;
+  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_DESC,fault->error_desc);
+  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_PC,fault->pc.x);
+  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_LR,fault->lr.x);
+  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_FAR,fault->far.x);
+  nx2_trace_event(NX2_TRACE_CPU_EXCEPTION_ESR,fault->esr);
   if (crash) {
     row(crash,"CRASH_CAPTURED_CPU_EXCEPTION exception_handler=libounce\n");
     write_fault_report(crash,images);
