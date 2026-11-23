@@ -543,18 +543,33 @@ static int read_exact_chunks(FILE *f,uint64_t absolute,void *dst,size_t length){
    u64 transferred=0;
    Result rc=fsFileRead(&mounted.native_file,(s64)(absolute+pos),
                         p+pos,want,FsReadOption_None,&transferred);
-   if(R_FAILED(rc)){
-    snprintf(probe_details,sizeof(probe_details),
-             "Native NUP fsFileRead failed result=%08x offset=%llu",
-             (unsigned)rc,(unsigned long long)(absolute+pos));
-    read_error=probe_details;
-    return 0;
-   }
-   if(transferred>want){
-    read_error="Native NUP fsFileRead returned excessive byte count";
-    return 0;
-   }
-   got=(size_t)transferred;
+   if(R_FAILED(rc) || transferred!=want){
+    /* Retry the exact same archive offset using the independently open
+     * stdio handle only after the native call has RETURNED an error or
+     * short count. Never fake a completed read or retry indefinitely.
+     * A truly blocked native call cannot be rescued by this fallback. */
+    unsigned original_result=(unsigned)rc;
+    u64 original_count=transferred;
+    fsFileClose(&mounted.native_file);
+    memset(&mounted.native_file,0,sizeof(mounted.native_file));
+    mounted.native_active=0;
+    if(!nup_seek_file(f,absolute+pos)){
+      snprintf(probe_details,sizeof(probe_details),
+               "Native NUP read failed result=%08x count=%llu; stdio seek failed",
+               original_result,(unsigned long long)original_count);
+      read_error=probe_details;
+      return 0;
+    }
+    got=fread(p+pos,1,want,f);
+    if(got!=want){
+      snprintf(probe_details,sizeof(probe_details),
+               "Native NUP read failed result=%08x count=%llu; stdio retry short=%llu",
+               original_result,(unsigned long long)original_count,
+               (unsigned long long)got);
+      read_error=probe_details;
+      return 0;
+    }
+   } else got=(size_t)transferred;
   }else got=fread(p+pos,1,want,f);
   if(got)__atomic_fetch_add(&read_progress.sd_bytes,(uint64_t)got,__ATOMIC_RELAXED);
   if(got!=want){
