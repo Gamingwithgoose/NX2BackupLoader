@@ -673,6 +673,11 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                             "Game preparation failed; see BackupLoaderMKW-gameplay.log.");
     goto done;
   }
+  /* Account identity and save namespace are resolved by the host
+   * before the guest starts. Report only the outcome, never the UID or
+   * another user's private save path, in the independent crash file. */
+  if(crash)row(crash,"SAVE_LAUNCH_PROFILE_READY valid=%u named_user_layout=%u private_sd=1\n",
+               host->launch_uid_valid,host->new_save_layout);
   row(f,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
       game->is_nup?"nup":"folder",(unsigned long long)game->id,
       images->count,(unsigned long long)l->heap_capacity);
