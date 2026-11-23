@@ -90,6 +90,8 @@ static int named_profile_root_present(FsFileSystem *sd,const char *root){
   fsDirClose(&dir);
   return only_saves;
 }
+static Result profile_scope(Nx2Host *h,Nx2UserId uid,int create,
+                            char root[620],int *primary);
 /* The HBL UserIdStorage key is optional. In particular, forwarders and
  * some applet/HEN launch chains do not pass it even when an actual account
  * launched the host application. Resolve that real account while the host
@@ -206,6 +208,23 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
     Result rc=mkdir_one(h->sd,paths[i]);
     logline(h,"PRIVATE_SAVE_DIRECTORY path=%s result=%08x\n",paths[i],rc);
     if(R_FAILED(rc))return 0;
+  }
+  /* The old flat save root is still shared by every guest that mounts
+   * without an explicit SDK UserId. Bind it to one real launch profile
+   * and place later users in their own private profiles/<uid> tree.
+   * This preserves every old save byte and archive marker in place. */
+  if((legacy_name||legacy_title||!guest_id) && h->launch_uid_valid){
+    char scoped[620];int primary=0;
+    Result rc=profile_scope(h,h->launch_uid,1,scoped,&primary);
+    if(R_FAILED(rc)){
+      logline(h,"WARNING_SAVE_LEGACY_PROFILE_BIND_FAILED result=%08x\n",rc);
+      return 0;
+    }
+    if(!primary){
+      if(snprintf(h->save_root,sizeof(h->save_root),"%s",scoped)>=
+         (int)sizeof(h->save_root))return 0;
+    }
+    logline(h,"SAVE_LAUNCH_PROFILE_SCOPED primary=%d private_root=1\n",primary);
   }
   return 1;
 }
