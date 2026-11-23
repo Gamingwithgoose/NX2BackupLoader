@@ -63,6 +63,33 @@ static int legacy_archive_present(FsFileSystem *sd,const char *root){
  fsDirClose(&dir);
  return R_FAILED(rc)||count>0;
 }
+/* A freshly-created named layout has only saves/ in the game root.
+ * Do not let the legacy-flat-save check pin future launches to that parent,
+ * or the second launch would silently see a different save. Older flat
+ * layouts with ANY other data or an archive marker take precedence. */
+static int named_profile_root_present(FsFileSystem *sd,const char *root){
+  char path[600],marker[160];
+  int n=snprintf(path,sizeof(path),"%s/saves",root);
+  if(n<=0||n>=(int)sizeof(path))return 0;
+  FsDirEntryType type=0;
+  if(R_FAILED(fsFsGetEntryType(sd,path,&type))||type!=FsDirEntryType_Dir)
+    return 0;
+  if(!archive_marker_for_root(root,marker,sizeof(marker)))return 0;
+  if(R_SUCCEEDED(fsFsGetEntryType(sd,marker,&type)))return 0;
+  FsDir dir;
+  if(R_FAILED(fsFsOpenDirectory(sd,root,
+          FsDirOpenMode_ReadFiles|FsDirOpenMode_ReadDirs,&dir)))return 0;
+  int only_saves=1;
+  for(;;){
+    FsDirectoryEntry entry; s64 read=0;
+    Result rc=fsDirRead(&dir,&read,1,&entry);
+    if(R_FAILED(rc)){only_saves=0;break;}
+    if(!read)break;
+    if(strcmp(entry.name,"saves")){only_saves=0;break;}
+  }
+  fsDirClose(&dir);
+  return only_saves;
+}
 int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
                   const char *save_key,uint64_t guest_id) {
   memset(h, 0, sizeof(*h));
@@ -93,7 +120,8 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   n=snprintf(game_root,sizeof(game_root),
              "/switch/BackupLoaderMKW/%s",save_key);
   if(n<0||n>=(int)sizeof(game_root))return 0;
-  int legacy_name=legacy_archive_present(h->sd,old_root);
+  int named_profile=named_profile_root_present(h->sd,game_root);
+  int legacy_name=!named_profile && legacy_archive_present(h->sd,old_root);
   int legacy_title=guest_id && legacy_archive_present(h->sd,title_root);
   if(legacy_name || !guest_id)
     n=snprintf(h->save_root,sizeof(h->save_root),"%s",old_root);
@@ -116,8 +144,14 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
                  (unsigned long long)h->launch_uid.hi);
       h->new_save_layout=1;
     }else {
-      /* No profile is provided in HBL environment: retain the old
-       * game-name layout rather than claiming a guessed profile. */
+      /* Never substitute the parent directory for an existing per-user
+       * tree: that would look like lost save data and risk mixed profiles. */
+      if(named_profile){
+        logline(h,"WARNING_LAUNCH_USER_UNAVAILABLE existing_profile_tree=1 refusing_unsafe_fallback\\n");
+        return 0;
+      }
+      /* For a new game with no HBL UserId, keep the older game-name
+       * fallback instead of fabricating a user identity. */
       n=snprintf(h->save_root,sizeof(h->save_root),"%s",game_root);
       logline(h,"WARNING_LAUNCH_USER_UNAVAILABLE source=hbl_environment save_mode=legacy_game_name\n");
     }
