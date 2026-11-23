@@ -574,16 +574,39 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
         "policy=metadata_if_kernel_priority_mask_allows\n",declared_main_priority);
   launch_phase="RESOURCE_CHECK";
   u64 resource = 0;
-  rc = svcGetInfo(&resource, 16, CUR_PROCESS_HANDLE, 0);
-  row(f, "RESOURCE_CHECK result=%08x available=%llu requested=%u\n", rc,
-      (unsigned long long)resource, selected_resource);
-  if (R_FAILED(rc) || resource < selected_resource) {
-    row(f, "REFUSED insufficient host system resources\n");
-    nx2_nup_close();
-    fclose(f);
-    snprintf(outcome, sizeof(outcome),
-             "This backup requires more resources than this host provides.");
-    if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
+  /* InfoType 16 reports the host process's REAL system-resource memory
+   * reservation (PersonalMmHeap). META+0x14 declares the guest's required
+   * reservation. Keep them separate from normal heap/physical free RAM.
+   * Distinguish query failure from a genuine deficit; do not label either
+   * as a known allocation failure or grant imaginary resources. */
+  rc=svcGetInfo(&resource,InfoType_SystemResourceSizeTotal,
+                CUR_PROCESS_HANDLE,0);
+  if(R_FAILED(rc)){
+    row(f,"WARNING_HOST_SYSTEM_RESOURCE_QUERY_FAILED result=%08x host=%016llx guest=%016llx requested_bytes=%u\n",
+        rc,(unsigned long long)title,(unsigned long long)game->id,
+        selected_resource);
+    if(crash)row(crash,"WARNING_HOST_SYSTEM_RESOURCE_QUERY_FAILED result=%08x requested_bytes=%u\n",
+                 rc,selected_resource);
+    nx2_nup_close();fclose(f);
+    snprintf(outcome,sizeof(outcome),
+             "Host system-resource query failed (%08x); not a confirmed shortage.",rc);
+    if(crash){row(crash,"PRELAUNCH_STOP phase=RESOURCE_QUERY\n");fclose(crash);}
+    return;
+  }
+  row(f,"WARNING_HOST_SYSTEM_RESOURCE_MEASURED available_bytes=%llu requested_bytes=%u deficit_bytes=%llu host=%016llx guest=%016llx\n",
+      (unsigned long long)resource,selected_resource,
+      (unsigned long long)(resource<selected_resource?selected_resource-resource:0),
+      (unsigned long long)title,(unsigned long long)game->id);
+  if(crash)row(crash,"WARNING_HOST_SYSTEM_RESOURCE_MEASURED available_bytes=%llu requested_bytes=%u deficit_bytes=%llu\n",
+      (unsigned long long)resource,selected_resource,
+      (unsigned long long)(resource<selected_resource?selected_resource-resource:0));
+  if(resource<selected_resource){
+    row(f,"REFUSED host_system_resource_reservation_shortfall real_kernel_value=1\n");
+    nx2_nup_close();fclose(f);
+    snprintf(outcome,sizeof(outcome),
+             "Host system-resource reservation too small: %llu < %u bytes.",
+             (unsigned long long)resource,selected_resource);
+    if(crash){row(crash,"PRELAUNCH_STOP phase=RESOURCE_SHORTFALL\n");fclose(crash);}
     return;
   }
   launch_phase="ROMFS_INDEX";
