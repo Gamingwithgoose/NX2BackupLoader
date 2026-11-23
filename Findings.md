@@ -653,3 +653,5 @@ Source audit shows normal A previously returned launcher-owned NVN wrapper stubs
 - Restored `probes/game-launch/source/main.c`, `probes/game-launch/Makefile`, and `scripts/build-msys.sh` to commit `ab8d85a18a69b139ecd8f40d56505518a4baddeb` (the verified baseline **after** the unsafe Y-button service probe had been removed and **before** the dev build).
 - Deleted `build-dev.bat`, `diagnostics/nx2trace/Makefile`, `diagnostics/nx2trace/README.md`, `diagnostics/nx2trace/source/main.c`, `probes/game-launch/source/nx2_trace_client.c`, `probes/game-launch/source/nx2_trace_client.h`, `scripts/build-dev-plugin-msys.sh`, and `scripts/verify-private-plugin.ps1`.
 - Left original public `build.bat` untouched; no Y probe, no private tracing, no developer plugin, no kernel/service probing. Kept historical findings; this note supersedes earlier planned dev installation steps.
+
+- Rollback verification correction: historical comparison snapshot still contained the unsafe Y-button `system_capability_probe`. Explicitly deleted its function, UI label, and Y input binding in commit `1601f09131a4f863292b80206bfeb3e463223369`; the probe is now absent from the branch.
