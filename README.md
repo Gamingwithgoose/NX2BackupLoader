@@ -231,3 +231,10 @@ chmod +x build-arch.sh build-nup-arch.sh build-arch.desktop build-nup-arch.deskt
 If your file manager refuses to launch .desktop files, use the ./ commands
 in a terminal instead. Desktop launchers keep their terminal open to show
 errors and results.
+
+
+### Guest-first request tracing in experimental build
+
+This experimental branch now **persists every observable intercepted guest IPC request and result by default**, including normal successful calls that previously remained only in the in-memory ring. The primary gameplay or NUP log has `IPC_EVENT` lines with a stable `call` ID and `origin`: `REQUEST` (submitted), `KERNEL_RETURN` (native SVC returned), `GUEST_VIRTUAL_FS` (private guest filesystem response), `LOCAL_UNSUPPORTED_REPLY` (local unsupported result), or `LOCAL_REJECT` (no native SVC call). A kernel result of `ffffffff` at request time is *pending/not observed*, not a kernel refusal. `cmif` is the service-level response if available. Payloads, pointers and user IDs are not dumped.
+
+The guest-thread tracer remains in RAM; host-side log writing is batched and flushed approximately every 2 seconds. Full persistent IPC output can be much larger and may perturb load performance. Create an empty `SD:/switch/BackupLoaderMKW/sparse-ipc-trace.flag` to restore sparse persistent IPC logging without disabling the in-memory trace and crash snapshots. A full trace is not an all-kernel syscall tracer: only the instrumented SVC/IPC and compatibility paths are observable. Required guest save isolation and native memory safety boundaries remain enforced; the working SD title-ID save namespace is unchanged.
