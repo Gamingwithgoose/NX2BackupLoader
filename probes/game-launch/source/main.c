@@ -779,6 +779,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   u64 passive_ipc_at_progress=0,passive_rom_at_progress=0;
   int passive_reported=0;
   u64 passive_last_report_tick=0;
+  u64 no_frame_last_report_tick=0;
   u64 last_unserved_rpc_warning_tick=began;
   /* Preserve flushed prelaunch evidence. Once guest execution begins,
    * batch independent crash-report writes and flush each complete sample.
@@ -906,6 +907,31 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
             (unsigned long long)elapsed,(unsigned long long)frames,slot,
             (unsigned long long)(ipc_now-passive_ipc_at_progress),
             (unsigned long long)(rom_now-passive_rom_at_progress));
+      }
+    }
+    /* Zero-frame games (notably OOT) need the same sync/guest execution
+     * evidence without assuming that loading screens must Present. Emit
+     * diagnostic snapshots at most once per 12 seconds from boot; these
+     * cannot prove a deadlock by themselves. */
+    if(crash && !frames && stage==10){
+      u64 sample=armGetSystemTick();
+      if(armTicksToNs(sample-began)>=12000000000ULL &&
+         (!no_frame_last_report_tick ||
+          armTicksToNs(sample-no_frame_last_report_tick)>=12000000000ULL)){
+        no_frame_last_report_tick=sample;
+        row(crash,"WARNING_ZERO_FRAME_GUEST_PROGRESS elapsed_ms=%llu "
+                  "ipc_started=%u ipc_finished=%u nvn_bootstrap=%u "
+                  "nvn_getproc=%u present_entered=%u present_returned=%u "
+                  "confirmed_deadlock=0\n",
+            (unsigned long long)(armTicksToNs(sample-began)/1000000ULL),
+            __atomic_load_n(&l->ipc_trace_begins,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_bootstrap_calls,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_getproc_calls,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE));
+        report_unresolved_waits(crash,l,host,sample,"zero_frame_progress");
+        fflush(crash);
       }
     }
     /* Capture persistent *published* RPCs even when there has never
