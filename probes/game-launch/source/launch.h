@@ -76,6 +76,15 @@ typedef struct {
 /* Experimental all-service IPC metadata trace; 0 bytes of guest payload. */
 #define NX2_IPC_EVENT_SLOTS 16384U
 #define NX2_NVN_STAGE_COUNT 5
+#define NX2_GPU_BOUNDARY_RING_SLOTS 256U
+/* A snapshot is a last-N timeline, not a GPU/CPU stack trace. */
+typedef struct {
+ uint32_t sequence,kind;
+ uint64_t tick,thread_tls,caller;
+ uint64_t queue,window;
+ int32_t texture_index;
+ uint32_t reserved;
+} Nx2GpuBoundary;
 #define NX2_SYNC_FLIGHT_SLOTS 128U
 /* Observe only the outer native sync IPC call. Entry/return snapshots
  * cannot identify kernel wait reason without additional OS support. */
@@ -140,6 +149,8 @@ typedef struct {
  uint64_t nvn_stage_last_tls[NX2_NVN_STAGE_COUNT];
  uint64_t nvn_stage_last_tick[NX2_NVN_STAGE_COUNT];
  uint64_t nvn_stage_return_tick[NX2_NVN_STAGE_COUNT];
+ uint32_t gpu_boundary_next;
+ Nx2GpuBoundary gpu_boundary[NX2_GPU_BOUNDARY_RING_SLOTS];
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
  Nx2IpcBreadcrumb ipc_breadcrumbs[NX2_IPC_TRACE_SLOTS];
  uint32_t ipc_call_next,ipc_event_next;
