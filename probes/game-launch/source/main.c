@@ -873,7 +873,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                     "nvn_other_stages_observed=%u\n",
               __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
               __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE),
-              (unsigned)(l->nvn_driver_passthrough==0));
+              (unsigned)(l->nvn_driver_passthrough==0 || l->nvn_gameplay_trace));
           u32 next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
           for(u32 back=(next<8?next:8);back;back--){
             u32 slot_id=(next-back)%NX2_IPC_TRACE_SLOTS;
