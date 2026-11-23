@@ -198,6 +198,12 @@ static void report_unresolved_waits(FILE *out,Nx2Launch *l,Nx2Host *host,
    Nx2Request *r=&l->requests[i];
    uint32_t state=__atomic_load_n(&r->state,__ATOMIC_ACQUIRE);
    if(!state)continue;
+   if(state==1){
+     /* Claimed but unpublished: request args are not initialized yet. */
+     row(out,"WARNING_UNRESOLVED_RPC reason=%s slot=%u state=1 unpublished=1\n",
+         reason,i);
+     continue;
+   }
    uint64_t published=__atomic_load_n(&r->diagnostic_published_tick,__ATOMIC_RELAXED);
    uint64_t age=(state>=2&&published&&now_tick>=published)?
      armTicksToNs(now_tick-published)/1000000ULL:0;
