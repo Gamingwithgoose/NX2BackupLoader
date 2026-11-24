@@ -10,7 +10,8 @@ typedef struct {
   uint8_t main_priority; /* NPDM META+0x0e */
   uint8_t main_core; /* NPDM META+0x0f */
   uint8_t has_thread_metadata;
-  int updates;
+  int updates; /* 2=resolved complete update root, 1=unmerged update present */
+  uint64_t update_version;
   int is_nup;
   char nup_status[96];
 } Nx2Game;
