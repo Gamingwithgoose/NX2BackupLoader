@@ -846,6 +846,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   uint64_t diagnostic_min_free=UINT64_MAX, diagnostic_max_io_age=0;
   uint64_t diagnostic_previous_tick=began, diagnostic_sequence=0;
+  uint32_t diagnostic_gpu_cursor=0;
   u64 trace_sample = began;
   u64 ipc_event_flush=began;
   uint32_t ipc_event_cursor=0,ipc_event_dropped=0;
@@ -1212,6 +1213,11 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       uint64_t physical_total=0,physical_used=0;
       Result total_rc=svcGetInfo(&physical_total,6,CUR_PROCESS_HANDLE,0);
       Result used_rc=svcGetInfo(&physical_used,7,CUR_PROCESS_HANDLE,0);
+      uint64_t total_after=0;
+      Result total_after_rc=svcGetInfo(&total_after,6,CUR_PROCESS_HANDLE,0);
+      row(crash,"PHYSICAL_ACCOUNTING_CHECK total_before=%llu total_after=%llu result=%08x consistent=%u\n",
+          (unsigned long long)physical_total,(unsigned long long)total_after,total_after_rc,
+          (unsigned)(R_SUCCEEDED(total_rc)&&R_SUCCEEDED(used_rc)&&R_SUCCEEDED(total_after_rc)&&physical_total==total_after&&physical_used<=physical_total));
       row(crash,"PROCESS_PHYSICAL_SNAPSHOT total_result=%08x used_result=%08x total=%llu used=%llu free=%llu\n",
           total_rc,used_rc,(unsigned long long)physical_total,
           (unsigned long long)physical_used,
@@ -1272,6 +1278,29 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
               (unsigned long long)__atomic_load_n(&l->nvn_stage_last_tick[n],__ATOMIC_ACQUIRE),
               (unsigned long long)__atomic_load_n(&l->nvn_stage_return_tick[n],__ATOMIC_ACQUIRE));
         }
+      }
+      if(l->nvn_gameplay_trace){
+        uint32_t produced=__atomic_load_n(&l->gpu_boundary_next,__ATOMIC_ACQUIRE);
+        uint32_t available=produced-diagnostic_gpu_cursor;
+        if(available>NX2_GPU_BOUNDARY_RING_SLOTS){
+          row(crash,"GPU_HISTORY_GAP lost=%u\n",available-NX2_GPU_BOUNDARY_RING_SLOTS);
+          diagnostic_gpu_cursor=produced-NX2_GPU_BOUNDARY_RING_SLOTS;
+        }
+        /* Limit per-snapshot output; retain cursor for the next sample. */
+        for(unsigned n=0;n<64 && diagnostic_gpu_cursor!=produced;n++){
+          uint32_t ticket=diagnostic_gpu_cursor;
+          const Nx2GpuBoundary *source=&l->gpu_boundary[ticket%NX2_GPU_BOUNDARY_RING_SLOTS];
+          uint32_t seq=__atomic_load_n(&source->sequence,__ATOMIC_ACQUIRE);
+          if(seq!=ticket+1)break;
+          Nx2GpuBoundary event=*source;
+          if(__atomic_load_n(&source->sequence,__ATOMIC_ACQUIRE)!=seq)break;
+          row(crash,"GPU_STARTUP_EVENT seq=%u kind=%u tick=%llu tls=%016llx caller=%016llx queue=%016llx window=%016llx texture=%d\n",
+              seq,event.kind,(unsigned long long)event.tick,(unsigned long long)event.thread_tls,
+              (unsigned long long)event.caller,(unsigned long long)event.queue,
+              (unsigned long long)event.window,event.texture_index);
+          diagnostic_gpu_cursor++;
+        }
+        row(crash,"GPU_HISTORY_PROGRESS produced=%u consumed=%u pending=%u\n",produced,diagnostic_gpu_cursor,produced-diagnostic_gpu_cursor);
       }
       row(crash,"GUEST_FSP_ROUTE_SNAPSHOT stage=%u cmd=%u object=%08x result=%08x child=%08x\n",
           __atomic_load_n(&l->fsp_route_stage,__ATOMIC_ACQUIRE),
