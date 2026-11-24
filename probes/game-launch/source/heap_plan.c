@@ -21,3 +21,37 @@ uint32_t nx2_heap_plan(uint64_t begin, uint64_t bytes, Nx2HeapPlan *out) {
     out->host_bytes = out->game_begin-begin;
     return NX2_HEAP_READY;
 }
+
+/* Preserve actual kernel resource accounting, but only charge the physical
+ * headroom guard when the guest is asking for MORE committed heap pages.
+ * An unchanged or smaller heap request cannot consume additional pages. */
+int nx2_heap_growth_allowed(uint64_t old_size,uint64_t requested_size,
+                            uint64_t free_bytes,uint64_t physical_floor){
+    if(requested_size<=old_size)return 1;
+    uint64_t growth=requested_size-old_size;
+    return growth<=free_bytes &&
+           free_bytes-growth>=physical_floor;
+}
+
+/* The SDK may size its requested heap as TotalNonSystemMemorySize minus
+ * UsedNonSystemMemorySize. Both queries must tell the same bounded story.
+ * Reserve real physical headroom and clamp to the actual unmapped guest
+ * heap span. Never turn this into an allocation or a fake success. */
+int nx2_guest_memory_budget(uint64_t kernel_total,uint64_t kernel_used,
+                            uint64_t physical_free,uint64_t host_prefix,
+                            uint64_t guest_capacity,uint64_t guest_committed,
+                            uint64_t physical_floor,uint64_t *reported_total,
+                            uint64_t *reported_used){
+    if(!reported_total||!reported_used||kernel_used>kernel_total||
+       guest_committed>guest_capacity)return 0;
+    uint64_t used=kernel_used>=host_prefix?kernel_used-host_prefix:0;
+    uint64_t free_budget=kernel_total-kernel_used;
+    if(free_budget>physical_free)free_budget=physical_free;
+    free_budget=free_budget>physical_floor?free_budget-physical_floor:0;
+    uint64_t guest_tail=guest_capacity-guest_committed;
+    if(free_budget>guest_tail)free_budget=guest_tail;
+    if(used>UINT64_MAX-free_budget)return 0;
+    *reported_used=used;
+    *reported_total=used+free_budget;
+    return 1;
+}

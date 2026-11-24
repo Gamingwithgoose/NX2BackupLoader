@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "rom_view.h"
+#include <string.h>
 static uint64_t q(const void *p){const unsigned char *b=p;uint64_t v=0;for(unsigned i=0;i<8;i++)v|=(uint64_t)b[i]<<(8*i);return v;}
 static uint32_t w(const void *v){const unsigned char *p=v;uint32_t r=0;for(unsigned i=0;i<4;i++)r|=(uint32_t)p[i]<<(8*i);return r;}
 static int span(uint64_t p,uint64_t n,uint64_t size){return p<=size&&n<=size-p;}
@@ -36,10 +37,18 @@ const char *nx2_rom_path(const Nx2RomView *v,uint32_t i){if(!v||i>=v->count)retu
 uint32_t nx2_rom_read(const Nx2RomView *v,uint64_t offset,void *buffer,uint64_t bytes,Nx2RomReadFile read,void *context){
  if(!v||!span(offset,bytes,v->total)||(!buffer&&bytes))return 0x2f5e02;
  unsigned char *out=buffer;
+ /* A 40+ MiB IStorage read currently monopolizes the host in 4-MiB
+  * chunks, starving other guest RPCs on slower SD storage. Split only
+  * large requests into 1-MiB chunks, preserving exact read semantics
+  * and the existing fast path for small, normal asset requests. */
+ const uint64_t fair_chunk=bytes>0x400000U?0x100000U:0x400000U;
  while(bytes){
   uint64_t amount=bytes;
-  if(amount>0x400000)amount=0x400000;
-  if(offset<v->metadata_size){if(amount>v->metadata_size-offset)amount=v->metadata_size-offset;for(uint64_t i=0;i<amount;i++)out[i]=v->metadata[offset+i];}
+  if(amount>fair_chunk)amount=fair_chunk;
+  if(offset<v->metadata_size){
+   if(amount>v->metadata_size-offset)amount=v->metadata_size-offset;
+   memcpy(out,v->metadata+offset,(size_t)amount);
+  }
   else{
    uint32_t lo=0,hi=v->count;
    while(lo<hi){uint32_t mid=lo+(hi-lo)/2;if(q(v->entries+32*mid)<=offset)lo=mid+1;else hi=mid;}
@@ -51,7 +60,7 @@ uint32_t nx2_rom_read(const Nx2RomView *v,uint64_t offset,void *buffer,uint64_t 
    }else{
     uint64_t next=lo<v->count?q(v->entries+32*lo):v->total;if(amount>next-offset)amount=next-offset;
     if(!amount)return 0x2f5e02;
-    for(uint64_t i=0;i<amount;i++)out[i]=0;
+    memset(out,0,(size_t)amount);
    }
   }
   offset+=amount;out+=amount;bytes-=amount;

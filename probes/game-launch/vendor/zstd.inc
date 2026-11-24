@@ -3632,11 +3632,10 @@ size_t FSE_readNCount_bic(short* normalizedCounter, unsigned* maxSVPtr, unsigned
 size_t FSE_readNCount_body(short* normalizedCounter, unsigned* maxSVPtr, unsigned* tableLogPtr,
                            const void* headerBuffer, size_t hbSize)
 {
-#if ZSTD_ZBIC_SUPPORT
-    return FSE_readNCount_bic(normalizedCounter, maxSVPtr, tableLogPtr, headerBuffer, hbSize);
-#else
+    /* NX2: select the entropy variant for the active frame format. */
+    if (nx2_zstd_zbic_mode)
+        return FSE_readNCount_bic(normalizedCounter, maxSVPtr, tableLogPtr, headerBuffer, hbSize);
     return FSE_readNCount_normal(normalizedCounter, maxSVPtr, tableLogPtr, headerBuffer, hbSize);
-#endif
 }
 
 /* Avoids the FORCE_INLINE of the _body() function. */
@@ -4683,11 +4682,10 @@ ZSTDLIB_API const char* ZSTD_versionString(void);
  ***************************************/
 
 /* All magic numbers are supposed read/written to/from files/memory using little-endian convention */
-#if ZSTD_ZBIC_SUPPORT
-#define ZSTD_MAGICNUMBER            0x4349425A    /* ZBIC magicnumber */
-#else
-#define ZSTD_MAGICNUMBER            0xFD2FB528    /* valid since v0.8.0 */
-#endif
+/* NX2: original Nintendo NSOs use ZBIC, NUP files use standard Zstd.
+ * This variable is selected by the outer decode wrappers. */
+extern int nx2_zstd_zbic_mode;
+#define ZSTD_MAGICNUMBER            (nx2_zstd_zbic_mode ? 0x4349425AU : 0xFD2FB528U)
 #define ZSTD_MAGIC_DICTIONARY       0xEC30A437    /* valid since v0.7.0 */
 #define ZSTD_MAGIC_SKIPPABLE_START  0x184D2A50    /* all 16 values, from 0x184D2A50 to 0x184D2A5F, signal the beginning of a skippable frame */
 #define ZSTD_MAGIC_SKIPPABLE_MASK   0xFFFFFFF0

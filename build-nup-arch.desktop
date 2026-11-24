@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Build NUP Archives (Arch Linux)
+Comment=Batch pack extracted game folders on Linux
+Exec=python3 -c "import os,sys,pathlib; p=pathlib.Path(sys.argv[1]).resolve(); os.chdir(p.parent); os.environ['NX2_KEEP_OPEN']='1'; os.execvp('bash',['bash','./build-nup-arch.sh'])" %k
+Terminal=true
+Icon=utilities-terminal
+Categories=Development;

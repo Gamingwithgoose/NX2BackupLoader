@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Build BackupLoaderMKW (Arch Linux)
+Comment=Compile and package the native Switch 2 NRO
+Exec=python3 -c "import os,sys,pathlib; p=pathlib.Path(sys.argv[1]).resolve(); os.chdir(p.parent); os.environ['NX2_KEEP_OPEN']='1'; os.execvp('bash',['bash','./build-arch.sh'])" %k
+Terminal=true
+Icon=utilities-terminal
+Categories=Development;

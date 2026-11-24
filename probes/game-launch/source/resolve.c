@@ -6,18 +6,31 @@ static uint32_t w(const unsigned char *p) {
   return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 |
          (uint32_t)p[3] << 24;
 }
-static int add(Nx2PatchSpec *out, unsigned *n, const Nx2PatchSpec *p) {
-  if (*n >= NX2_RESOLVED_MAX)
+static int add(Nx2PatchSpec *out, unsigned *n, size_t capacity,
+               const Nx2PatchSpec *p, char error[160]) {
+  for (unsigned i = 0; i < *n; i++) {
+    if (out[i].offset != p->offset) continue;
+    if (out[i].gate == p->gate) return 1;
+    snprintf(error,160,"Conflicting hooks at %llx: %s versus %s",
+             (unsigned long long)p->offset,
+             out[i].label ? out[i].label : "unnamed",
+             p->label ? p->label : "unnamed");
     return 0;
-  for (unsigned i = 0; i < *n; i++)
-    if (out[i].offset == p->offset)
-      return out[i].gate == p->gate;
+  }
+  if ((size_t)*n >= capacity) {
+    snprintf(error,160,
+             "Executable trampoline slots exhausted: count=%u available=%llu next=%s at %llx",
+             *n,(unsigned long long)capacity,
+             p->label ? p->label : "unnamed",
+             (unsigned long long)p->offset);
+    return 0;
+  }
   out[(*n)++] = *p;
   return 1;
 }
 /* role 0=rtld, 1=main, 2=SDK, 3=other. No title IDs, hashes or code offsets. */
 int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
-                     unsigned *count, char error[160]) {
+                     size_t capacity, unsigned *count, char error[160]) {
   *count = 0;
   error[0] = 0;
   for (uint32_t off = 0; off + 4 <= m->file_size[0]; off += 4) {
@@ -47,6 +60,18 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
       }
       continue;
     }
+    /* A nonreturning guest svcBreak can occur inline hundreds of times in
+     * one large NSO. The images loader patches ALL of them through one
+     * shared executable bridge. Skip their individual plan entries here:
+     * they otherwise exhaust the bounded relocation/trampoline budget.
+     * The rtld keeps its existing dedicated, verified Break wrapper. */
+    if (svc == 0x26 && role != 0) continue;
+    /* A normal SVC #7; RET wrapper stays on the proven resolver path.
+     * Any other inline nonreturning ExitProcess belongs to the shared
+     * per-module exit guard below, not an unsafe simple-wrapper hook. */
+    if (svc == 7 && role != 0 &&
+        (off + 8 > m->file_size[0] ||
+         w(m->guest + off + 4) != 0xd65f03c0U)) continue;
     Nx2PatchSpec p = *spec;
     p.offset = p.svc_offset = off;
     p.symbol = NULL;
@@ -70,13 +95,17 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
       snprintf(error, 160, "Unsupported simple SVC wrapper %x at %x", svc, off);
       return 0;
     }
-    if (!add(out, count, &p))
+    if (!add(out, count, capacity, &p, error))
       return 0;
   }
   for (uint64_t i = 0; i < nx2_patch_spec_count; i++) {
     const Nx2PatchSpec *p = &nx2_patch_specs[i];
+    /* SDK exports may live in main/subsdk as well as the final SDK
+     * module. Resolve hooks wherever the matching ABI is exported,
+     * independent of game identity and archive format. */
     if (p->svc != UINT64_MAX || !(p->mode & 2) ||
-        !((role == 2 && p->module == 5) || (role == 1 && p->module == 1)))
+        !((role != 0 && p->module == 5) ||
+          (role == 1 && p->module == 1)))
       continue;
     const char *name = p->symbol ? p->symbol : p->label;
     uintptr_t address = 0;
@@ -90,7 +119,7 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
     Nx2PatchSpec q = *p;
     q.offset = (uint32_t)(address - (uintptr_t)m->guest);
     q.symbol = NULL;
-    if (!add(out, count, &q))
+    if (!add(out, count, capacity, &q, error))
       return 0;
   }
   if (role == 1) {
