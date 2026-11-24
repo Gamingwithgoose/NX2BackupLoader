@@ -28,11 +28,35 @@ static char nx2_crash_buffer[32768];
 static uint32_t selected_resource;
 static char selected_save[256];
 static char outcome[192] = "Mario Kart World override required.";
+static int monitor_enabled;
+static u64 monitor_title;
+static int monitor_error_record(const char *fmt, ...){
+  if(!monitor_enabled)return 0;
+  FILE *m=fopen("sdmc:/kaihen/nx2-errors.pending","a");
+  if(!m)return 0;
+  fprintf(m,"tick=%llu title=%016llx ",(unsigned long long)armGetSystemTick(),(unsigned long long)monitor_title);
+  va_list ap;va_start(ap,fmt);vfprintf(m,fmt,ap);va_end(ap);
+  fputc('\n',m);return fclose(m)==0;
+}
+/* Explicit failure labels only; never mirror successful or warning lines. */
+static int monitor_failure_label(const char *fmt){
+  static const char *const keys[]={"REFUSED ","NUP_OPEN_FAILED","NUP_NPDM_FAILED",
+    "ROMFS_CACHE_WRITE_FAILED","ROMFS_SCAN_FAILED","LAUNCH_PREPARATION_REFUSED",
+    "WORKER_CREATE_REFUSED","NUP_CATALOG_REFUSED","NATIVE_CPU_FAULT",
+    "FAULT_REGISTER","FAULT_PC_MODULE","FAULT_LR_MODULE"};
+  for(unsigned i=0;i<sizeof(keys)/sizeof(keys[0]);i++)
+    if(!strncmp(fmt,keys[i],strlen(keys[i])))return 1;
+  return 0;
+}
 static void row(FILE *f, const char *fmt, ...) {
   va_list a;
   va_start(a, fmt);
   vfprintf(f, fmt, a);
   va_end(a);
+  if(monitor_enabled && monitor_failure_label(fmt)){
+    char msg[1024];va_start(a,fmt);int n=vsnprintf(msg,sizeof(msg),fmt,a);va_end(a);
+    if(n>0){size_t len=strlen(msg);while(len && msg[len-1]=='\n')msg[--len]=0;monitor_error_record("%s",msg);}
+  }
   if(f!=nx2_deferred_crash_file || !nx2_defer_crash_flush)
     fflush(f);
 }
@@ -71,6 +95,8 @@ static void drain_ipc_events(FILE *f,Nx2Launch *l,uint32_t *cursor,
                       v.phase==3?"GUEST_VIRTUAL_FS":
                       v.phase==4?"LOCAL_UNSUPPORTED_REPLY":
                       v.phase==5?"LOCAL_REJECT":"UNKNOWN";
+  if(monitor_enabled && (abnormal || v.phase==4 || v.phase==5 || (v.phase==3 && ((v.kernel_result!=0 && v.kernel_result!=UINT32_MAX)||(v.cmif_result!=0 && v.cmif_result!=UINT32_MAX)))))
+    monitor_error_record("IPC_FAILURE seq=%u call=%u phase=%u service=%s cmd=%u kernel=%08x cmif=%08x caller=%016llx",expected,v.call_id,v.phase,v.service,v.command,v.kernel_result,v.cmif_result,(unsigned long long)v.caller);
   if(important)
     fprintf(f,"IPC_EVENT seq=%u call=%u phase=%u origin=%s service=%s kind=%u handle=%08x hipc=%u command=%u domain_object=%08x flags=%02x hdr0=%08x hdr1=%08x special=%08x kernel=%08x cmif=%08x caller=%016llx tick=%llu\n",
             expected,v.call_id,v.phase,origin,v.service,v.kind,v.handle,
@@ -86,8 +112,7 @@ static void screen(const char *message) {
   consoleUpdate(NULL);
 }
 
-static int monitor_enabled;
-static u64 monitor_last, monitor_title;
+static u64 monitor_last;
 static u32 monitor_stage;
 static u64 monitor_frames;
 static int monitor_faulted;
@@ -105,6 +130,7 @@ static void monitor_emit(u32 phase,u64 title,u32 stage,u64 frames,int force){
   if(m){fwrite(&sample,1,sizeof(sample),m);fclose(m);}
 }
 static void __attribute__((noreturn)) stop(FILE *f, const char *why) {
+  monitor_error_record("ABNORMAL_STOP reason=%s",why);
   monitor_emit(3,0,0,0,1);
   row(f, "STOP_PROCESS reason=%s\n", why);
   if(nx2_deferred_crash_file && nx2_deferred_crash_file!=f){
@@ -550,7 +576,7 @@ static void scan_progress(uint32_t files, void *unused) {
 /* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
 static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   monitor_faulted=0;
-  if(monitor_enabled){remove("sdmc:/kaihen/nx2-cpu-fault.txt");remove("sdmc:/kaihen/nx2-evidence-a.txt");remove("sdmc:/kaihen/nx2-evidence-b.txt");}
+  if(monitor_enabled)remove("sdmc:/kaihen/nx2-cpu-fault.txt");
   monitor_emit(1,game->id,0,0,1);
   FILE *f = fopen(game->is_nup ? "sdmc:/BackupLoaderMKW-nup.log" :
                           "sdmc:/BackupLoaderMKW-gameplay.log", "w");
@@ -898,8 +924,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   row(f,"IPC_EVENT_PHASES 1=REQUEST 2=KERNEL_RETURN 3=GUEST_VIRTUAL_FS "
       "4=LOCAL_UNSUPPORTED_REPLY 5=LOCAL_REJECT\n");
   u64 crash_sample = began;
-  u64 monitor_evidence_tick=0;
-  unsigned monitor_evidence_slot=0;
+  uint32_t monitor_last_nvn_result[NX2_NVN_STAGE_COUNT]={0};
   u64 crash_detail_tick=began;
   int crash_detail_written=0;
   u32 previous_crash_ipc_next = UINT32_MAX;
@@ -938,6 +963,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
      * object without making the guest block on any diagnostic RPC. */
     uint32_t fs_stage=__atomic_load_n(&l->fsp_route_stage,__ATOMIC_ACQUIRE);
     if(fs_stage!=last_fsp_route_stage){
+      uint32_t mr=__atomic_load_n(&l->fsp_route_result,__ATOMIC_ACQUIRE);
+      if(mr && mr!=UINT32_MAX)monitor_error_record("FSP_FAILURE stage=%u cmd=%u result=%08x",fs_stage,__atomic_load_n(&l->fsp_route_command,__ATOMIC_RELAXED),mr);
       row(f,"GUEST_FSP_ROUTE_STATE stage=%u cmd=%u object=%08x result=%08x child=%08x\n",
           fs_stage,
           __atomic_load_n(&l->fsp_route_command,__ATOMIC_RELAXED),
@@ -960,44 +987,6 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     }
     u64 frames = __atomic_load_n(&l->frames, __ATOMIC_ACQUIRE);
     monitor_emit(2,game->id,stage,frames,0);
-    if(monitor_enabled && (!monitor_evidence_tick || armTicksToNs(armGetSystemTick()-monitor_evidence_tick)>=2000000000ULL)){
-      monitor_evidence_tick=armGetSystemTick();
-      const char *path=(monitor_evidence_slot++ & 1)?"sdmc:/kaihen/nx2-evidence-b.txt":"sdmc:/kaihen/nx2-evidence-a.txt";
-      FILE *e=fopen(path,"w");
-      if(e){
-        fprintf(e,"EVIDENCE_BEGIN tick=%llu title=%016llx stage=%u frames=%llu\n",
-          (unsigned long long)monitor_evidence_tick,(unsigned long long)game->id,stage,(unsigned long long)frames);
-        fprintf(e,"MEMORY allocator_total=%llu allocator_free=%llu\n",(unsigned long long)heapGetTotalSize(),(unsigned long long)heapGetFreeSize());
-        fprintf(e,"FSP stage=%u cmd=%u result=%08x child=%08x storage_completed=%llu\n",
-          __atomic_load_n(&l->fsp_route_stage,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->fsp_route_command,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->fsp_route_result,__ATOMIC_ACQUIRE),
-          __atomic_load_n(&l->fsp_route_child,__ATOMIC_ACQUIRE),
-          (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE));
-        uint32_t total=__atomic_load_n(&l->ipc_event_next,__ATOMIC_ACQUIRE);
-        uint32_t count=total<128?total:128;
-        for(uint32_t back=count;back;back--){
-          uint32_t expected=total-back+1;
-          Nx2IpcEvent *entry=&l->ipc_events[(expected-1)%NX2_IPC_EVENT_SLOTS];
-          if(__atomic_load_n(&entry->sequence,__ATOMIC_ACQUIRE)!=expected)continue;
-          Nx2IpcEvent v=*entry;
-          if(__atomic_load_n(&entry->sequence,__ATOMIC_ACQUIRE)!=expected)continue;
-          v.service[8]=0;
-          fprintf(e,"IPC seq=%u call=%u phase=%u service=%s cmd=%u kernel=%08x cmif=%08x caller=%016llx\n",
-            expected,v.call_id,v.phase,v.service,v.command,v.kernel_result,v.cmif_result,(unsigned long long)v.caller);
-        }
-        for(unsigned n=0;n<NX2_NVN_STAGE_COUNT;n++)
-          fprintf(e,"NVN stage=%u entered=%u returned=%u result=%08x caller=%016llx\n",n,
-            __atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE),
-            __atomic_load_n(&l->nvn_stage_result[n],__ATOMIC_ACQUIRE),
-            (unsigned long long)__atomic_load_n(&l->nvn_stage_last_caller[n],__ATOMIC_ACQUIRE));
-        report_gpu_boundary_history(e,l,monitor_evidence_tick);
-        fprintf(e,"EVIDENCE_END tick=%llu\n",(unsigned long long)monitor_evidence_tick);
-        fclose(e);
-      }
-    }
-
     /* The normal A mode counts actual returned PresentTexture calls.
      * A long interval without a present is not proof of a deadlock:
      * scenes can pause, load, suspend or deliberately stop presenting.
@@ -1245,6 +1234,9 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     for(unsigned n=0;n<NX2_NVN_STAGE_COUNT;n++){
       uint32_t entered=__atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE);
       uint32_t returned=__atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE);
+      uint32_t mr=__atomic_load_n(&l->nvn_stage_result[n],__ATOMIC_ACQUIRE);
+      if(returned && mr && mr!=UINT32_MAX && mr!=monitor_last_nvn_result[n])monitor_error_record("NVN_FAILURE stage=%u result=%08x caller=%016llx",n,mr,(unsigned long long)__atomic_load_n(&l->nvn_stage_last_caller[n],__ATOMIC_ACQUIRE));
+      monitor_last_nvn_result[n]=mr;
       if((entered!=last_nvn_stage[n]||returned!=last_nvn_stage_done[n]) &&
          (last_nvn_stage[n]==0||last_nvn_stage_done[n]==0||
           (entered && !(entered&(entered-1)))||
@@ -1924,6 +1916,7 @@ int main(int argc, char **argv) {
   u64 repeat = 0;
   int direction = 0;
   while (appletMainLoop()) {
+    monitor_emit(0,0,0,0,0);
     padUpdate(&pad);
     u64 down = padGetButtonsDown(&pad), held = padGetButtons(&pad);
     if (down & HidNpadButton_Plus)
@@ -1956,6 +1949,7 @@ int main(int argc, char **argv) {
       if(held & HidNpadButton_R){
         horizon_preflight(game);
       }else if (game->is_nup == 2) {
+        monitor_title=game->id;
         /* A catalog rejection is still a launch attempt. Give it the same
          * independent diagnostic file as every normal folder/NUP run. */
         FILE *rejected=fopen("sdmc:/BackupLoaderMKW-nup.log","w");

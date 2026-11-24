@@ -73,7 +73,7 @@ static void reload_config(void){
         }
         line=next;
     }
-    if(memcmp(&cfg,&c,sizeof(c))){cfg=c;note("CONFIG_APPLIED poll=%u global=%u jit=%u processes=%u memory=%u loader=%u timeout=%u startup=%u",c.poll,c.global,c.jit,c.processes,c.memory,c.loader,c.timeout,c.startup);}
+    cfg=c;
 }
 #define MAX_PIDS 256
 static u64 old_pids[MAX_PIDS],new_pids[MAX_PIDS],old_jit[64],new_jit[64];
@@ -86,28 +86,29 @@ static u64 identify(u64 pid){u64 title=0;if(pm_ready)pmdmntGetProgramId(&title,p
 static void global_poll(void){
     if(!pm_ready){
         Result rc=pmdmntInitialize();
-        note("PM_INIT rc=%08x",(unsigned)rc);
+        static Result previous=~0u;
+        if(R_FAILED(rc)&&rc!=previous)note("MONITOR_PM_INIT_FAILED rc=%08x",(unsigned)rc);
+        previous=rc;
         pm_ready=R_SUCCEEDED(rc);
     }
     if(cfg.processes){
         s32 count=0;Result rc=svcGetProcessList(&count,new_pids,MAX_PIDS);
-        if(rc!=old_list_rc){note("PROCESS_LIST rc=%08x count=%d",(unsigned)rc,count);old_list_rc=rc;}
+        if(rc!=old_list_rc){if(R_FAILED(rc))note("MONITOR_PROCESS_LIST_FAILED rc=%08x",(unsigned)rc);old_list_rc=rc;}
         if(R_SUCCEEDED(rc)&&count>=0&&count<=MAX_PIDS){
-            if(have_list)for(unsigned i=0;i<old_count;i++)if(!contains(new_pids,count,old_pids[i]))note("PROCESS_GONE pid=%llu reason=unknown",(unsigned long long)old_pids[i]);
-            for(unsigned i=0;i<(unsigned)count;i++)if(!have_list||!contains(old_pids,old_count,new_pids[i]))note("PROCESS_SEEN pid=%llu title=%016llx",(unsigned long long)new_pids[i],(unsigned long long)identify(new_pids[i]));
+            /* Process disappearance alone does not establish a crash. */
             memcpy(old_pids,new_pids,count*sizeof(u64));old_count=count;have_list=1;
         }
     }
     if(pm_ready){
         u64 app=0;Result rc=pmdmntGetApplicationProcessId(&app);
         if(rc!=old_app_rc||app!=old_app){
-            if(old_app)note("APPLICATION_CHANGED previous_pid=%llu previous_title=%016llx reason=unknown",(unsigned long long)old_app,(unsigned long long)old_title);
+
             old_app=R_SUCCEEDED(rc)?app:0;old_title=identify(old_app);
-            note("APPLICATION pid=%llu title=%016llx rc=%08x",(unsigned long long)old_app,(unsigned long long)old_title,(unsigned)rc);old_app_rc=rc;
+            old_app_rc=rc;
         }
         if(cfg.jit){
             u32 count=0;rc=pmdmntGetJitDebugProcessIdList(&count,new_jit,64);
-            if(rc!=old_jit_rc){note("JIT_QUERY rc=%08x count=%u",(unsigned)rc,count);old_jit_rc=rc;}
+            if(rc!=old_jit_rc){if(R_FAILED(rc))note("MONITOR_JIT_QUERY_FAILED rc=%08x",(unsigned)rc);old_jit_rc=rc;}
             if(R_SUCCEEDED(rc)&&count<=64){
                 for(u32 i=0;i<count;i++)if(!have_jit||!contains(old_jit,old_jit_count,new_jit[i]))note("JIT_DEBUG_PENDING pid=%llu title=%016llx",(unsigned long long)new_jit[i],(unsigned long long)identify(new_jit[i]));
                 memcpy(old_jit,new_jit,count*sizeof(u64));old_jit_count=count;have_jit=1;
@@ -120,7 +121,9 @@ static void memory_poll(void){
     Result b=svcGetSystemInfo(&used,SystemInfoType_UsedPhysicalMemorySize,0,0);
     Result c=svcGetInfo(&self,InfoType_UsedMemorySize,CUR_PROCESS_HANDLE,0);
     s64 free=0;Result d=fsFsGetFreeSpace(&sd,"/",&free);
-    note("MEMORY pool=0 total=%llu used=%llu self=%llu sd_free=%lld results=%08x,%08x,%08x,%08x",(unsigned long long)total,(unsigned long long)used,(unsigned long long)self,(long long)free,(unsigned)a,(unsigned)b,(unsigned)c,(unsigned)d);
+    static Result last_a=0,last_b=0,last_c=0,last_d=0;
+    if((a!=last_a||b!=last_b||c!=last_c||d!=last_d)&&(R_FAILED(a)||R_FAILED(b)||R_FAILED(c)||R_FAILED(d)))note("MONITOR_MEMORY_QUERY_FAILED results=%08x,%08x,%08x,%08x",(unsigned)a,(unsigned)b,(unsigned)c,(unsigned)d);
+    last_a=a;last_b=b;last_c=c;last_d=d;
 }
 static int read_sample(Nx2MonitorSample *s){
     FsFile f={0};u64 got=0;
@@ -130,31 +133,37 @@ static int read_sample(Nx2MonitorSample *s){
     return R_SUCCEEDED(rc)&&got==sizeof(*s)&&s->magic==NX2_MONITOR_MAGIC&&s->tick==s->end_tick&&s->phase<=4;
 }
 
-/* Copy only diagnostic text produced by the cooperating launcher. No debugger
- * attachment, no arbitrary process memory access, no process control. */
-static void archive_evidence(const char *path,int tail){
-    FsFile f={0};Result rc=fsFsOpenFile(&sd,path,FsOpenMode_Read,&f);
-    if(R_FAILED(rc)){note("EVIDENCE_OPEN path=%s rc=%08x",path,(unsigned)rc);return;}
-    s64 size=0;rc=fsFileGetSize(&f,&size);
-    if(R_FAILED(rc)||size<0){note("EVIDENCE_SIZE path=%s rc=%08x",path,(unsigned)rc);fsFileClose(&f);return;}
-    s64 off=tail&&size>65536?size-65536:0;
-    s64 end=size;if(end-off>65536)end=off+65536;
-    note("EVIDENCE_ARCHIVE_BEGIN path=%s size=%lld offset=%lld",path,(long long)size,(long long)off);
-    char buf[4096];
-    while(off<end){
-        u64 got=0;u64 want=(u64)(end-off);if(want>sizeof(buf))want=sizeof(buf);
-        rc=fsFileRead(&f,off,buf,want,FsReadOption_None,&got);
-        if(R_FAILED(rc)||!got||got>want)break;
-        append(buf,(size_t)got);off+=got;
+/* Read append-only launcher error records, preserving partial lines until
+ * the next poll. Cursor is persisted only after a complete error is copied.
+ * Replaying a line after a power loss is preferable to dropping a failure. */
+static s64 pending_cursor;
+static void load_cursor(void){
+    FsFile f={0};u64 got=0;s64 v=0;
+    if(R_SUCCEEDED(fsFsOpenFile(&sd,"/kaihen/nx2-errors.cursor",FsOpenMode_Read,&f))){
+        Result rc=fsFileRead(&f,0,&v,sizeof(v),FsReadOption_None,&got);fsFileClose(&f);
+        if(R_SUCCEEDED(rc)&&got==sizeof(v)&&v>=0)pending_cursor=v;
+    }
+}
+static void save_cursor(void){
+    const char *path="/kaihen/nx2-errors.cursor";FsFile f={0};
+    if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write,&f))){
+        fsFsCreateFile(&sd,path,sizeof(pending_cursor),0);
+        if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write,&f)))return;
+    }
+    fsFileWrite(&f,0,&pending_cursor,sizeof(pending_cursor),FsWriteOption_Flush);fsFileClose(&f);
+}
+static void drain_errors(void){
+    FsFile f={0};s64 size=0;
+    if(R_FAILED(fsFsOpenFile(&sd,"/kaihen/nx2-errors.pending",FsOpenMode_Read,&f)))return;
+    if(R_FAILED(fsFileGetSize(&f,&size))){fsFileClose(&f);return;}
+    if(size<pending_cursor)pending_cursor=0;
+    char buf[16384];u64 got=0;
+    if(size>pending_cursor && R_SUCCEEDED(fsFileRead(&f,pending_cursor,buf,sizeof(buf),FsReadOption_None,&got)) && got){
+        size_t complete=0;
+        for(size_t i=0;i<got;i++)if(buf[i]=='\n')complete=i+1;
+        if(complete){append(buf,complete);pending_cursor+=complete;save_cursor();}
     }
     fsFileClose(&f);
-    note("EVIDENCE_ARCHIVE_END path=%s complete=%u rc=%08x",path,off==end,(unsigned)rc);
-}
-static void collect_crash(void){
-    archive_evidence("/kaihen/nx2-cpu-fault.txt",0);
-    archive_evidence("/kaihen/nx2-evidence-a.txt",0);
-    archive_evidence("/kaihen/nx2-evidence-b.txt",0);
-    archive_evidence("/BackupLoaderMKW-crash.log",1);
 }
 int main(void){
     Handle ready=INVALID_HANDLE;
@@ -166,7 +175,7 @@ int main(void){
     if(R_FAILED(rc)){fsExit();pluginRuntimeExit();return rc;}
     Nx2MonitorSample last={0},next={0};
     u64 boot=armGetSystemTick();
-    log_line("PLUGIN_STARTED",&last,0);
+    load_cursor();
     rc=svcSignalEvent(ready);
     if(R_SUCCEEDED(rc)){
         int warned=0;
@@ -174,26 +183,23 @@ int main(void){
         for(;;){
             u64 now=armGetSystemTick();
             if(!last_config||armTicksToNs(now-last_config)>=5000000000ULL){reload_config();last_config=now;}
+            drain_errors();
             if(cfg.global)global_poll();
             if(cfg.memory&&(!last_memory||armTicksToNs(now-last_memory)>=30000000000ULL)){memory_poll();last_memory=now;}
             if(cfg.loader&&read_sample(&next)&&next.tick>=boot&&next.tick<=armGetSystemTick()&&next.tick!=last.tick){
-                if(warned)log_line("HEARTBEAT_RESUMED",&next,0);
                 last=next;warned=0;
-                log_line("HEARTBEAT",&last,0);
-                if(last.phase==3||last.phase==4){note("LAUNCHER_EXIT phase=%u",last.phase);collect_crash();}
             }
             if(cfg.loader&&last.tick && (last.phase==1||last.phase==2) && !warned &&
                armTicksToNs(armGetSystemTick()-last.tick)> ((u64)(last.phase==1?cfg.startup:cfg.timeout)*1000000000ULL)){
                 warned=1;
-                log_line("HEARTBEAT_TIMEOUT_NOT_PROOF_OF_CRASH",&last,0);
-                collect_crash();
+                /* A stalled heartbeat is not proof of a fault; query only. */
                 Result p=pmdmntInitialize();
                 if(R_SUCCEEDED(p)){
                     u64 program=0;
                     p=pmdmntGetProgramId(&program,last.pid);
-                    log_line(R_SUCCEEDED(p)?"PROCESS_QUERY_OK":"PROCESS_QUERY_FAILED",&last,p);
+                    if(R_FAILED(p))log_line("MONITOR_PROCESS_QUERY_FAILED",&last,p);
                     pmdmntExit();
-                }else log_line("PROCESS_QUERY_UNAVAILABLE",&last,p);
+                }else log_line("MONITOR_PROCESS_QUERY_UNAVAILABLE",&last,p);
             }
             svcSleepThread((s64)cfg.poll*1000000000LL);
         }
