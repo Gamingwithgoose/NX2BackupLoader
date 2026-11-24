@@ -139,6 +139,61 @@ int nx2_folder_modules(const char *root, char names[13][16], unsigned *count) {
   *count = n;
   return 1;
 }
+/* A dump may keep only ExeFS under base/ while a numbered update owns
+ * its complete ExeFS and RomFS. Resolve the highest complete update before
+ * rejecting the base. No files are moved or installed. */
+typedef struct {
+  char directory[1200];
+  char selected[1200];
+  uint64_t version;
+  int found;
+} Nx2UpdateChoice;
+static int nx2_complete_content_root(const char *root){
+  char path[1400],modules[13][16];unsigned count=0;
+  return child(path,sizeof(path),root,"romfs")&&type(path,1)&&
+         child(path,sizeof(path),root,"exefs/main.npdm")&&type(path,0)&&
+         nx2_folder_modules(root,modules,&count);
+}
+static int nx2_find_versioned_update(void *arg,const char *name){
+  Nx2UpdateChoice *c=(Nx2UpdateChoice*)arg;
+  if(!name[0])return 1;
+  uint64_t v=0;
+  for(const unsigned char *p=(const unsigned char*)name;*p;p++){
+    if(*p<'0'||*p>'9')return 1;
+    if(v>(UINT64_MAX-(uint64_t)(*p-'0'))/10)return 1;
+    v=v*10+(uint64_t)(*p-'0');
+  }
+  char candidate[1200];
+  if(!child(candidate,sizeof(candidate),c->directory,name)||
+     !nx2_complete_content_root(candidate))return 1;
+  if(!c->found||v>c->version){
+    strcpy(c->selected,candidate);
+    c->version=v;c->found=1;
+  }
+  return 1;
+}
+static int nx2_choose_update(const char *folder,Nx2UpdateChoice *selected){
+  memset(selected,0,sizeof(*selected));
+  const char *variants[]={"updates","update"};
+  for(unsigned i=0;i<2;i++){
+    if(!child(selected->directory,sizeof(selected->directory),folder,variants[i]))
+      continue;
+    if(!type(selected->directory,1))continue;
+    /* A single update may directly contain exefs/romfs. Prefer numbered
+     * updates when available, otherwise accept this complete root. */
+    Nx2UpdateChoice local={0};
+    strcpy(local.directory,selected->directory);
+    list(local.directory,nx2_find_versioned_update,&local);
+    if(local.found&&(!selected->found||local.version>selected->version)){
+      strcpy(selected->selected,local.selected);
+      selected->version=local.version;selected->found=1;
+    }else if(!selected->found&&nx2_complete_content_root(local.directory)){
+      strcpy(selected->selected,local.directory);
+      selected->version=0;selected->found=1;
+    }
+  }
+  return selected->found;
+}
 typedef struct {
   const char *root;
   Nx2Catalog *out;
@@ -180,12 +235,15 @@ static int catalog_entry(void *v, const char *name) {
     return 1;
   Nx2Game game = {0};
   strcpy(game.name, name);
-  for (unsigned base = 0; base < 2; base++) {
-    if (base) {
-      if (!child(game.root, sizeof(game.root), folder, "base"))
-        continue;
-    } else
-      strcpy(game.root, folder);
+  Nx2UpdateChoice update={0};
+  nx2_choose_update(folder,&update);
+  for (unsigned base = 0; base < 3; base++) {
+    if (base == 0) {
+      if (!update.found)continue;
+      strcpy(game.root,update.selected);
+    } else if (base == 2) {
+      if (!child(game.root, sizeof(game.root), folder, "base"))continue;
+    } else strcpy(game.root,folder);
     if (!child(path, sizeof(path), game.root, "romfs") || !type(path, 1) ||
         !nx2_folder_modules(game.root, modules, &count))
       continue;
@@ -208,7 +266,8 @@ static int catalog_entry(void *v, const char *name) {
       fclose(f);
     }
     child(path, sizeof(path), folder, "updates");
-    game.updates = type(path, 1);
+    game.updates = update.found && base==0 ? 2 : type(path, 1);
+    game.update_version = (update.found && base==0) ? update.version : 0;
     if (c->out->count >= 4096)
       return 0;
     void *items = realloc(c->out->items, (c->out->count + 1) * sizeof(game));
