@@ -1161,3 +1161,7 @@ Kirby hardware report refused preparation of sdk module 4: Unsupported simple SV
 Stage one (06f24f74): Y in launcher calls native usbHsInitialize and queries available class 08 mass-storage interfaces without acquiring them. Logs results to sdmc:/BackupLoaderMKW-usb.log. Target filesystem exFAT; required root /BackupLoaderMKW/games/. Neither filesystem nor directory validation is implemented yet. Hardware and native build untested; existing SD catalog unchanged.
 
 Stage two (d33b9c0): stage one hardware log returned 0xF601 during usbHsInitialize. Y now logs separate usb:hs and usb:ds service open results, host initialization result/module/description, and all/available class 08 interface queries if initialization succeeds. Log appends for unplugged/top/bottom/dock comparisons. No filesystem mount or USB game loading yet. Build and hardware unverified.
+
+
+## Independent crash monitor experiment (1488780)
+Opt-in nx2-crash.nso plugin built with build-crash-monitor.bat. Copy release/kaihen to SD root and restart compatible kaiHEN. Build updated launcher separately with build.bat. Independent SD log /kaihen/nx2-crash-monitor.log; launcher samples every five seconds during runtime only if nx2-monitor.flag exists. Plugin checks every two seconds, reports 20-second runtime / 180-second prelaunch timeout and best-effort pm:dmnt process lookup. Timeout is not proof of crash. No register capture, no kernel crash recovery, no IPC service publication. Build and physical console unverified. Remove plugin and flag to disable; USB untouched.
