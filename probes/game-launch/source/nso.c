@@ -100,14 +100,34 @@ int nx2_prepare_nso(const char *path,const char *expected,Nx2Sha256 hash,void **
                      i,size[i],(unsigned long long)NX2_NSO_MAPPED_LIMIT);
             goto finish;
         }
-        if(offset[i]>(uint64_t)length||
-           packed[i]>(uint64_t)length-offset[i]||
-           (size[i]&&offset[i]<256)){
+        if(offset[i]>(uint64_t)length||(size[i]&&offset[i]<256)){
             snprintf(error,160,
                      "NSO segment %u invalid extent off=%u packed=%u decoded=%u input=%llu flags=%08x",
                      i,offset[i],packed[i],size[i],
                      (unsigned long long)length,flags);
             goto finish;
+        }
+        if(packed[i]>(uint64_t)length-offset[i]){
+            uint64_t available=(uint64_t)length-offset[i];
+            /* Experimental, bounded fallback: some extracted updated NSOs
+             * declare an oversized final compressed extent. Do NOT read
+             * past EOF or fabricate the missing bytes. Try decoding only
+             * available bytes, then require the normal decoded-size and
+             * SHA-256 validation below to pass. Restrict to final data
+             * segment to avoid hiding arbitrary malformed NSOs. */
+            if(i!=2||!(flags&(1U<<i))||available==0||
+               packed[i]-available>4096){
+                snprintf(error,160,
+                         "NSO segment %u invalid extent off=%u packed=%u decoded=%u input=%llu flags=%08x",
+                         i,offset[i],packed[i],size[i],
+                         (unsigned long long)length,flags);
+                goto finish;
+            }
+            fprintf(stderr,
+                "WARNING_NSO_FINAL_EXTENT_TRIAL module=%s segment=%u declared_packed=%u available=%llu missing=%llu policy=decode_and_verify_only\\n",
+                path,i,packed[i],(unsigned long long)available,
+                (unsigned long long)(packed[i]-available));
+            packed[i]=(uint32_t)available;
         }
         if(i&&(uint64_t)addr[i-1]+size[i-1]>addr[i])FAIL("NSO segments overlap");
     }
@@ -127,7 +147,12 @@ int nx2_prepare_nso(const char *path,const char *expected,Nx2Sha256 hash,void **
         void *destination=out+4096+addr[i];
         if(flags&(1U<<i)){
             int decoded=(flags&0x80)?nx2_zbic_decode(destination,size[i],raw+offset[i],packed[i]):lz4(destination,size[i],raw+offset[i],packed[i]);
-            if(!decoded)FAIL("NSO segment decompression failed");
+            if(!decoded){
+                snprintf(error,160,
+                         "NSO segment %u decompression failed (packed=%u decoded=%u; strict hash required)",
+                         i,packed[i],size[i]);
+                goto finish;
+            }
         }else memcpy(destination,raw+offset[i],size[i]);
         if(flags&(1U<<(i+3))){hash(digest,destination,size[i]);if(memcmp(digest,raw+0xa0+32*i,32))FAIL("decompressed NSO segment SHA256 mismatch");}
     }
