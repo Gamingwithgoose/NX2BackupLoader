@@ -85,8 +85,10 @@ static void screen(const char *message) {
 }
 static void __attribute__((noreturn)) stop(FILE *f, const char *why) {
   row(f, "STOP_PROCESS reason=%s\n", why);
-  if(nx2_deferred_crash_file)
+  if(nx2_deferred_crash_file && nx2_deferred_crash_file!=f){
+    row(nx2_deferred_crash_file,"STOP_PROCESS reason=%s\n",why);
     fflush(nx2_deferred_crash_file);
+  }
   fclose(f);
   svcExitProcess();
 }
@@ -842,6 +844,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     if(crash)fflush(crash);
   }
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
+  uint64_t diagnostic_min_free=UINT64_MAX, diagnostic_max_io_age=0;
+  uint64_t diagnostic_previous_tick=began, diagnostic_sequence=0;
   u64 trace_sample = began;
   u64 ipc_event_flush=began;
   uint32_t ipc_event_cursor=0,ipc_event_dropped=0;
@@ -1189,12 +1193,22 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     uint64_t since_start=armTicksToNs(armGetSystemTick()-began);
     /* Early no-frame boot still gets subsecond diagnostics, but regular
      * snapshots must not compete with game asset reads every 100-500ms. */
-    uint64_t crash_interval=(since_start<3000000000ULL && !frames)
+    uint64_t crash_interval=(since_start<15000000000ULL && !frames)
                           ?250000000ULL:2000000000ULL;
     int captured_snapshot=0;
     if(crash && armTicksToNs(armGetSystemTick()-crash_sample)>=crash_interval){
       captured_snapshot=1;
       crash_sample=armGetSystemTick();
+      uint64_t allocator_total=heapGetTotalSize();
+      uint64_t allocator_free=heapGetFreeSize();
+      if(allocator_free<diagnostic_min_free)diagnostic_min_free=allocator_free;
+      row(crash,"HOST_ALLOCATOR_SNAPSHOT seq=%llu elapsed_ms=%llu sample_gap_ms=%llu total=%llu free=%llu min_sampled_free=%llu\n",
+          (unsigned long long)++diagnostic_sequence,
+          (unsigned long long)(armTicksToNs(crash_sample-began)/1000000ULL),
+          (unsigned long long)(armTicksToNs(crash_sample-diagnostic_previous_tick)/1000000ULL),
+          (unsigned long long)allocator_total,(unsigned long long)allocator_free,
+          (unsigned long long)diagnostic_min_free);
+      diagnostic_previous_tick=crash_sample;
       unsigned pending=0;
       for(unsigned i=0;i<NX2_RPC_SLOTS;i++)
         if(__atomic_load_n(&l->requests[i].state,__ATOMIC_ACQUIRE))
@@ -1210,6 +1224,11 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
             (unsigned long long)io_age_ms,
             (unsigned long long)__atomic_load_n(&host->rpc_completed_count,__ATOMIC_RELAXED),
             __atomic_load_n(&nx2_storage_service.running,__ATOMIC_ACQUIRE));
+        if(io_age_ms>diagnostic_max_io_age)diagnostic_max_io_age=io_age_ms;
+        uint64_t poll_tick=__atomic_load_n(&nx2_storage_service.last_poll_tick,__ATOMIC_ACQUIRE);
+        row(crash,"STORAGE_LATENCY_SNAPSHOT max_observed_active_ms=%llu last_poll_ms=%llu\n",
+            (unsigned long long)diagnostic_max_io_age,
+            (unsigned long long)(poll_tick && now_tick>=poll_tick?armTicksToNs(now_tick-poll_tick)/1000000ULL:0));
         if(io_slot && io_age_ms>=1500){
           Nx2NupReadProgress p={0};
           nx2_nup_get_progress(&p);
@@ -1221,6 +1240,27 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                 (unsigned long long)p.decoded_bytes,
                 (unsigned long long)p.delivered_bytes,
                 (unsigned long long)io_age_ms);
+        }
+      }
+      row(crash,"GPU_INIT_SNAPSHOT trace_enabled=%u device=%u/%u result=%08x queue=%u/%u result=%08x window=%u/%u result=%08x\n",
+          (unsigned)l->nvn_gameplay_trace,
+          __atomic_load_n(&l->nvn_device_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_device_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_device_result,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_queue_result,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_entered,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_returned,__ATOMIC_ACQUIRE),
+          __atomic_load_n(&l->nvn_window_result,__ATOMIC_ACQUIRE));
+      if(l->nvn_gameplay_trace){
+        for(unsigned n=0;n<NX2_NVN_STAGE_COUNT;n++){
+          row(crash,"GPU_BOUNDARY_SNAPSHOT stage=%u entered=%u returned=%u result=%08x caller=%016llx\n",
+              n,
+              __atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE),
+              __atomic_load_n(&l->nvn_stage_result[n],__ATOMIC_ACQUIRE),
+              (unsigned long long)__atomic_load_n(&l->nvn_stage_last_caller[n],__ATOMIC_ACQUIRE));
         }
       }
       row(crash,"GUEST_FSP_ROUTE_SNAPSHOT stage=%u cmd=%u object=%08x result=%08x child=%08x\n",
