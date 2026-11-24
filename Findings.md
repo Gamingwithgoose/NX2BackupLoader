@@ -1159,3 +1159,5 @@ Kirby hardware report refused preparation of sdk module 4: Unsupported simple SV
 
 ## 2026-11-24 — USB storage experiment
 Stage one (06f24f74): Y in launcher calls native usbHsInitialize and queries available class 08 mass-storage interfaces without acquiring them. Logs results to sdmc:/BackupLoaderMKW-usb.log. Target filesystem exFAT; required root /BackupLoaderMKW/games/. Neither filesystem nor directory validation is implemented yet. Hardware and native build untested; existing SD catalog unchanged.
+
+Stage two (d33b9c0): stage one hardware log returned 0xF601 during usbHsInitialize. Y now logs separate usb:hs and usb:ds service open results, host initialization result/module/description, and all/available class 08 interface queries if initialization succeeds. Log appends for unplugged/top/bottom/dock comparisons. No filesystem mount or USB game loading yet. Build and hardware unverified.
