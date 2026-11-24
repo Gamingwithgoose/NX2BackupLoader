@@ -1169,3 +1169,7 @@ Opt-in nx2-crash.nso plugin built with build-crash-monitor.bat. Copy release/kai
 
 ## Crash monitor v2
 Independent passive process inventory/delta, foreground application changes, JIT-debug pending PID query, memory pool/SD space telemetry, loader heartbeat, log rotation and live ini reload. No debugger attachment, process manipulation, GPU fault subscription or global CPU register capture. Process disappearance alone is not proof of crash. Native build and hardware permission checks pending. USB unchanged.
+
+
+## Crash monitor V3 — cooperative fault evidence
+Launcher writes alternating bounded evidence snapshots every two seconds when monitor flag enabled: IPC request/reply results and callers, FSP results, NVN stage results and GPU boundary history when available, storage completion and allocator state. On CPU exception, healthy host thread writes independent CPU report and marks phase 4; plugin archives CPU report, both evidence slots and up to 64 KiB of existing crash log on observed exit or timeout. No external debugger attach or direct kernel/GPU exception subscription. Abrupt exits may lose latest unsampled events; incomplete snapshots and old log tails must be correlated by tick/title. Build and hardware unverified. USB unchanged.

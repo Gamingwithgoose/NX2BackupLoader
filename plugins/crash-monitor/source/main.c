@@ -127,7 +127,34 @@ static int read_sample(Nx2MonitorSample *s){
     if(R_FAILED(fsFsOpenFile(&sd,"/kaihen/nx2-monitor.sample",FsOpenMode_Read,&f)))return 0;
     Result rc=fsFileRead(&f,0,s,sizeof(*s),FsReadOption_None,&got);
     fsFileClose(&f);
-    return R_SUCCEEDED(rc)&&got==sizeof(*s)&&s->magic==NX2_MONITOR_MAGIC&&s->tick==s->end_tick&&s->phase<=3;
+    return R_SUCCEEDED(rc)&&got==sizeof(*s)&&s->magic==NX2_MONITOR_MAGIC&&s->tick==s->end_tick&&s->phase<=4;
+}
+
+/* Copy only diagnostic text produced by the cooperating launcher. No debugger
+ * attachment, no arbitrary process memory access, no process control. */
+static void archive_evidence(const char *path,int tail){
+    FsFile f={0};Result rc=fsFsOpenFile(&sd,path,FsOpenMode_Read,&f);
+    if(R_FAILED(rc)){note("EVIDENCE_OPEN path=%s rc=%08x",path,(unsigned)rc);return;}
+    s64 size=0;rc=fsFileGetSize(&f,&size);
+    if(R_FAILED(rc)||size<0){note("EVIDENCE_SIZE path=%s rc=%08x",path,(unsigned)rc);fsFileClose(&f);return;}
+    s64 off=tail&&size>65536?size-65536:0;
+    s64 end=size;if(end-off>65536)end=off+65536;
+    note("EVIDENCE_ARCHIVE_BEGIN path=%s size=%lld offset=%lld",path,(long long)size,(long long)off);
+    char buf[4096];
+    while(off<end){
+        u64 got=0;u64 want=(u64)(end-off);if(want>sizeof(buf))want=sizeof(buf);
+        rc=fsFileRead(&f,off,buf,want,FsReadOption_None,&got);
+        if(R_FAILED(rc)||!got||got>want)break;
+        append(buf,(size_t)got);off+=got;
+    }
+    fsFileClose(&f);
+    note("EVIDENCE_ARCHIVE_END path=%s complete=%u rc=%08x",path,off==end,(unsigned)rc);
+}
+static void collect_crash(void){
+    archive_evidence("/kaihen/nx2-cpu-fault.txt",0);
+    archive_evidence("/kaihen/nx2-evidence-a.txt",0);
+    archive_evidence("/kaihen/nx2-evidence-b.txt",0);
+    archive_evidence("/BackupLoaderMKW-crash.log",1);
 }
 int main(void){
     Handle ready=INVALID_HANDLE;
@@ -153,11 +180,13 @@ int main(void){
                 if(warned)log_line("HEARTBEAT_RESUMED",&next,0);
                 last=next;warned=0;
                 log_line("HEARTBEAT",&last,0);
+                if(last.phase==3||last.phase==4){note("LAUNCHER_EXIT phase=%u",last.phase);collect_crash();}
             }
             if(cfg.loader&&last.tick && (last.phase==1||last.phase==2) && !warned &&
                armTicksToNs(armGetSystemTick()-last.tick)> ((u64)(last.phase==1?cfg.startup:cfg.timeout)*1000000000ULL)){
                 warned=1;
                 log_line("HEARTBEAT_TIMEOUT_NOT_PROOF_OF_CRASH",&last,0);
+                collect_crash();
                 Result p=pmdmntInitialize();
                 if(R_SUCCEEDED(p)){
                     u64 program=0;
