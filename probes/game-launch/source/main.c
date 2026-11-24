@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "fault.h"
+#include "../../../plugins/crash-monitor/source/monitor_wire.h"
 #include "folder.h"
 #include "heap_plan.h"
 #include "guest_thread_policy.h"
@@ -84,7 +85,22 @@ static void screen(const char *message) {
   printf("BackupLoaderMKW 0.14\n\n%s\n", message);
   consoleUpdate(NULL);
 }
+
+static int monitor_enabled;
+static u64 monitor_last;
+static void monitor_emit(u32 phase,u64 title,u32 stage,u64 frames,int force){
+  if(!monitor_enabled)return;
+  u64 now=armGetSystemTick();
+  if(!force && armTicksToNs(now-monitor_last)<5000000000ULL)return;
+  monitor_last=now;
+  u64 pid=0;
+  svcGetProcessId(&pid,CUR_PROCESS_HANDLE);
+  Nx2MonitorSample sample={NX2_MONITOR_MAGIC,phase,pid,title,now,frames,stage,0,now};
+  FILE *m=fopen("sdmc:/kaihen/nx2-monitor.sample","wb");
+  if(m){fwrite(&sample,1,sizeof(sample),m);fclose(m);}
+}
 static void __attribute__((noreturn)) stop(FILE *f, const char *why) {
+  monitor_emit(3,0,0,0,1);
   row(f, "STOP_PROCESS reason=%s\n", why);
   if(nx2_deferred_crash_file && nx2_deferred_crash_file!=f){
     row(nx2_deferred_crash_file,"STOP_PROCESS reason=%s\n",why);
@@ -523,6 +539,7 @@ static void scan_progress(uint32_t files, void *unused) {
 }
 /* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
 static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
+  monitor_emit(1,game->id,0,0,1);
   FILE *f = fopen(game->is_nup ? "sdmc:/BackupLoaderMKW-nup.log" :
                           "sdmc:/BackupLoaderMKW-gameplay.log", "w");
   if (!f) {
@@ -928,6 +945,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       previous_stage = stage;
     }
     u64 frames = __atomic_load_n(&l->frames, __ATOMIC_ACQUIRE);
+    monitor_emit(2,game->id,stage,frames,0);
     /* The normal A mode counts actual returned PresentTexture calls.
      * A long interval without a present is not proof of a deadlock:
      * scenes can pause, load, suspend or deliberately stop presenting.
@@ -1844,6 +1862,8 @@ int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
   consoleInit(NULL);
+  FILE *monitor_flag=fopen("sdmc:/kaihen/nx2-monitor.flag","rb");
+  if(monitor_flag){monitor_enabled=1;fclose(monitor_flag);monitor_emit(0,0,0,0,1);}
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
   padInitializeDefault(&pad);
   Nx2Catalog catalog = {0};
@@ -1910,11 +1930,13 @@ int main(int argc, char **argv) {
         int mode = (held & HidNpadButton_ZR) ? 0 :
                    (held & HidNpadButton_L) ? 2 : 1;
         run(game, (held & HidNpadButton_B) != 0, mode);
+        monitor_emit(0,0,0,0,1);
       }
     }
     draw(&catalog, selected);
     svcSleepThread(16666667);
   }
+  monitor_emit(3,0,0,0,1);
   nx2_catalog_free(&catalog);
   consoleExit(NULL);
   return 0;
