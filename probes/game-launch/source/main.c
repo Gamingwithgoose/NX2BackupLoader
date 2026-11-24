@@ -462,6 +462,10 @@ static void write_fault_report(FILE *f, const Nx2Images *images) {
       (unsigned long long)d->far.x, d->pstate,
       (unsigned long long)(uintptr_t)_start,
       (unsigned long long)nx2_fault.tpidr, (unsigned long long)nx2_fault.tlr);
+  row(f,"FAULT_ACCESS_CLASS ec=%02x iss=%08x far_valid_for_data_abort=%u write=%u\n",
+      (unsigned)((d->esr>>26)&63),(unsigned)(d->esr&0x1ffffff),
+      (unsigned)(((d->esr>>26)==0x24||(d->esr>>26)==0x25)&&!(d->esr&(1u<<10))),
+      (unsigned)((d->esr>>6)&1));
   for (unsigned i = 0; i < 29; i++)
     row(f, "FAULT_REGISTER x%u=%016llx\n", i,
         (unsigned long long)d->cpu_gprs[i].x);
@@ -1306,6 +1310,10 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
         }
         diagnostic_shared_cursor++;
       }
+      /* Export the observation tick: recorded map returns and later snapshots
+       * are not simultaneous. Offline analysis must not treat them as such. */
+      row(crash,"MEMORY_OBSERVATION_EPOCH tick=%llu consumed=%u produced=%u\n",
+          (unsigned long long)armGetSystemTick(),diagnostic_shared_cursor,shared_next);
       row(crash,"SHARED_HISTORY_PROGRESS produced=%u consumed=%u pending=%u\n",
           shared_next,diagnostic_shared_cursor,shared_next-diagnostic_shared_cursor);
       uint64_t physical_total=0,physical_used=0;
@@ -1316,6 +1324,10 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       row(crash,"PHYSICAL_ACCOUNTING_CHECK total_before=%llu total_after=%llu result=%08x consistent=%u\n",
           (unsigned long long)physical_total,(unsigned long long)total_after,total_after_rc,
           (unsigned)(R_SUCCEEDED(total_rc)&&R_SUCCEEDED(used_rc)&&R_SUCCEEDED(total_after_rc)&&physical_total==total_after&&physical_used<=physical_total));
+      row(crash,"ACCOUNTING_OBSERVATION tick=%llu total_rc=%08x used_rc=%08x after_rc=%08x stable_total=%u used_within_total=%u\n",
+          (unsigned long long)armGetSystemTick(),total_rc,used_rc,total_after_rc,
+          (unsigned)(R_SUCCEEDED(total_rc)&&R_SUCCEEDED(total_after_rc)&&physical_total==total_after),
+          (unsigned)(R_SUCCEEDED(total_rc)&&R_SUCCEEDED(used_rc)&&physical_used<=physical_total));
       row(crash,"PROCESS_PHYSICAL_SNAPSHOT total_result=%08x used_result=%08x total=%llu used=%llu free=%llu\n",
           total_rc,used_rc,(unsigned long long)physical_total,
           (unsigned long long)physical_used,
@@ -1353,6 +1365,9 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                 (unsigned long long)io_age_ms);
         }
       }
+      row(crash,"GPU_OBSERVATION_MODE mode=%u trace=%u zero_counters_not_proof_of_no_gpu_activity=%u\n",
+          (unsigned)l->nvn_driver_passthrough,(unsigned)l->nvn_gameplay_trace,
+          (unsigned)(l->nvn_driver_passthrough==2));
       row(crash,"GPU_INIT_SNAPSHOT trace_enabled=%u device=%u/%u result=%08x queue=%u/%u result=%08x window=%u/%u result=%08x\n",
           (unsigned)l->nvn_gameplay_trace,
           __atomic_load_n(&l->nvn_device_entered,__ATOMIC_ACQUIRE),
