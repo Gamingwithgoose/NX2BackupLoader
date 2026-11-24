@@ -1185,3 +1185,36 @@ Console test: USB probe followed by launcher exit hung the system, requiring a n
 
 ## Passive memory diagnostic export
 Added observation timestamps and accounting result/consistency fields, explicit GPU observation-mode caveat, CPU exception syndrome classification, and offline scripts/analyze-memory-log.py for observed map/unmap lifetime, overlap candidates, accounting comparison, GPU snapshots and fault-address correlation. No new memory reads of game contents, no changes to mapping, service or GPU behavior. Full-native GPU detail and uncaptured CPU faults remain unavailable. Plugin remains disabled per console test; USB removed. Native build unverified.
+
+
+## 2026-11-24 — Sports Resort memory/GPU diagnostic checkpoint (latest hardware results)
+
+**Current executable checkpoint:** `4f0feb301cea3b1cbe0f5f772ce91963224085bf`, branch `experimental-nup-support`. User built and tested locally; latest logs contain MEMORY_OBSERVATION_EPOCH, ACCOUNTING_OBSERVATION and GPU_OBSERVATION_MODE, confirming the added diagnostic fields. No general compatibility fix or root cause established. This checkpoint supersedes older status statements where they conflict.
+
+### Evidence and interpretation
+- Earlier comparison: `BackupLoaderMKW-crash(20261124-184023).log` and `BackupLoaderMKW-nup(20261124-184022).log`, Sports Resort Switch 2, L+A full-native profile. Prior review recorded 4,382 memory events (2,191 successful returns), no unmatched entries, last complete snapshot 3,758 ms. Event 861 (entry, placeholder ffffffff) was paired with successful return 862; not evidence of a rejected mapping. Full-native GPU counters do not establish absence of GPU activity.
+- Latest directly checked files: `BackupLoaderMKW-crash(20261124-184704).log`, `BackupLoaderMKW-nup(20261124-184703).log`. Title 04008e001f098000, update pkg 1, 48,576 indexed files, eight modules, A/native_present_observed mode 1, GPU tracing enabled by SD flag. Guest entered main. Initial SDK module mapping returned 0xE16 and succeeded on retry; not the terminal failure.
+- 4,212 recorded memory events, 2,106 complete operations: op4 physical map 2,059; op5 physical unmap 44; op1 shared map 3. Every recorded return was zero; no unmatched entry IDs. Three shared-memory metadata samples (IDs 2, 3, 1928) report successful endpoint queries, type 6 and permission 1 matching request. Endpoint samples are not full-range/lifetime proof; successful operations do not establish subsequent access correctness.
+- Fifteen accounting observations all consistent (stable total and used within total); final total 9,462,349,824 bytes, used 7,700,959,232, free 1,761,390,592 (~1.64 GiB). Host allocator total 1,074,855,936, free 753,467,392 (~718.6 MiB), minimum sampled free 733,347,840. No observed exhaustion; this does not exclude a separate resource limit or transient failure. Do not increase host heap based solely on these logs.
+- Primary log has 14 GUEST_MEMORY_ACCOUNTING_CAPPED entries. This is an observed guest/host reporting adjustment, not a proven defect. Final accounting queries continue after GPU startup evidence.
+- Last complete host snapshot: 3,759 ms, stage 10, fault_state=0, guest_main=1, rpc=616, rom_bytes=54,227,653, pending=1, guest_abort=0, host_abort=0, frames=0, nvn_bootstrap=2, getproc=1470, queues=5/5, window=1/1, acquire=1/1, submit=0/0, finish=0/0, present=0/0, ipc=880/880. GPU history 1,218 produced/consumed, zero pending; shared history 4,212 produced/consumed, zero pending. Queue/window results 1 are consistent with boolean success, not necessarily error codes. Device counter 0/0 is not evidence of failed device creation. GPU resource initialization and acquisition observed; no submission or presentation observed. No captured CPU exception. Last snapshot time is not proven crash time. A and L+A last snapshots differ by only 1 ms, but sampling interval limits inference.
+- Earlier service acquisition pctl:s/a/r returned CMIF 0x1015; pl:u and aud:u closure results 0xF601 were previously identified as closure-context events, not established crash causes. No terminal exception or exact cause identified.
+
+### Remaining suspects — preserve these priorities
+| Suspect | Priority | Evidence / limitation |
+|---|---|---|
+| GPU resource use following initialization | High | queues/window/acquire observed; no observed submit or present; no direct GPU hardware fault report |
+| Memory access following successful mapping, including lifetime/validity | High | no mapping rejection, but mapping success and endpoint metadata cannot establish later access correctness |
+| Guest memory accounting adjustments | Medium | capped accounting observed; all sampled physical consistency checks passed; no causal link proven |
+| Shared memory mapping rejection | Low | every recorded memory return successful |
+| Physical memory exhaustion | Low | ~1.64 GiB sampled free |
+| Host allocator exhaustion | Low | ~718.6 MiB sampled free |
+| Unobserved kernel/CPU/GPU termination | Unresolved | internal exception handler did not report a fault; monitor cannot independently capture these events |
+
+### Work completed and stability constraints
+- USB experiments 06f24f7 and d33b9c0: initialization returned 0xF601 in stage one; user subsequently reported a system hang on exiting launcher after USB test. Commit 66a9251 removed Y action, menu label, probe implementation and USB host include. USB on hold, SD behavior unchanged.
+- Independent crash monitor V1–V4: 1488780 foundation, e3073f8 global observations, 8279e59 cooperative evidence, fe5a08a failure-only logging, 4171e8e cursor preservation. V4 user reports four consecutive kaiHEN loading crashes with plugin installed, success on fifth attempt without plugin; status had said running. Strong evidence of incompatibility, exact cause unknown; not proof of debugger attachment (no such attachment implemented). Keep nx2-crash.nso disabled; no V5 implementation yet. User wants actionable error/exception evidence only, no routine successes or warnings, independent survival of launcher failure. Do not require another jailbreak merely to test incremental monitor changes. Direct GPU hardware and independent kernel exception capture remain unavailable.
+- Commit 4f0feb3 added passive observation fields, CPU syndrome classification and offline scripts/analyze-memory-log.py; no mapping permissions, allocation or GPU execution changes. User's newest logs confirm fields present. Current checkpoint is a diagnostic update, not a fix.
+- Local workflow: pull with GitHub Desktop, build.bat, replace NRO; no Actions/PRs. Keep monitor disabled and USB removed. Preserve append-only findings/handoff. Previous working Star Fox baseline remains user-reported; latest comparison tests do not independently revalidate it.
+- Remaining requested comparison: ZR+A instrumented Sports Resort and successful Star Fox baseline, if available, with separate crash and primary logs per launch. No result for those tests in this checkpoint. No new executable modification or console test in this documentation update.
+
