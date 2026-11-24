@@ -975,6 +975,55 @@ static unsigned rom_select_window(Nx2Host *h,uint32_t file){
  h->rom_windows[slot].stamp=++h->rom_window_clock;
  return slot;
 }
+/* Repeated small loose files are cached only on second access. No eager
+ * game scanning or persistent storage writes; NUP stays untouched. */
+static int serve_small_folder_rom(Nx2Host *h,Nx2Launch *l,Nx2Request *r,
+                                  uint32_t file,uint64_t length){
+ if(nx2_nup_active()||!length||length>0x8000U)return 0;
+ for(unsigned i=0;i<8;i++){
+  if(!h->small_rom[i].valid||h->small_rom[i].file!=file)continue;
+  if(r->b>h->small_rom[i].length||
+     r->c>h->small_rom[i].length-r->b)return 0;
+  memcpy(r->buffer,h->small_rom[i].data+(size_t)r->b,(size_t)r->c);
+  h->small_rom[i].stamp=++h->small_clock;
+  __atomic_fetch_add(&h->calls,1,__ATOMIC_RELAXED);
+  __atomic_fetch_add(&h->bytes,r->c,__ATOMIC_RELAXED);
+  __atomic_fetch_add(&h->small_hits,1,__ATOMIC_RELAXED);
+  return 1;
+ }
+ unsigned seen_slot=file&63U;
+ uint32_t identity=file+1U;
+ if(h->small_seen[seen_slot]!=identity){
+  h->small_seen[seen_slot]=identity;
+  return 0;
+ }
+ unsigned victim=0;
+ for(unsigned i=0;i<8;i++){
+  if(!h->small_rom[i].valid){victim=i;break;}
+  if(h->small_rom[i].stamp<h->small_rom[victim].stamp)victim=i;
+ }
+ if(!h->small_rom[victim].data)
+  h->small_rom[victim].data=malloc(0x8000);
+ if(!h->small_rom[victim].data)return 0;
+ Nx2Request full=*r;
+ full.b=0;
+ full.c=length;
+ full.buffer=h->small_rom[victim].data;
+ uint32_t result=serve(h,l,&full);
+ if(result){
+  __atomic_fetch_add(&h->small_fill_failures,1,__ATOMIC_RELAXED);
+  return 0;
+ }
+ h->small_rom[victim].file=file;
+ h->small_rom[victim].length=length;
+ h->small_rom[victim].stamp=++h->small_clock;
+ h->small_rom[victim].valid=1;
+ /* Count delivered guest bytes rather than speculative whole-file bytes. */
+ __atomic_fetch_sub(&h->bytes,length-r->c,__ATOMIC_RELAXED);
+ memcpy(r->buffer,h->small_rom[victim].data+(size_t)r->b,(size_t)r->c);
+ __atomic_fetch_add(&h->small_fills,1,__ATOMIC_RELAXED);
+ return 1;
+}
 static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
  __atomic_store_n(&h->rpc_rom_file,(uint32_t)r->a,__ATOMIC_RELAXED);
  __atomic_store_n(&h->rpc_rom_offset,r->b,__ATOMIC_RELAXED);
@@ -989,6 +1038,10 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
  const uint64_t offset=r->b,bytes=r->c;
  const uint64_t length=rom_extent_length(&l->rom,file);
  if(offset>length || bytes>length-offset)return serve(h,l,r);
+ if(serve_small_folder_rom(h,l,r,file,length)){
+  __atomic_store_n(&h->rpc_rom_phase,7,__ATOMIC_RELEASE);
+  return 0;
+ }
  __atomic_store_n(&h->rpc_rom_phase,2,__ATOMIC_RELEASE);
  unsigned slot=rom_select_window(h,file);
  unsigned streak=h->rom_windows[slot].previous &&
@@ -1083,6 +1136,11 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   return served;
 }
 void nx2_host_close(Nx2Host *h) {
+  for(unsigned i=0;i<8;i++){
+    free(h->small_rom[i].data);
+    h->small_rom[i].data=0;
+    h->small_rom[i].valid=0;
+  }
   for(unsigned i=0;i<4;i++){
     free(h->rom_windows[i].data);
     h->rom_windows[i].data=0;
