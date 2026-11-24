@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <switch.h>
+#include <switch/services/usbhs.h>
 #include <switch2/memory/heap.h>
 static PadState pad;
 /* The crash report is durable at snapshot boundaries, not after every line.
@@ -1779,9 +1780,49 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
   }
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
          "B+A: rebuild index   R+A: Horizon check\n"
-         "X: refresh   +: exit\n\n%s\n",
+         "X: refresh   Y: USB test   +: exit\n\n%s\n",
          outcome);
   consoleUpdate(NULL);
+}
+/* Read-only stage-one USB probe: no interface acquisition or disk writes. */
+static void usb_storage_probe(void) {
+  FILE *f = fopen("sdmc:/BackupLoaderMKW-usb.log", "w");
+  if (!f) {
+    snprintf(outcome, sizeof(outcome), "USB test: cannot open SD diagnostic log");
+    return;
+  }
+  row(f, "USB_PROBE stage=enumeration required_fs=exFAT required_path=/BackupLoaderMKW/games/\n");
+  Result rc = usbHsInitialize();
+  row(f, "USB_INIT rc=%08x\n", (unsigned)rc);
+  if (R_FAILED(rc)) {
+    snprintf(outcome, sizeof(outcome), "USB init failed: %08x (see USB log)", (unsigned)rc);
+    fclose(f);
+    return;
+  }
+  static UsbHsInterface interfaces[16];
+  memset(interfaces, 0, sizeof(interfaces));
+  UsbHsInterfaceFilter filter = {0};
+  filter.Flags = UsbHsInterfaceFilterFlags_bInterfaceClass;
+  filter.bInterfaceClass = 8;
+  s32 count = 0;
+  row(f, "USB_QUERY_BEGIN class=08\n");
+  rc = usbHsQueryAvailableInterfaces(&filter, interfaces, sizeof(interfaces), &count);
+  row(f, "USB_QUERY rc=%08x count=%d\n", (unsigned)rc, (int)count);
+  if (R_SUCCEEDED(rc)) {
+    for (s32 i = 0; i < count && i < 16; ++i) {
+      row(f, "USB_INTERFACE index=%d bus=%u device=%u id=%d path=%.64s subclass=%02x protocol=%02x\n",
+          (int)i, (unsigned)interfaces[i].busID, (unsigned)interfaces[i].deviceID,
+          (int)interfaces[i].inf.ID, interfaces[i].pathstr,
+          (unsigned)interfaces[i].inf.interface_desc.bInterfaceSubClass,
+          (unsigned)interfaces[i].inf.interface_desc.bInterfaceProtocol);
+    }
+    snprintf(outcome, sizeof(outcome), "USB mass storage: %d interfaces; see USB log", (int)count);
+  } else {
+    snprintf(outcome, sizeof(outcome), "USB query failed: %08x (see USB log)", (unsigned)rc);
+  }
+  usbHsExit();
+  row(f, "USB_PROBE_END filesystem=NOT_TESTED path=NOT_TESTED\n");
+  fclose(f);
 }
 int main(int argc, char **argv) {
   (void)argc;
@@ -1799,7 +1840,7 @@ int main(int argc, char **argv) {
     u64 down = padGetButtonsDown(&pad), held = padGetButtons(&pad);
     if (down & HidNpadButton_Plus)
       break;
-    if (down & HidNpadButton_X) {
+    if (down & HidNpadButton_Y)\n      usb_storage_probe();\n    if (down & HidNpadButton_X) {
       nx2_catalog_free(&catalog);
       nx2_catalog("sdmc:/games", &catalog);
       selected = 0;
