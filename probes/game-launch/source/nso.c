@@ -124,7 +124,7 @@ int nx2_prepare_nso(const char *path,const char *expected,Nx2Sha256 hash,void **
                 goto finish;
             }
             fprintf(stderr,
-                "WARNING_NSO_FINAL_EXTENT_TRIAL module=%s segment=%u declared_packed=%u available=%llu missing=%llu policy=decode_and_verify_only\\n",
+                "WARNING_NSO_FINAL_EXTENT_TRIAL module=%s segment=%u declared_packed=%u available=%llu missing=%llu policy=decode_and_verify_only\n",
                 path,i,packed[i],(unsigned long long)available,
                 (unsigned long long)(packed[i]-available));
             packed[i]=(uint32_t)available;
