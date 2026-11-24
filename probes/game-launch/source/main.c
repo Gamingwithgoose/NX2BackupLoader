@@ -822,6 +822,21 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
   unsigned affinity_recovery_stage=0;
   int affinity_recovery_armed=1;
+  /* Experiment using the previously successful recovery configuration
+   * preventively, before a stall, instead of waiting until the game has
+   * already lost rendering progress. Opt in with ZR+A only; normal A and
+   * L+A retain their previous scheduling policy. Native NVN/IPC behavior
+   * is never substituted. */
+  if(nvn_profile==0){
+    affinity_recovery_stage=1;
+    affinity_recovery_armed=0;
+    row(f,"SCHEDULER_PREVENTIVE_POLICY mode=ZR+A stage=1 "
+          "reason=preemptive_affinity_experiment\n");
+    if(crash)row(crash,"SCHEDULER_PREVENTIVE_POLICY mode=ZR+A stage=1\n");
+    attempt_stall_affinity_recovery(f,crash,&worker,guest_core,
+                                    &storage_worker,nx2_storage_core,1);
+    if(crash)fflush(crash);
+  }
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   u64 trace_sample = began;
   u64 ipc_event_flush=began;
