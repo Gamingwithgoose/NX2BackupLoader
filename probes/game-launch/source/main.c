@@ -943,6 +943,22 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
                                           affinity_recovery_stage);
           if(crash)fflush(crash);
         }
+        if(!game->is_nup){
+          row(f,"FOLDER_HOT_CACHE_STATS hits=%llu fills=%llu fill_failures=%llu "
+                "read_ahead_hits=%llu read_ahead_fills=%llu\n",
+              (unsigned long long)host->small_hits,
+              (unsigned long long)host->small_fills,
+              (unsigned long long)host->small_fill_failures,
+              (unsigned long long)host->read_ahead_hits,
+              (unsigned long long)host->read_ahead_fills);
+          if(crash)row(crash,"FOLDER_HOT_CACHE_STATS hits=%llu fills=%llu "
+                "fill_failures=%llu read_ahead_hits=%llu read_ahead_fills=%llu\n",
+              (unsigned long long)host->small_hits,
+              (unsigned long long)host->small_fills,
+              (unsigned long long)host->small_fill_failures,
+              (unsigned long long)host->read_ahead_hits,
+              (unsigned long long)host->read_ahead_fills);
+        }
         u64 ipc_now=__atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE);
         u64 rom_now=__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE);
         u32 slot=__atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE);
