@@ -906,6 +906,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   uint64_t diagnostic_min_free=UINT64_MAX, diagnostic_max_io_age=0;
   uint64_t diagnostic_previous_tick=began, diagnostic_sequence=0;
   uint32_t diagnostic_gpu_cursor=0,diagnostic_shared_cursor=0;
+  uint64_t diagnostic_memory_ok=0,diagnostic_memory_failed=0,diagnostic_memory_omitted=0;
+  uint64_t diagnostic_gpu_omitted=0;
   u64 trace_sample = began;
   u64 ipc_event_flush=began;
   uint32_t ipc_event_cursor=0,ipc_event_dropped=0;
@@ -1276,6 +1278,9 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           (unsigned long long)allocator_total,(unsigned long long)allocator_free,
           (unsigned long long)diagnostic_min_free);
       diagnostic_previous_tick=crash_sample;
+      /* Keep startup evidence; aggregate routine gameplay records.
+       * Sampling and omission are explicitly labelled, never inferred as success. */
+      int compact_gameplay=frames!=0;
       uint32_t shared_next=__atomic_load_n(&l->shared_trace_next,__ATOMIC_ACQUIRE);
       uint32_t shared_pending=shared_next-diagnostic_shared_cursor;
       if(shared_pending>NX2_SHARED_TRACE_SLOTS){
@@ -1296,7 +1301,14 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
         if(__atomic_load_n(&e->sequence,__ATOMIC_ACQUIRE)!=seq)break;
         char owner[9]={0};
         for(unsigned k=0;k<8;k++)owner[k]=(char)(v.owner>>(8*k));
-        row(crash,"SHARED_MEMORY_EVENT seq=%u id=%u op=%u phase=%u handle=%08x owner=%s address=%016llx bytes=%llu perm=%x result=%08x tick=%llu tls=%016llx caller=%016llx\n",
+        if(v.phase==2){
+          if(v.result)diagnostic_memory_failed++;
+          else diagnostic_memory_ok++;
+        }
+        int keep_memory=!compact_gameplay || v.operation==1 ||
+            (v.phase==2 && v.result) || shared_next-ticket<=16;
+        if(!keep_memory)diagnostic_memory_omitted++;
+        if(keep_memory)row(crash,"SHARED_MEMORY_EVENT seq=%u id=%u op=%u phase=%u handle=%08x owner=%s address=%016llx bytes=%llu perm=%x result=%08x tick=%llu tls=%016llx caller=%016llx\n",
             seq,v.id,v.operation,v.phase,v.handle,owner,
             (unsigned long long)v.address,(unsigned long long)v.bytes,v.permission,v.result,
             (unsigned long long)v.tick,(unsigned long long)v.tls,(unsigned long long)v.caller);
@@ -1312,6 +1324,9 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       }
       /* Export the observation tick: recorded map returns and later snapshots
        * are not simultaneous. Offline analysis must not treat them as such. */
+      row(crash,"MEMORY_LOG_SUMMARY compact=%u observed_ok=%llu observed_failed=%llu omitted_records=%llu\n",
+          (unsigned)compact_gameplay,(unsigned long long)diagnostic_memory_ok,
+          (unsigned long long)diagnostic_memory_failed,(unsigned long long)diagnostic_memory_omitted);
       row(crash,"MEMORY_OBSERVATION_EPOCH tick=%llu consumed=%u produced=%u\n",
           (unsigned long long)armGetSystemTick(),diagnostic_shared_cursor,shared_next);
       row(crash,"SHARED_HISTORY_PROGRESS produced=%u consumed=%u pending=%u\n",
@@ -1400,19 +1415,23 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           diagnostic_gpu_cursor=produced-NX2_GPU_BOUNDARY_RING_SLOTS;
         }
         /* Limit per-snapshot output; retain cursor for the next sample. */
-        for(unsigned n=0;n<256 && diagnostic_gpu_cursor!=produced;n++){
+        for(unsigned n=0;n<NX2_GPU_BOUNDARY_RING_SLOTS && diagnostic_gpu_cursor!=produced;n++){
           uint32_t ticket=diagnostic_gpu_cursor;
           const Nx2GpuBoundary *source=&l->gpu_boundary[ticket%NX2_GPU_BOUNDARY_RING_SLOTS];
           uint32_t seq=__atomic_load_n(&source->sequence,__ATOMIC_ACQUIRE);
           if(seq!=ticket+1)break;
           Nx2GpuBoundary event=*source;
           if(__atomic_load_n(&source->sequence,__ATOMIC_ACQUIRE)!=seq)break;
-          row(crash,"GPU_STARTUP_EVENT seq=%u kind=%u tick=%llu tls=%016llx caller=%016llx queue=%016llx window=%016llx texture=%d detail=%016llx\n",
+          int keep_gpu=!compact_gameplay || produced-ticket<=16;
+          if(!keep_gpu)diagnostic_gpu_omitted++;
+          if(keep_gpu)row(crash,"GPU_STARTUP_EVENT seq=%u kind=%u tick=%llu tls=%016llx caller=%016llx queue=%016llx window=%016llx texture=%d detail=%016llx\n",
               seq,event.kind,(unsigned long long)event.tick,(unsigned long long)event.thread_tls,
               (unsigned long long)event.caller,(unsigned long long)event.queue,
               (unsigned long long)event.window,event.texture_index,(unsigned long long)event.detail);
           diagnostic_gpu_cursor++;
         }
+        row(crash,"GPU_LOG_SUMMARY compact=%u omitted_records=%llu\n",
+            (unsigned)compact_gameplay,(unsigned long long)diagnostic_gpu_omitted);
         row(crash,"GPU_HISTORY_PROGRESS produced=%u consumed=%u pending=%u\n",produced,diagnostic_gpu_cursor,produced-diagnostic_gpu_cursor);
       }
       row(crash,"GUEST_FSP_ROUTE_SNAPSHOT stage=%u cmd=%u object=%08x result=%08x child=%08x\n",
