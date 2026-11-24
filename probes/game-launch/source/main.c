@@ -587,6 +587,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
       return;
     }
+    row(f,"NUP_CONTENT_SELECTION result=%s\n",nx2_nup_probe_error());
     size_t npdm_size=0;
     uint64_t npdm_file_size=0;
     unsigned npdm_codec=0;
