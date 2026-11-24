@@ -1155,3 +1155,7 @@ Added GPU virtual pool map events 64/65 (pool, opaque request-array identity, co
 
 ### 2026-11-24 — prelaunch regression correction
 Kirby hardware report refused preparation of sdk module 4: Unsupported simple SVC wrapper 8 at 180ba8; game entry was not attempted. Removed the nine newly registered thread/synchronization/permission SVC diagnostic hooks from the patch plan. The resolver and its safety checks remain unchanged. The wrappers are inactive; their coverage must not be assumed. GPU lifecycle, virtual pool mapping, RO IPC and existing shared/physical memory diagnostic registrations remain unchanged. Hardware retest required.
+
+
+## 2026-11-24 — USB storage experiment
+Stage one (06f24f74): Y in launcher calls native usbHsInitialize and queries available class 08 mass-storage interfaces without acquiring them. Logs results to sdmc:/BackupLoaderMKW-usb.log. Target filesystem exFAT; required root /BackupLoaderMKW/games/. Neither filesystem nor directory validation is implemented yet. Hardware and native build untested; existing SD catalog unchanged.
