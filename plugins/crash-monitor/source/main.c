@@ -2,19 +2,16 @@
 #include <switch.h>
 #include <kaihen/plugin.h>
 #include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
+#include <stdlib.h>
 #include "monitor_wire.h"
 u32 __nx_applet_type=AppletType_None;
 size_t __nx_heap_size=0x400000;
 void __appInit(void){}
 void __appExit(void){}
 static FsFileSystem sd;
-static void log_line(const char *kind,const Nx2MonitorSample *s,Result rc){
-    char line[256];
-    int n=snprintf(line,sizeof(line),"%s now=%llu pid=%llu title=%016llx phase=%u stage=%u frames=%llu sample=%llu rc=%08x\n",
-        kind,(unsigned long long)armGetSystemTick(),(unsigned long long)s->pid,
-        (unsigned long long)s->title,s->phase,s->stage,(unsigned long long)s->frames,
-        (unsigned long long)s->tick,(unsigned)rc);
-    if(n<=0 || n>=(int)sizeof(line))return;
+static void append(const char *line,size_t n){
     const char *path="/kaihen/nx2-crash-monitor.log";
     FsFile f={0};
     if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write|FsOpenMode_Append,&f))){
@@ -22,11 +19,108 @@ static void log_line(const char *kind,const Nx2MonitorSample *s,Result rc){
         if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write|FsOpenMode_Append,&f)))return;
     }
     s64 size=0;
-    if(R_SUCCEEDED(fsFileGetSize(&f,&size)) && size<4194304){
+    if(R_SUCCEEDED(fsFileGetSize(&f,&size))){
+        if(size+(s64)n>8388608){
+            fsFileClose(&f);
+            fsFsDeleteFile(&sd,"/kaihen/nx2-crash-monitor.previous.log");
+            if(R_FAILED(fsFsRenameFile(&sd,path,"/kaihen/nx2-crash-monitor.previous.log")))return;
+            if(R_FAILED(fsFsCreateFile(&sd,path,0,0)))return;
+            if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write|FsOpenMode_Append,&f)))return;
+            size=0;
+        }
         if(R_SUCCEEDED(fsFileSetSize(&f,size+n)))
             fsFileWrite(&f,size,line,n,FsWriteOption_Flush);
     }
     fsFileClose(&f);
+}
+static void note(const char *fmt,...){
+    char buf[512];int p=snprintf(buf,sizeof(buf),"tick=%llu ",(unsigned long long)armGetSystemTick());
+    if(p<0||p>=(int)sizeof(buf))return;
+    va_list ap;va_start(ap,fmt);
+    int k=vsnprintf(buf+p,sizeof(buf)-p,fmt,ap);va_end(ap);
+    if(k<0)return;
+    size_t len=(size_t)p+(size_t)k;
+    if(len>=sizeof(buf)-1)len=sizeof(buf)-2;
+    buf[len++]='\n';append(buf,len);
+}
+static void log_line(const char *kind,const Nx2MonitorSample *s,Result rc){
+    note("%s pid=%llu title=%016llx phase=%u stage=%u frames=%llu sample=%llu rc=%08x",
+        kind,(unsigned long long)s->pid,(unsigned long long)s->title,s->phase,s->stage,
+        (unsigned long long)s->frames,(unsigned long long)s->tick,(unsigned)rc);
+}
+typedef struct {unsigned poll, global, jit, processes, memory, loader, timeout, startup;} Config;
+static Config cfg={2,1,1,1,1,1,20,180};
+static void reload_config(void){
+    FsFile f={0};char buf[1024];u64 got=0;
+    if(R_FAILED(fsFsOpenFile(&sd,"/kaihen/nx2-crash.ini",FsOpenMode_Read,&f)))return;
+    Result rc=fsFileRead(&f,0,buf,sizeof(buf)-1,FsReadOption_None,&got);
+    fsFileClose(&f);if(R_FAILED(rc)||got>=sizeof(buf))return;
+    buf[got]=0;
+    Config c={2,1,1,1,1,1,20,180};
+    char *line=buf;
+    while(line && *line){
+        char *next=strchr(line,'\n');if(next)*next++=0;
+        char key[32];unsigned v;
+        if(sscanf(line," %31[a-z_]=%u",key,&v)==2){
+            if(!strcmp(key,"poll_seconds")&&v>=2&&v<=30)c.poll=v;
+            else if(!strcmp(key,"global"))c.global=!!v;
+            else if(!strcmp(key,"jit"))c.jit=!!v;
+            else if(!strcmp(key,"processes"))c.processes=!!v;
+            else if(!strcmp(key,"memory"))c.memory=!!v;
+            else if(!strcmp(key,"loader"))c.loader=!!v;
+            else if(!strcmp(key,"timeout_seconds")&&v>=10&&v<=600)c.timeout=v;
+            else if(!strcmp(key,"startup_seconds")&&v>=30&&v<=900)c.startup=v;
+        }
+        line=next;
+    }
+    if(memcmp(&cfg,&c,sizeof(c))){cfg=c;note("CONFIG_APPLIED poll=%u global=%u jit=%u processes=%u memory=%u loader=%u timeout=%u startup=%u",c.poll,c.global,c.jit,c.processes,c.memory,c.loader,c.timeout,c.startup);}
+}
+#define MAX_PIDS 256
+static u64 old_pids[MAX_PIDS],new_pids[MAX_PIDS],old_jit[64],new_jit[64];
+static unsigned old_count,old_jit_count;
+static int have_list,have_jit,pm_ready;
+static u64 old_app,old_title;
+static Result old_list_rc=~0u,old_jit_rc=~0u,old_app_rc=~0u;
+static int contains(const u64 *list,unsigned n,u64 pid){for(unsigned i=0;i<n;i++)if(list[i]==pid)return 1;return 0;}
+static u64 identify(u64 pid){u64 title=0;if(pm_ready)pmdmntGetProgramId(&title,pid);return title;}
+static void global_poll(void){
+    if(!pm_ready){
+        Result rc=pmdmntInitialize();
+        note("PM_INIT rc=%08x",(unsigned)rc);
+        pm_ready=R_SUCCEEDED(rc);
+    }
+    if(cfg.processes){
+        s32 count=0;Result rc=svcGetProcessList(&count,new_pids,MAX_PIDS);
+        if(rc!=old_list_rc){note("PROCESS_LIST rc=%08x count=%d",(unsigned)rc,count);old_list_rc=rc;}
+        if(R_SUCCEEDED(rc)&&count>=0&&count<=MAX_PIDS){
+            if(have_list)for(unsigned i=0;i<old_count;i++)if(!contains(new_pids,count,old_pids[i]))note("PROCESS_GONE pid=%llu reason=unknown",(unsigned long long)old_pids[i]);
+            for(unsigned i=0;i<(unsigned)count;i++)if(!have_list||!contains(old_pids,old_count,new_pids[i]))note("PROCESS_SEEN pid=%llu title=%016llx",(unsigned long long)new_pids[i],(unsigned long long)identify(new_pids[i]));
+            memcpy(old_pids,new_pids,count*sizeof(u64));old_count=count;have_list=1;
+        }
+    }
+    if(pm_ready){
+        u64 app=0;Result rc=pmdmntGetApplicationProcessId(&app);
+        if(rc!=old_app_rc||app!=old_app){
+            if(old_app)note("APPLICATION_CHANGED previous_pid=%llu previous_title=%016llx reason=unknown",(unsigned long long)old_app,(unsigned long long)old_title);
+            old_app=R_SUCCEEDED(rc)?app:0;old_title=identify(old_app);
+            note("APPLICATION pid=%llu title=%016llx rc=%08x",(unsigned long long)old_app,(unsigned long long)old_title,(unsigned)rc);old_app_rc=rc;
+        }
+        if(cfg.jit){
+            u32 count=0;rc=pmdmntGetJitDebugProcessIdList(&count,new_jit,64);
+            if(rc!=old_jit_rc){note("JIT_QUERY rc=%08x count=%u",(unsigned)rc,count);old_jit_rc=rc;}
+            if(R_SUCCEEDED(rc)&&count<=64){
+                for(u32 i=0;i<count;i++)if(!have_jit||!contains(old_jit,old_jit_count,new_jit[i]))note("JIT_DEBUG_PENDING pid=%llu title=%016llx",(unsigned long long)new_jit[i],(unsigned long long)identify(new_jit[i]));
+                memcpy(old_jit,new_jit,count*sizeof(u64));old_jit_count=count;have_jit=1;
+            }
+        }
+    }
+}
+static void memory_poll(void){
+    u64 total=0,used=0,self=0;Result a=svcGetSystemInfo(&total,SystemInfoType_TotalPhysicalMemorySize,0,0);
+    Result b=svcGetSystemInfo(&used,SystemInfoType_UsedPhysicalMemorySize,0,0);
+    Result c=svcGetInfo(&self,InfoType_UsedMemorySize,CUR_PROCESS_HANDLE,0);
+    s64 free=0;Result d=fsFsGetFreeSpace(&sd,"/",&free);
+    note("MEMORY pool=0 total=%llu used=%llu self=%llu sd_free=%lld results=%08x,%08x,%08x,%08x",(unsigned long long)total,(unsigned long long)used,(unsigned long long)self,(long long)free,(unsigned)a,(unsigned)b,(unsigned)c,(unsigned)d);
 }
 static int read_sample(Nx2MonitorSample *s){
     FsFile f={0};u64 got=0;
@@ -49,14 +143,19 @@ int main(void){
     rc=svcSignalEvent(ready);
     if(R_SUCCEEDED(rc)){
         int warned=0;
+        u64 last_memory=0,last_config=0;
         for(;;){
-            if(read_sample(&next)&&next.tick>=boot&&next.tick<=armGetSystemTick()&&next.tick!=last.tick){
+            u64 now=armGetSystemTick();
+            if(!last_config||armTicksToNs(now-last_config)>=5000000000ULL){reload_config();last_config=now;}
+            if(cfg.global)global_poll();
+            if(cfg.memory&&(!last_memory||armTicksToNs(now-last_memory)>=30000000000ULL)){memory_poll();last_memory=now;}
+            if(cfg.loader&&read_sample(&next)&&next.tick>=boot&&next.tick<=armGetSystemTick()&&next.tick!=last.tick){
                 if(warned)log_line("HEARTBEAT_RESUMED",&next,0);
                 last=next;warned=0;
                 log_line("HEARTBEAT",&last,0);
             }
-            if(last.tick && (last.phase==1||last.phase==2) && !warned &&
-               armTicksToNs(armGetSystemTick()-last.tick)> (last.phase==1?180000000000ULL:20000000000ULL)){
+            if(cfg.loader&&last.tick && (last.phase==1||last.phase==2) && !warned &&
+               armTicksToNs(armGetSystemTick()-last.tick)> ((u64)(last.phase==1?cfg.startup:cfg.timeout)*1000000000ULL)){
                 warned=1;
                 log_line("HEARTBEAT_TIMEOUT_NOT_PROOF_OF_CRASH",&last,0);
                 Result p=pmdmntInitialize();
@@ -67,7 +166,7 @@ int main(void){
                     pmdmntExit();
                 }else log_line("PROCESS_QUERY_UNAVAILABLE",&last,p);
             }
-            svcSleepThread(2000000000LL);
+            svcSleepThread((s64)cfg.poll*1000000000LL);
         }
     }
     fsFsClose(&sd);fsExit();pluginRuntimeExit();return rc;

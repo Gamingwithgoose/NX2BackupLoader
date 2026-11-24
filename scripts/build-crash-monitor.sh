@@ -9,3 +9,5 @@ make -C plugins/crash-monitor
 mkdir -p release/kaihen/plugins
 cp plugins/crash-monitor/nx2-crash.nso release/kaihen/plugins/
 touch release/kaihen/nx2-monitor.flag
+
+cp plugins/crash-monitor/nx2-crash.ini release/kaihen/nx2-crash.ini
