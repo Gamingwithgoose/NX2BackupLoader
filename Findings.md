@@ -1177,3 +1177,7 @@ Launcher writes alternating bounded evidence snapshots every two seconds when mo
 
 ## Crash monitor V4 — failure-only logging
 Launcher appends explicit failure records to /kaihen/nx2-errors.pending while the independent plugin drains complete records into nx2-crash-monitor.log, with persisted cursor. IPC nonzero results and explicit rejects, FSP/NVN failure results, CPU report and explicit abnormal stop labels are included. No successful events, ordinary warnings, heartbeat records, startup records or full periodic snapshots in the monitor log. Tiny heartbeat mailbox still updated during menu/gameplay; existing launcher logs unchanged. Global JIT pending observations and monitor API failures remain; process disappearance and heartbeat timeout alone are not logged as confirmed crashes. No new direct GPU/kernel capture, native build/hardware unverified. USB untouched.
+
+
+## USB probe withdrawn
+Console test: USB probe followed by launcher exit hung the system, requiring a new jailbreak. Removed Y binding, menu label, usb:hs/usb:ds probe implementation and USB host header from launcher. No USB storage support claimed. Existing SD behavior retained. V4 plugin separately implicated in four startup failures; keep disabled pending review. Native build unverified.

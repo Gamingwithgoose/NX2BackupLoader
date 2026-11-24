@@ -17,7 +17,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <switch.h>
-#include <switch/services/usbhs.h>
 #include <switch2/memory/heap.h>
 static PadState pad;
 /* The crash report is durable at snapshot boundaries, not after every line.
@@ -1842,66 +1841,11 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
   }
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
          "B+A: rebuild index   R+A: Horizon check\n"
-         "X: refresh   Y: USB test   +: exit\n\n%s\n",
+         "X: refresh   +: exit\n\n%s\n",
          outcome);
   consoleUpdate(NULL);
 }
 /* Stage two: service connection and read-only enumeration diagnostics. */
-static void usb_storage_probe(void) {
-  FILE *f = fopen("sdmc:/BackupLoaderMKW-usb.log", "a");
-  if (!f) {
-    snprintf(outcome, sizeof(outcome), "USB test: cannot open SD diagnostic log");
-    return;
-  }
-  row(f, "\nUSB_PROBE stage=2 tick=%llu required_fs=exFAT required_path=/BackupLoaderMKW/games/\n",
-      (unsigned long long)armGetSystemTick());
-  const char *names[] = {"usb:hs", "usb:ds"};
-  for (unsigned i = 0; i < sizeof(names)/sizeof(names[0]); ++i) {
-    Service srv = {0};
-    row(f, "USB_SERVICE_OPEN_BEGIN name=%s\n", names[i]);
-    Result rc = smGetService(&srv, names[i]);
-    row(f, "USB_SERVICE_OPEN name=%s rc=%08x\n", names[i], (unsigned)rc);
-    if (R_SUCCEEDED(rc)) {
-      serviceClose(&srv);
-      row(f, "USB_SERVICE_CLOSED name=%s\n", names[i]);
-    }
-  }
-  row(f, "USB_INIT_BEGIN\n");
-  Result rc = usbHsInitialize();
-  row(f, "USB_INIT rc=%08x module=%u description=%u\n", (unsigned)rc,
-      (unsigned)(rc & 0x1ff), (unsigned)((rc >> 9) & 0x1fff));
-  if (R_FAILED(rc)) {
-    snprintf(outcome, sizeof(outcome), "USB init failed: %08x (see USB log)", (unsigned)rc);
-    row(f, "USB_PROBE_END filesystem=NOT_TESTED path=NOT_TESTED\n");
-    fclose(f);
-    return;
-  }
-  static UsbHsInterface interfaces[16];
-  UsbHsInterfaceFilter filter = {0};
-  filter.Flags = UsbHsInterfaceFilterFlags_bInterfaceClass;
-  filter.bInterfaceClass = 8;
-  s32 count = 0;
-  for (unsigned pass = 0; pass < 2; ++pass) {
-    memset(interfaces, 0, sizeof(interfaces));
-    count = 0;
-    row(f, "USB_QUERY_BEGIN type=%s class=08\n", pass ? "available" : "all");
-    rc = pass ? usbHsQueryAvailableInterfaces(&filter, interfaces, sizeof(interfaces), &count)
-              : usbHsQueryAllInterfaces(&filter, interfaces, sizeof(interfaces), &count);
-    row(f, "USB_QUERY type=%s rc=%08x count=%d\n", pass ? "available" : "all", (unsigned)rc, (int)count);
-    if (R_SUCCEEDED(rc)) {
-      for (s32 i = 0; i < count && i < 16; ++i)
-        row(f, "USB_INTERFACE index=%d bus=%u device=%u id=%d path=%.64s subclass=%02x protocol=%02x\n",
-            (int)i, (unsigned)interfaces[i].busID, (unsigned)interfaces[i].deviceID,
-            (int)interfaces[i].inf.ID, interfaces[i].pathstr,
-            (unsigned)interfaces[i].inf.interface_desc.bInterfaceSubClass,
-            (unsigned)interfaces[i].inf.interface_desc.bInterfaceProtocol);
-    }
-  }
-  snprintf(outcome, sizeof(outcome), "USB test finished; see USB log");
-  usbHsExit();
-  row(f, "USB_PROBE_END filesystem=NOT_TESTED path=NOT_TESTED\n");
-  fclose(f);
-}
 int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
@@ -1921,8 +1865,6 @@ int main(int argc, char **argv) {
     u64 down = padGetButtonsDown(&pad), held = padGetButtons(&pad);
     if (down & HidNpadButton_Plus)
       break;
-    if (down & HidNpadButton_Y)
-      usb_storage_probe();
     if (down & HidNpadButton_X) {
       nx2_catalog_free(&catalog);
       nx2_catalog("sdmc:/games", &catalog);
