@@ -693,7 +693,7 @@ uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){
  * Owner is packed as eight ASCII bytes. Sequence is published last. */
 static void shared_event(uint32_t id,uint32_t op,uint32_t phase,uint32_t h,
                          uint64_t address,uint64_t bytes,uint32_t perm,
-                         uint32_t rc,uintptr_t caller,const char owner[9]){
+                         uint32_t rc,uintptr_t caller,const char *owner){
  Nx2Launch *l=nx2_launch;
  uint64_t tls=0,packed=0;
  __asm__ volatile("mrs %0,tpidrro_el0":"=r"(tls));
