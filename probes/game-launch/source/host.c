@@ -60,8 +60,8 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   int n;
   if(guest_id)
     n=snprintf(h->save_root,sizeof(h->save_root),
-               "/switch/BackupLoaderMKW/saves/title-%016llx",
-               (unsigned long long)guest_id);
+               "/switch/BackupLoaderMKW/saves/%s [%016llx]",
+               save_key,(unsigned long long)guest_id);
   else
     n=snprintf(h->save_root,sizeof(h->save_root),
                "/switch/BackupLoaderMKW/saves/%s",save_key);
