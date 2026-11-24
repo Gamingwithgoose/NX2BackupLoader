@@ -71,6 +71,25 @@ static void sha256(const unsigned char *data, size_t size, unsigned char out[32]
   for (unsigned i=0;i<8;i++) for(unsigned j=0;j<4;j++)
     out[4*i+j]=(unsigned char)(h[i]>>(24-8*j));
 }
+/* Select one complete package, preferring a later full update.
+ * This is selection, not a synthetic patch overlay. */
+static int nup_select_runnable(const unsigned char *toc,uint32_t packages,
+                               uint32_t *selected,int *updated){
+  uint32_t base=UINT32_MAX,update=UINT32_MAX,standalone=UINT32_MAX;
+  for(uint32_t i=0;i<packages;i++){
+    const unsigned char *p=toc+48+(size_t)i*64;
+    if(rd32(p+12)==UINT32_MAX||rd32(p+16)==UINT32_MAX)continue;
+    if(p[24]==0 && base==UINT32_MAX)base=i;
+    else if(p[24]==1){
+      if(p[25]&1)standalone=i;
+      else update=i;
+    }
+  }
+  if(update!=UINT32_MAX){*selected=update;*updated=1;return 1;}
+  if(base!=UINT32_MAX){*selected=base;*updated=0;return 1;}
+  if(standalone!=UINT32_MAX){*selected=standalone;*updated=1;return 1;}
+  return 0;
+}
 static const char *probe_error = "Not checked";
 static char probe_details[160];
 const char *nx2_nup_probe_error(void) { return probe_error; }
@@ -129,26 +148,29 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
       probe_error=probe_details;
       goto done;
     }
-    if (kind==0 || (kind==1 && (flags&1))) {
-      if(exefs==UINT32_MAX || romfs==UINT32_MAX) {
-        snprintf(probe_details,sizeof(probe_details),
-          "Runnable pkg %u missing ExeFS/RomFS (exefs=%u romfs=%u)",i,exefs,romfs);
-        probe_error=probe_details;
-        goto done;
-      }
-      if(title_id)*title_id=id;
-      if(files)*files=nfiles;
-      ok=1;
-      probe_error=kind==0?"Ready for experimental launch":
-                           "Standalone update: experimental launch";
-      break;
+    /* Do not reject a partial base here: a later complete update can
+     * supply an executable RomFS view. Selection happens after validation. */
+    (void)id;
+  }
+  uint32_t selected=UINT32_MAX;
+  int selected_update=0;
+  if(nup_select_runnable(toc,packages,&selected,&selected_update)){
+    const unsigned char *p=toc+48+(size_t)selected*64;
+    /* Preserve the base application identity when an update is selected. */
+    uint64_t id=rd64(p);
+    if(selected_update)for(uint32_t i=0;i<packages;i++){
+      const unsigned char *base=toc+48+(size_t)i*64;
+      if(base[24]==0){id=rd64(base);break;}
     }
-    if(i==0) {
-      snprintf(probe_details,sizeof(probe_details),
-        "No base game: first pkg kind=%u flags=%u id=%016llx",
-        kind,flags,(unsigned long long)id);
-      probe_error=probe_details;
-    }
+    if(title_id)*title_id=id;
+    if(files)*files=nfiles;
+    ok=1;
+    snprintf(probe_details,sizeof(probe_details),
+      "Ready: %s pkg %u (complete ExeFS+RomFS)",
+      selected_update?"update":"base",selected);
+    probe_error=probe_details;
+  }else{
+    probe_error="No complete runnable base/update ExeFS+RomFS package";
   }
 done:
   free(toc);
@@ -328,16 +350,15 @@ int nx2_nup_open(const char *path) {
   m.exefs_dir=m.romfs_dir=UINT32_MAX;
   for(unsigned j=0;j<2;j++)m.cached_file[j]=UINT32_MAX;
   for(unsigned j=0;j<2;j++)large_stream[j].file=UINT32_MAX;
-  for(uint32_t i=0;i<pc;i++){
-    const unsigned char *p=toc+48+(size_t)i*64;
-    if(p[24]==0 || (p[24]==1 && (p[25]&1))){
-      m.exefs_dir=rd32(p+12);
-      m.romfs_dir=rd32(p+16);
-      m.meta_offset=rd64(p+32);
-      m.meta_size=rd32(p+40);
-      break;
-    }
-  }
+  uint32_t selected=UINT32_MAX;
+  int selected_update=0;
+  probe_error="No complete runnable base/update ExeFS+RomFS package";
+  if(!nup_select_runnable(toc,pc,&selected,&selected_update))goto fail;
+  const unsigned char *chosen=toc+48+(size_t)selected*64;
+  m.exefs_dir=rd32(chosen+12);
+  m.romfs_dir=rd32(chosen+16);
+  m.meta_offset=rd64(chosen+32);
+  m.meta_size=rd32(chosen+40);
   probe_error="NUP executable or RomFS root invalid";
   if(m.exefs_dir>=nd||m.romfs_dir>=nd)goto fail;
   probe_error="NUP invalid directory child/metadata";
@@ -367,7 +388,10 @@ int nx2_nup_open(const char *path) {
        (codec==0 && stored!=size))goto fail;
   }
   mounted=m;
-  probe_error="NUP mounted successfully";
+  snprintf(probe_details,sizeof(probe_details),
+    "NUP mounted %s pkg %u (complete ExeFS+RomFS)",
+    selected_update?"update":"base",selected);
+  probe_error=probe_details;
   return 1;
 fail:
   free(toc);
