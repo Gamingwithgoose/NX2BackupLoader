@@ -361,6 +361,46 @@ static void isolate_watchdog_core(FILE *f,int guest_core){
       host_core,spare,guest_core,nx2_storage_core,moved,
       (unsigned long long)allowed);
 }
+/* One-shot stall recovery: permit the already-created guest and storage
+ * threads to migrate among actual kernel-allowed CPUs. Previously each
+ * thread was pinned to exactly one CPU even if the scheduler could legally
+ * execute it elsewhere. This is a genuine scheduling change, not a GPU/IPC
+ * success stub; it cannot unblock a real kernel fence or broken guest lock.
+ * Preserve each thread's original preferred core. The kernel rejects
+ * unsupported masks; no thread is recreated and no handles are replaced. */
+static void attempt_stall_affinity_recovery(FILE *f,FILE *crash,
+    Thread *guest, int guest_core,Thread *storage,int storage_core){
+ u64 allowed=0;
+ Result query=svcGetInfo(&allowed,InfoType_CoreMask,CUR_PROCESS_HANDLE,0);
+ if(R_FAILED(query) || guest_core<0 || storage_core<0){
+   row(f,"WARNING_SCHEDULER_RECOVERY skipped=core_mask query=%08x guest_core=%d storage_core=%d\n",
+       query,guest_core,storage_core);
+   if(crash)row(crash,"WARNING_SCHEDULER_RECOVERY skipped=core_mask query=%08x\n",query);
+   return;
+ }
+ /* Exclude watchdog's current CPU where possible but do not strand a
+  * thread if the process has very few allowed CPUs. */
+ u32 watchdog_core=svcGetCurrentProcessorNumber();
+ u64 expanded=allowed & ~(UINT64_C(1)<<watchdog_core);
+ u64 guest_mask=expanded & ~(UINT64_C(1)<<storage_core);
+ u64 storage_mask=expanded & ~(UINT64_C(1)<<guest_core);
+ if(!(guest_mask&(UINT64_C(1)<<guest_core)))guest_mask|=UINT64_C(1)<<guest_core;
+ if(!(storage_mask&(UINT64_C(1)<<storage_core)))storage_mask|=UINT64_C(1)<<storage_core;
+ guest_mask&=allowed;
+ storage_mask&=allowed;
+ Result g=svcSetThreadCoreMask(guest->handle,guest_core,guest_mask);
+ Result st=svcSetThreadCoreMask(storage->handle,storage_core,storage_mask);
+ row(f,"WARNING_SCHEDULER_RECOVERY guest_handle=%08x guest_core=%d guest_mask=%016llx guest_rc=%08x "
+       "storage_handle=%08x storage_core=%d storage_mask=%016llx storage_rc=%08x "
+       "watchdog_core=%u cause=present_stall\n",
+     guest->handle,guest_core,(unsigned long long)guest_mask,g,
+     storage->handle,storage_core,(unsigned long long)storage_mask,st,watchdog_core);
+ if(crash)row(crash,"WARNING_SCHEDULER_RECOVERY guest_handle=%08x guest_core=%d "
+       "guest_mask=%016llx guest_rc=%08x storage_handle=%08x storage_core=%d "
+       "storage_mask=%016llx storage_rc=%08x watchdog_core=%u\n",
+     guest->handle,guest_core,(unsigned long long)guest_mask,g,
+     storage->handle,storage_core,(unsigned long long)storage_mask,st,watchdog_core);
+}
 static void write_fault_report(FILE *f, const Nx2Images *images) {
   const ThreadExceptionDump *d = &nx2_fault.dump;
   extern void _start(void);
@@ -780,6 +820,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   isolate_watchdog_core(f,guest_core);
   row(f,"PRELAUNCH_TIMING phase=GUEST_WORKER_STARTED cumulative_ms=%llu\n",
       (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
+  int affinity_recovery_attempted=0;
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   u64 trace_sample = began;
   u64 ipc_event_flush=began;
@@ -881,6 +922,15 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           armTicksToNs(now-passive_last_report_tick)>=10000000000ULL)){
         passive_reported=1;
         passive_last_report_tick=now;
+        /* A single reversible affinity expansion, only after a confirmed
+         * 8s gap following >=30 completed native Presents. Avoid
+         * repeated kernel calls on subsequent diagnostic snapshots. */
+        if(!affinity_recovery_attempted){
+          affinity_recovery_attempted=1;
+          attempt_stall_affinity_recovery(f,crash,&worker,guest_core,
+                                          &storage_worker,nx2_storage_core);
+          if(crash)fflush(crash);
+        }
         u64 ipc_now=__atomic_load_n(&l->ipc_trace_ends,__ATOMIC_ACQUIRE);
         u64 rom_now=__atomic_load_n(&host->rpc_completed_count,__ATOMIC_ACQUIRE);
         u32 slot=__atomic_load_n(&host->rpc_active_slot,__ATOMIC_ACQUIRE);
