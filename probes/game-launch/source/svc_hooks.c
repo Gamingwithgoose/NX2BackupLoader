@@ -369,6 +369,10 @@ static void ipc_event_emit(uint32_t call_id,uint32_t phase,uint32_t h,
  for(;j<9;j++)e->service[j]=0;
  __atomic_store_n(&e->sequence,seq+1,__ATOMIC_RELEASE);
 }
+static void shared_event(uint32_t,uint32_t,uint32_t,uint32_t,uint64_t,uint64_t,uint32_t,uint32_t,uintptr_t,const char *);
+static int is_ro_service(const char *s){
+ return s[0]=='l'&&s[1]=='d'&&s[2]=='r'&&s[3]==':'&&s[4]=='r'&&s[5]=='o'&&!s[6];
+}
 static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uintptr_t caller){
  unsigned char *p=buffer;uint32_t kind=tag(h);
  Nx2IpcDecision d=nx2_ipc_decide(p,n,kind);
@@ -555,6 +559,11 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  }else{
    __atomic_fetch_add(&nx2_launch->sync_flight_collisions,1,__ATOMIC_RELAXED);
  }
+ uint32_t ro_id=0;
+ if(is_ro_service(trace_label)){
+   ro_id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+   shared_event(ro_id,15,1,h,cmd,request_type,0,UINT32_MAX,caller,"ldr:ro");
+ }
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
  if(flight_owned){
    flight->result=rc;
@@ -585,6 +594,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  }
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
+ if(ro_id)shared_event(ro_id,15,2,h,cmd,request_type,reply_decoded?service_result:UINT32_MAX,rc,caller,"ldr:ro");
  ipc_event_emit(call_id,2,h,kind,d,request_type,flags,hdr0,hdr1,
                 special,rc,reply_decoded?service_result:UINT32_MAX,
                 caller,trace_label);
@@ -698,6 +708,75 @@ static void shared_event(uint32_t id,uint32_t op,uint32_t phase,uint32_t h,
  SHARED_FIELD(tls,tls);SHARED_FIELD(tick,armGetSystemTick());SHARED_FIELD(owner,packed);
 #undef SHARED_FIELD
  __atomic_store_n(&e->sequence,ticket+1,__ATOMIC_RELEASE);
+}
+uint32_t nx2_create_thread(uint32_t *out,uintptr_t entry,uintptr_t arg,uintptr_t stack,int32_t priority,int32_t core){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,6,1,0,entry,stack,(uint32_t)priority,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_create_thread(out,entry,arg,stack,priority,core);
+ shared_event(id,6,2,rc||!out?0:*out,entry,stack,(uint32_t)priority,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_start_thread(uint32_t h){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,7,1,h,0,0,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_start_thread(h);
+ shared_event(id,7,2,h,0,0,0,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_wait_sync(int32_t *out,const uint32_t *handles,int32_t count,int64_t timeout){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,9,1,(uint32_t)count,(uintptr_t)handles,(uint64_t)timeout,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_wait_sync(out,handles,count,timeout);
+ shared_event(id,9,2,(uint32_t)count,(uintptr_t)handles,(uint64_t)timeout,rc||!out?UINT32_MAX:(uint32_t)*out,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_arbitrate_lock(uint32_t owner,uintptr_t address,uint32_t requester){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,10,1,owner,address,requester,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_arbitrate_lock(owner,address,requester);
+ shared_event(id,10,2,owner,address,requester,0,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_arbitrate_unlock(uintptr_t address){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,11,1,0,address,0,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_arbitrate_unlock(address);
+ shared_event(id,11,2,0,address,0,0,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_wait_key(uintptr_t address,uintptr_t key,uint32_t h,int64_t timeout){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,12,1,h,address,key,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_wait_key(address,key,h,timeout);
+ shared_event(id,12,2,h,address,key,0,rc,caller,"thread");
+ return rc;
+}
+void nx2_signal_key(uintptr_t key,int32_t count){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,13,1,0,key,0,(uint32_t)count,UINT32_MAX,caller,"thread");
+ nx2_raw_signal_key(key,count);
+ shared_event(id,13,2,0,key,0,(uint32_t)count,0,caller,"thread");
+ 
+}
+uint32_t nx2_set_memory_permission(uintptr_t address,uint64_t bytes,uint32_t perm){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,14,1,0,address,bytes,perm,UINT32_MAX,caller,"memperm");
+ uint32_t rc=nx2_raw_set_memory_permission(address,bytes,perm);
+ shared_event(id,14,2,0,address,bytes,perm,rc,caller,"memperm");
+ return rc;
+}
+void nx2_exit_thread_trace(void){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ shared_event(id,8,1,0,0,0,0,UINT32_MAX,(uintptr_t)__builtin_return_address(0),"thread");
+ nx2_raw_exit_thread();
 }
 uint32_t nx2_map_shared(uint32_t h,uint64_t address,uint64_t bytes,uint32_t perm){
  char owner[9]={0};trace_name(h,owner);

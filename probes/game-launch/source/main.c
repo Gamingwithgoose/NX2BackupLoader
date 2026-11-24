@@ -1234,6 +1234,14 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
             seq,v.id,v.operation,v.phase,v.handle,owner,
             (unsigned long long)v.address,(unsigned long long)v.bytes,v.permission,v.result,
             (unsigned long long)v.tick,(unsigned long long)v.tls,(unsigned long long)v.caller);
+        if(v.phase==2 && !v.result && (v.operation==1 || v.operation==14) && v.bytes){
+          MemoryInfo mi={0},last={0};u32 page=0;
+          Result first_rc=svcQueryMemory(&mi,&page,v.address);
+          int range_ok=v.bytes-1<=UINT64_MAX-v.address;
+          Result last_rc=range_ok?svcQueryMemory(&last,&page,v.address+v.bytes-1):first_rc;
+          row(crash,"MEMORY_METADATA_SAMPLE id=%u first_result=%08x last_result=%08x range_ok=%u first_type=%u last_type=%u first_perm=%u last_perm=%u requested_perm=%u\n",
+              v.id,first_rc,last_rc,(unsigned)range_ok,mi.type,last.type,mi.perm,last.perm,v.permission);
+        }
         diagnostic_shared_cursor++;
       }
       row(crash,"SHARED_HISTORY_PROGRESS produced=%u consumed=%u pending=%u\n",

@@ -708,6 +708,13 @@ static void sync_finalize_gate(void *obj){
  gpu_boundary_detail(63,c,obj,NULL,0,0);
  
 }
+static uint8_t pool_map_virtual_gate(void *pool,int count,const void *requests){
+ uintptr_t c=(uintptr_t)__builtin_return_address(0);
+ gpu_boundary_detail(64,c,pool,requests,count,0);
+ uint8_t rc=__atomic_load_n(&nx2_launch->api.original_pool_map_virtual,__ATOMIC_ACQUIRE)(pool,count,requests);
+ gpu_boundary_detail(65,c,pool,requests,rc,(uint32_t)count);
+ return rc;
+}
 static uintptr_t getproc_gate(void *device,const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_getproc(device,name);
@@ -747,7 +754,8 @@ static uintptr_t getproc_gate(void *device,const char *name){
     !equal(name,"nvnTextureInitialize") &&
     !equal(name,"nvnTextureFinalize") &&
     !equal(name,"nvnSyncInitialize") &&
-    !equal(name,"nvnSyncFinalize"))return result;
+    !equal(name,"nvnSyncFinalize") &&
+    !equal(name,"nvnMemoryPoolMapVirtual"))return result;
  if(result&&equal(name,"nvnQueueFenceSync")){
    __atomic_store_n(&nx2_launch->api.original_queue_fence,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_fence_gate;
@@ -815,6 +823,10 @@ static uintptr_t getproc_gate(void *device,const char *name){
  if(result&&equal(name,"nvnSyncFinalize")){
    __atomic_store_n(&nx2_launch->api.original_sync_finalize,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)sync_finalize_gate;
+ }
+ if(result&&equal(name,"nvnMemoryPoolMapVirtual")){
+   __atomic_store_n(&nx2_launch->api.original_pool_map_virtual,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)pool_map_virtual_gate;
  }
  if(result&&equal(name,"nvnQueueSubmitCommands")){
    __atomic_store_n(&nx2_launch->api.original_queue_submit,(void *)result,__ATOMIC_RELEASE);

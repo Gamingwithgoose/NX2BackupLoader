@@ -37,5 +37,14 @@ SIMPLE nx2_raw_unmap_shared, 0x14
 SIMPLE nx2_raw_map_physical, 0x2c
 SIMPLE nx2_raw_unmap_physical, 0x2d
 
+OUTPUT nx2_raw_create_thread, 0x8, w1
+SIMPLE nx2_raw_start_thread, 0x9
+OUTPUT nx2_raw_wait_sync, 0x18, w1
+SIMPLE nx2_raw_arbitrate_lock, 0x1a
+SIMPLE nx2_raw_arbitrate_unlock, 0x1b
+SIMPLE nx2_raw_wait_key, 0x1c
+SIMPLE nx2_raw_signal_key, 0x1d
+SIMPLE nx2_raw_set_memory_permission, 0x2
+SIMPLE nx2_raw_exit_thread, 0x0a
 SIMPLE nx2_raw_sleep, 0x0b
 SIMPLE nx2_raw_exit, 0x07

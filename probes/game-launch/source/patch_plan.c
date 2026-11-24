@@ -193,6 +193,15 @@ const Nx2PatchSpec nx2_patch_specs[] = {
      "_ZN2nn2fs6detail18IsEnabledAccessLogEj", (uintptr_t)nx2_false},
     {5, 0, 0, 19, 2, UINT64_MAX, 0, "MapSharedMemory", (uintptr_t)nx2_map_shared},
     {5, 0, 0, 20, 2, UINT64_MAX, 0, "UnmapSharedMemory", (uintptr_t)nx2_unmap_shared},
+    {5, 0, 0, 8, 2, UINT64_MAX, 0, "CreateThread", (uintptr_t)nx2_create_thread},
+    {5, 0, 0, 9, 2, UINT64_MAX, 0, "StartThread", (uintptr_t)nx2_start_thread},
+    {5, 0, 0, 24, 2, UINT64_MAX, 0, "WaitSynchronization", (uintptr_t)nx2_wait_sync},
+    {5, 0, 0, 26, 2, UINT64_MAX, 0, "ArbitrateLock", (uintptr_t)nx2_arbitrate_lock},
+    {5, 0, 0, 27, 2, UINT64_MAX, 0, "ArbitrateUnlock", (uintptr_t)nx2_arbitrate_unlock},
+    {5, 0, 0, 28, 2, UINT64_MAX, 0, "WaitProcessWideKeyAtomic", (uintptr_t)nx2_wait_key},
+    {5, 0, 0, 29, 2, UINT64_MAX, 0, "SignalProcessWideKey", (uintptr_t)nx2_signal_key},
+    {5, 0, 0, 2, 2, UINT64_MAX, 0, "SetMemoryPermission", (uintptr_t)nx2_set_memory_permission},
+    {5, 0, 0, 10, 2, UINT64_MAX, 0, "ExitThread", (uintptr_t)nx2_exit_thread_trace},
 };
 const uint64_t nx2_patch_spec_count =
     sizeof(nx2_patch_specs) / sizeof(nx2_patch_specs[0]);

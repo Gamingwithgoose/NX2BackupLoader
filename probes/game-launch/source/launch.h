@@ -82,6 +82,7 @@ typedef struct {
  void (*original_texture_finalize)(void *);
  uint8_t (*original_sync_init)(void *,void *);
  void (*original_sync_finalize)(void *);
+ uint8_t (*original_pool_map_virtual)(void *,int,const void *);
 } Nx2LaunchApi;
 typedef struct {
  uint64_t begin,end;uint32_t type,permission;
@@ -260,5 +261,14 @@ uint32_t nx2_save_flags(uint32_t *);
 uint32_t nx2_true(void);
 
 void nx2_os_init_gate(uint32_t,const void *);
+uint32_t nx2_create_thread(uint32_t *,uintptr_t,uintptr_t,uintptr_t,int32_t,int32_t);
+uint32_t nx2_start_thread(uint32_t);
+uint32_t nx2_wait_sync(int32_t *,const uint32_t *,int32_t,int64_t);
+uint32_t nx2_arbitrate_lock(uint32_t,uintptr_t,uint32_t);
+uint32_t nx2_arbitrate_unlock(uintptr_t);
+uint32_t nx2_wait_key(uintptr_t,uintptr_t,uint32_t,int64_t);
+void nx2_signal_key(uintptr_t,int32_t);
+uint32_t nx2_set_memory_permission(uintptr_t,uint64_t,uint32_t);
+void nx2_exit_thread_trace(void);
 uint32_t nx2_map_physical(uint64_t,uint64_t);
 uint32_t nx2_unmap_physical(uint64_t,uint64_t);
