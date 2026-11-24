@@ -568,6 +568,9 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
+  if(!game->is_nup)row(f,"CONTENT_ROOT_SELECTED path=%s update_version=%llu resolved_update=%u\n",
+     game->root,(unsigned long long)game->update_version,
+     (unsigned)(game->updates==2));
   launch_phase="PACKAGE_OPEN";
   selected_resource = game->resource;
   uint32_t declared_main_stack = game->main_stack_size;
@@ -1652,8 +1655,11 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
     printf("\n%u / %u\n", (unsigned)selected + 1, (unsigned)catalog->count);
     if (catalog->items[selected].is_nup)
       printf("NUP: %s\n", catalog->items[selected].nup_status);
+    else if (catalog->items[selected].updates==2)
+      printf("Using complete update version %llu (SD-only).\n",
+             (unsigned long long)catalog->items[selected].update_version);
     else if (catalog->items[selected].updates)
-      printf("This selection loads base; updates are not merged.\n");
+      printf("Base selected; no complete runnable update found.\n");
   }
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
          "B+A: rebuild index   R+A: Horizon check\n"
