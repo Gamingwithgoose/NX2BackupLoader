@@ -1840,7 +1840,9 @@ int main(int argc, char **argv) {
     u64 down = padGetButtonsDown(&pad), held = padGetButtons(&pad);
     if (down & HidNpadButton_Plus)
       break;
-    if (down & HidNpadButton_Y)\n      usb_storage_probe();\n    if (down & HidNpadButton_X) {
+    if (down & HidNpadButton_Y)
+      usb_storage_probe();
+    if (down & HidNpadButton_X) {
       nx2_catalog_free(&catalog);
       nx2_catalog("sdmc:/games", &catalog);
       selected = 0;
