@@ -1315,7 +1315,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           diagnostic_gpu_cursor=produced-NX2_GPU_BOUNDARY_RING_SLOTS;
         }
         /* Limit per-snapshot output; retain cursor for the next sample. */
-        for(unsigned n=0;n<64 && diagnostic_gpu_cursor!=produced;n++){
+        for(unsigned n=0;n<256 && diagnostic_gpu_cursor!=produced;n++){
           uint32_t ticket=diagnostic_gpu_cursor;
           const Nx2GpuBoundary *source=&l->gpu_boundary[ticket%NX2_GPU_BOUNDARY_RING_SLOTS];
           uint32_t seq=__atomic_load_n(&source->sequence,__ATOMIC_ACQUIRE);

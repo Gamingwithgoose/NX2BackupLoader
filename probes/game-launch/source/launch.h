@@ -71,6 +71,17 @@ typedef struct {
  int (*original_queue_error)(void *,void *);
  uint8_t (*original_pool_init)(void *,const void *);
  void (*original_pool_finalize)(void *);
+ void (*original_pool_storage)(void *,void *,size_t);
+ void (*original_pool_flags)(void *,int);
+ uint64_t (*original_pool_address)(const void *);
+ void (*original_cmd_begin)(void *);
+ uint64_t (*original_cmd_end)(void *);
+ void (*original_cmd_memory)(void *,const void *,ptrdiff_t,size_t);
+ void (*original_control_memory)(void *,void *,size_t);
+ uint8_t (*original_texture_init)(void *,const void *);
+ void (*original_texture_finalize)(void *);
+ uint8_t (*original_sync_init)(void *,void *);
+ void (*original_sync_finalize)(void *);
 } Nx2LaunchApi;
 typedef struct {
  uint64_t begin,end;uint32_t type,permission;
@@ -82,7 +93,7 @@ typedef struct {
 /* Experimental all-service IPC metadata trace; 0 bytes of guest payload. */
 #define NX2_IPC_EVENT_SLOTS 16384U
 #define NX2_NVN_STAGE_COUNT 5
-#define NX2_GPU_BOUNDARY_RING_SLOTS 256U
+#define NX2_GPU_BOUNDARY_RING_SLOTS 2048U
 /* A snapshot is a last-N timeline, not a GPU/CPU stack trace. */
 typedef struct {
  uint32_t sequence,kind;
@@ -92,7 +103,7 @@ typedef struct {
  uint32_t reserved;
  uint64_t detail;
 } Nx2GpuBoundary;
-#define NX2_SHARED_TRACE_SLOTS 256U
+#define NX2_SHARED_TRACE_SLOTS 4096U
 typedef struct {
  uint32_t sequence,operation,phase,handle,permission,result,id;
  uint64_t tick,tls,caller,address,bytes,owner;

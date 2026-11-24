@@ -828,9 +828,13 @@ static uint32_t physical(uint64_t address,uint64_t bytes,int unmap){
  /* Encode the per-operation-kind ID in the existing diagnostic-only field.
   * The low bit still identifies map/unmap; native calls are unchanged. */
  uint64_t trace_id=(count<<1)|(uint64_t)unmap;
- if(count<=16||!(count&255))nx2_rpc(RPC_PHYSICAL_MEMORY,address,bytes,UINT32_MAX,trace_id,0,0,0,0);
+ /* Every allowed native call is observed in RAM, without a blocking RPC. */
+ (void)trace_id;
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,unmap?5:4,1,0,address,bytes,0,UINT32_MAX,caller,"physical");
  uint32_t rc=unmap?nx2_raw_unmap_physical(address,bytes):nx2_raw_map_physical(address,bytes);
- if(rc||count<=16||!(count&255))nx2_rpc(RPC_PHYSICAL_MEMORY,address,bytes,rc,trace_id,0,0,0,0);
+ shared_event(id,unmap?5:4,2,0,address,bytes,0,rc,caller,"physical");
  return rc;
 }
 uint32_t nx2_map_physical(uint64_t address,uint64_t bytes){return physical(address,bytes,0);}
