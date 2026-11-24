@@ -11,27 +11,29 @@ size_t __nx_heap_size=0x400000;
 void __appInit(void){}
 void __appExit(void){}
 static FsFileSystem sd;
-static void append(const char *line,size_t n){
+static int append(const char *line,size_t n){
     const char *path="/kaihen/nx2-crash-monitor.log";
     FsFile f={0};
     if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write|FsOpenMode_Append,&f))){
         fsFsCreateFile(&sd,path,0,0);
-        if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write|FsOpenMode_Append,&f)))return;
+        if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write|FsOpenMode_Append,&f)))return 0;
     }
+    int written=0;
     s64 size=0;
     if(R_SUCCEEDED(fsFileGetSize(&f,&size))){
         if(size+(s64)n>8388608){
             fsFileClose(&f);
             fsFsDeleteFile(&sd,"/kaihen/nx2-crash-monitor.previous.log");
-            if(R_FAILED(fsFsRenameFile(&sd,path,"/kaihen/nx2-crash-monitor.previous.log")))return;
-            if(R_FAILED(fsFsCreateFile(&sd,path,0,0)))return;
-            if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write|FsOpenMode_Append,&f)))return;
+            if(R_FAILED(fsFsRenameFile(&sd,path,"/kaihen/nx2-crash-monitor.previous.log")))return 0;
+            if(R_FAILED(fsFsCreateFile(&sd,path,0,0)))return 0;
+            if(R_FAILED(fsFsOpenFile(&sd,path,FsOpenMode_Write|FsOpenMode_Append,&f)))return 0;
             size=0;
         }
         if(R_SUCCEEDED(fsFileSetSize(&f,size+n)))
-            fsFileWrite(&f,size,line,n,FsWriteOption_Flush);
+            written=R_SUCCEEDED(fsFileWrite(&f,size,line,n,FsWriteOption_Flush));
     }
     fsFileClose(&f);
+    return written;
 }
 static void note(const char *fmt,...){
     char buf[512];int p=snprintf(buf,sizeof(buf),"tick=%llu ",(unsigned long long)armGetSystemTick());
@@ -157,11 +159,13 @@ static void drain_errors(void){
     if(R_FAILED(fsFsOpenFile(&sd,"/kaihen/nx2-errors.pending",FsOpenMode_Read,&f)))return;
     if(R_FAILED(fsFileGetSize(&f,&size))){fsFileClose(&f);return;}
     if(size<pending_cursor)pending_cursor=0;
-    char buf[16384];u64 got=0;
-    if(size>pending_cursor && R_SUCCEEDED(fsFileRead(&f,pending_cursor,buf,sizeof(buf),FsReadOption_None,&got)) && got){
+    static char buf[16384];u64 got=0;
+    u64 want=size>pending_cursor?(u64)(size-pending_cursor):0;
+    if(want>sizeof(buf))want=sizeof(buf);
+    if(size>pending_cursor && R_SUCCEEDED(fsFileRead(&f,pending_cursor,buf,want,FsReadOption_None,&got)) && got){
         size_t complete=0;
         for(size_t i=0;i<got;i++)if(buf[i]=='\n')complete=i+1;
-        if(complete){append(buf,complete);pending_cursor+=complete;save_cursor();}
+        if(complete&&append(buf,complete)){pending_cursor+=complete;save_cursor();}
     }
     fsFileClose(&f);
 }
