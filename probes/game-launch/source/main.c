@@ -1209,6 +1209,13 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           (unsigned long long)allocator_total,(unsigned long long)allocator_free,
           (unsigned long long)diagnostic_min_free);
       diagnostic_previous_tick=crash_sample;
+      uint64_t physical_total=0,physical_used=0;
+      Result total_rc=svcGetInfo(&physical_total,6,CUR_PROCESS_HANDLE,0);
+      Result used_rc=svcGetInfo(&physical_used,7,CUR_PROCESS_HANDLE,0);
+      row(crash,"PROCESS_PHYSICAL_SNAPSHOT total_result=%08x used_result=%08x total=%llu used=%llu free=%llu\n",
+          total_rc,used_rc,(unsigned long long)physical_total,
+          (unsigned long long)physical_used,
+          (unsigned long long)(R_SUCCEEDED(total_rc)&&R_SUCCEEDED(used_rc)&&physical_total>=physical_used?physical_total-physical_used:0));
       unsigned pending=0;
       for(unsigned i=0;i<NX2_RPC_SLOTS;i++)
         if(__atomic_load_n(&l->requests[i].state,__ATOMIC_ACQUIRE))
@@ -1255,12 +1262,15 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           __atomic_load_n(&l->nvn_window_result,__ATOMIC_ACQUIRE));
       if(l->nvn_gameplay_trace){
         for(unsigned n=0;n<NX2_NVN_STAGE_COUNT;n++){
-          row(crash,"GPU_BOUNDARY_SNAPSHOT stage=%u entered=%u returned=%u result=%08x caller=%016llx\n",
+          row(crash,"GPU_BOUNDARY_SNAPSHOT stage=%u entered=%u returned=%u result=%08x caller=%016llx thread_tls=%016llx enter_tick=%llu return_tick=%llu\n",
               n,
               __atomic_load_n(&l->nvn_stage_entered[n],__ATOMIC_ACQUIRE),
               __atomic_load_n(&l->nvn_stage_returned[n],__ATOMIC_ACQUIRE),
               __atomic_load_n(&l->nvn_stage_result[n],__ATOMIC_ACQUIRE),
-              (unsigned long long)__atomic_load_n(&l->nvn_stage_last_caller[n],__ATOMIC_ACQUIRE));
+              (unsigned long long)__atomic_load_n(&l->nvn_stage_last_caller[n],__ATOMIC_ACQUIRE),
+              (unsigned long long)__atomic_load_n(&l->nvn_stage_last_tls[n],__ATOMIC_ACQUIRE),
+              (unsigned long long)__atomic_load_n(&l->nvn_stage_last_tick[n],__ATOMIC_ACQUIRE),
+              (unsigned long long)__atomic_load_n(&l->nvn_stage_return_tick[n],__ATOMIC_ACQUIRE));
         }
       }
       row(crash,"GUEST_FSP_ROUTE_SNAPSHOT stage=%u cmd=%u object=%08x result=%08x child=%08x\n",

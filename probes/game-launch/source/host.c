@@ -776,9 +776,19 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   case RPC_PHYSICAL_MEMORY:
     logline(h,
             "NATIVE_PHYSICAL_MEMORY operation=%s phase=%s address=%016llx "
-            "bytes=%llu result=%08x\n",
-            r->d ? "unmap" : "map", r->c == UINT32_MAX ? "begin" : "end",
-            (unsigned long long)r->a, (unsigned long long)r->b, (unsigned)r->c);
+            "bytes=%llu result=%08x id=%llu thread_tls=%016llx tick=%llu "
+            "gpu_submit=%u/%u gpu_finish=%u/%u gpu_present=%u/%u\n",
+            (r->d&1) ? "unmap" : "map", r->c == UINT32_MAX ? "begin" : "end",
+            (unsigned long long)r->a, (unsigned long long)r->b, (unsigned)r->c,
+            (unsigned long long)(r->d>>1),
+            (unsigned long long)r->diagnostic_owner_tls,
+            (unsigned long long)r->diagnostic_published_tick,
+            __atomic_load_n(&l->nvn_stage_entered[0],__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_stage_returned[0],__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_stage_entered[2],__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_stage_returned[2],__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE));
     break;
   case RPC_BREAK: {
     /* Report native SDK breaks uniformly for every guest title. */
