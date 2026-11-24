@@ -486,8 +486,8 @@ static int equal(const char *a,const char *b){if(!a||!b)return 0;while(*a&&*a==*
  * incompatible function pointer type. Forward only real arguments and do
  * not invent a return value; still preserve frame counters. */
 /* Bounded last-N native GPU boundary history; no blocking, SD or RPC. */
-static __attribute__((noinline)) void gpu_boundary_event(
- uint32_t kind,uintptr_t caller,void *queue,void *window,int texture_index){
+static __attribute__((noinline)) void gpu_boundary_detail(
+ uint32_t kind,uintptr_t caller,const void *queue,const void *window,int texture_index,uint64_t detail){
  Nx2Launch *l=nx2_launch;
  if(l->nvn_driver_passthrough!=0 && !l->nvn_gameplay_trace)return;
  uint32_t ticket=__atomic_fetch_add(&l->gpu_boundary_next,1,__ATOMIC_RELAXED);
@@ -497,8 +497,11 @@ static __attribute__((noinline)) void gpu_boundary_event(
  __atomic_store_n(&e->sequence,0,__ATOMIC_RELAXED);
  e->kind=kind;e->tick=armGetSystemTick();e->thread_tls=tls;
  e->caller=caller;e->queue=(uintptr_t)queue;e->window=(uintptr_t)window;
- e->texture_index=texture_index;
+ e->texture_index=texture_index;e->detail=detail;
  __atomic_store_n(&e->sequence,ticket+1,__ATOMIC_RELEASE);
+}
+static void gpu_boundary_event(uint32_t kind,uintptr_t caller,void *queue,void *window,int texture_index){
+ gpu_boundary_detail(kind,caller,queue,window,texture_index,0);
 }
 static void present_gate(void *queue,void *window,int texture_index){
  gpu_boundary_event(10,(uintptr_t)__builtin_return_address(0),queue,window,texture_index);
@@ -587,6 +590,47 @@ static uint32_t queue_acquire_gate(void *queue,void *window,int *index){
  nvn_stage_exit(4);
  return rc;
 }
+/* Observational wrappers: record opaque identities, never dereference
+ * driver objects or synthesize a result. No extra driver calls. */
+static void queue_fence_gate(void *q,void *sync,int condition,int flags){
+ uintptr_t c=(uintptr_t)__builtin_return_address(0);
+ gpu_boundary_detail(30,c,q,sync,condition,(uint32_t)flags);
+ __atomic_load_n(&nx2_launch->api.original_queue_fence,__ATOMIC_ACQUIRE)(q,sync,condition,flags);
+ gpu_boundary_detail(31,c,q,sync,condition,(uint32_t)flags);
+}
+static void queue_wait_gate(void *q,const void *sync){
+ uintptr_t c=(uintptr_t)__builtin_return_address(0);
+ gpu_boundary_detail(32,c,q,sync,0,0);
+ __atomic_load_n(&nx2_launch->api.original_queue_wait,__ATOMIC_ACQUIRE)(q,sync);
+ gpu_boundary_detail(33,c,q,sync,0,0);
+}
+static int sync_wait_gate(const void *sync,uint64_t timeout){
+ uintptr_t c=(uintptr_t)__builtin_return_address(0);
+ gpu_boundary_detail(34,c,NULL,sync,-1,timeout);
+ int rc=__atomic_load_n(&nx2_launch->api.original_sync_wait,__ATOMIC_ACQUIRE)(sync,timeout);
+ gpu_boundary_detail(35,c,NULL,sync,rc,timeout);
+ return rc;
+}
+static int queue_error_gate(void *q,void *info){
+ uintptr_t c=(uintptr_t)__builtin_return_address(0);
+ gpu_boundary_detail(36,c,q,info,-1,0);
+ int rc=__atomic_load_n(&nx2_launch->api.original_queue_error,__ATOMIC_ACQUIRE)(q,info);
+ gpu_boundary_detail(37,c,q,info,rc,0);
+ return rc;
+}
+static uint8_t pool_init_gate(void *pool,const void *builder){
+ uintptr_t c=(uintptr_t)__builtin_return_address(0);
+ gpu_boundary_detail(38,c,pool,builder,-1,0);
+ uint8_t rc=__atomic_load_n(&nx2_launch->api.original_pool_init,__ATOMIC_ACQUIRE)(pool,builder);
+ gpu_boundary_detail(39,c,pool,builder,rc,0);
+ return rc;
+}
+static void pool_finalize_gate(void *pool){
+ uintptr_t c=(uintptr_t)__builtin_return_address(0);
+ gpu_boundary_detail(40,c,pool,NULL,-1,0);
+ __atomic_load_n(&nx2_launch->api.original_pool_finalize,__ATOMIC_ACQUIRE)(pool);
+ gpu_boundary_detail(41,c,pool,NULL,-1,0);
+}
 static uintptr_t getproc_gate(void *device,const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
  uintptr_t result=nx2_launch->api.original_getproc(device,name);
@@ -606,7 +650,40 @@ static uintptr_t getproc_gate(void *device,const char *name){
     !equal(name,"nvnQueueFlush") &&
     !equal(name,"nvnQueueFinish") &&
     !equal(name,"nvnWindowAcquireTexture") &&
-    !equal(name,"nvnQueueAcquireTexture"))return result;
+    !equal(name,"nvnQueueAcquireTexture") &&
+    !equal(name,"nvnDeviceInitialize") &&
+    !equal(name,"nvnQueueInitialize") &&
+    !equal(name,"nvnWindowInitialize") &&
+    !equal(name,"nvnQueueFenceSync") &&
+    !equal(name,"nvnQueueWaitSync") &&
+    !equal(name,"nvnSyncWait") &&
+    !equal(name,"nvnQueueGetError") &&
+    !equal(name,"nvnMemoryPoolInitialize") &&
+    !equal(name,"nvnMemoryPoolFinalize"))return result;
+ if(result&&equal(name,"nvnQueueFenceSync")){
+   __atomic_store_n(&nx2_launch->api.original_queue_fence,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)queue_fence_gate;
+ }
+ if(result&&equal(name,"nvnQueueWaitSync")){
+   __atomic_store_n(&nx2_launch->api.original_queue_wait,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)queue_wait_gate;
+ }
+ if(result&&equal(name,"nvnSyncWait")){
+   __atomic_store_n(&nx2_launch->api.original_sync_wait,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)sync_wait_gate;
+ }
+ if(result&&equal(name,"nvnQueueGetError")){
+   __atomic_store_n(&nx2_launch->api.original_queue_error,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)queue_error_gate;
+ }
+ if(result&&equal(name,"nvnMemoryPoolInitialize")){
+   __atomic_store_n(&nx2_launch->api.original_pool_init,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)pool_init_gate;
+ }
+ if(result&&equal(name,"nvnMemoryPoolFinalize")){
+   __atomic_store_n(&nx2_launch->api.original_pool_finalize,(void *)result,__ATOMIC_RELEASE);
+   return (uintptr_t)pool_finalize_gate;
+ }
  if(result&&equal(name,"nvnQueueSubmitCommands")){
    __atomic_store_n(&nx2_launch->api.original_queue_submit,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_submit_gate;

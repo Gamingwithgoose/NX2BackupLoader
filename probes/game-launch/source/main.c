@@ -195,12 +195,12 @@ static void report_gpu_boundary_history(FILE *out,Nx2Launch *l,uint64_t now){
     armTicksToNs(now-snapshot.tick)/1000000ULL:0;
   row(out,"WARNING_GPU_BOUNDARY_EVENT seq=%u kind=%u age_ms=%llu "
           "tls=%016llx caller=%016llx queue=%016llx "
-          "window=%016llx texture=%d\n",
+          "window=%016llx texture=%d detail=%016llx\n",
       sequence,snapshot.kind,(unsigned long long)age,
       (unsigned long long)snapshot.thread_tls,
       (unsigned long long)snapshot.caller,
       (unsigned long long)snapshot.queue,
-      (unsigned long long)snapshot.window,snapshot.texture_index);
+      (unsigned long long)snapshot.window,snapshot.texture_index,(unsigned long long)snapshot.detail);
  }
 }
 static void report_unresolved_waits(FILE *out,Nx2Launch *l,Nx2Host *host,
@@ -777,7 +777,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     FILE *gpu_trace=fopen("sdmc:/switch/BackupLoaderMKW/gameplay-gpu-trace.flag","rb");
     if(gpu_trace){l->nvn_gameplay_trace=1;fclose(gpu_trace);}
   }
-  row(f,"GAMEPLAY_GPU_TRACE enabled=%u mode=%d functions=submit,flush,finish,window_acquire,queue_acquire "
+  row(f,"GAMEPLAY_GPU_TRACE enabled=%u mode=%d functions=submit,flush,finish,window_acquire,queue_acquire,fence,wait,sync_wait,queue_error,pool_init,pool_finalize "
         "native_results_unchanged=1 source=%s\n",
       l->nvn_gameplay_trace,nvn_profile,
       l->nvn_gameplay_trace?"sd_flag":"default_off");
@@ -1322,10 +1322,10 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           if(seq!=ticket+1)break;
           Nx2GpuBoundary event=*source;
           if(__atomic_load_n(&source->sequence,__ATOMIC_ACQUIRE)!=seq)break;
-          row(crash,"GPU_STARTUP_EVENT seq=%u kind=%u tick=%llu tls=%016llx caller=%016llx queue=%016llx window=%016llx texture=%d\n",
+          row(crash,"GPU_STARTUP_EVENT seq=%u kind=%u tick=%llu tls=%016llx caller=%016llx queue=%016llx window=%016llx texture=%d detail=%016llx\n",
               seq,event.kind,(unsigned long long)event.tick,(unsigned long long)event.thread_tls,
               (unsigned long long)event.caller,(unsigned long long)event.queue,
-              (unsigned long long)event.window,event.texture_index);
+              (unsigned long long)event.window,event.texture_index,(unsigned long long)event.detail);
           diagnostic_gpu_cursor++;
         }
         row(crash,"GPU_HISTORY_PROGRESS produced=%u consumed=%u pending=%u\n",produced,diagnostic_gpu_cursor,produced-diagnostic_gpu_cursor);

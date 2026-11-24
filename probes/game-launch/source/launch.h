@@ -65,6 +65,12 @@ typedef struct {
  void (*original_queue_finish)(void *);
  uint32_t (*original_window_acquire)(void *,void *,int *);
  uint32_t (*original_queue_acquire)(void *,void *,int *);
+ void (*original_queue_fence)(void *,void *,int,int);
+ void (*original_queue_wait)(void *,const void *);
+ int (*original_sync_wait)(const void *,uint64_t);
+ int (*original_queue_error)(void *,void *);
+ uint8_t (*original_pool_init)(void *,const void *);
+ void (*original_pool_finalize)(void *);
 } Nx2LaunchApi;
 typedef struct {
  uint64_t begin,end;uint32_t type,permission;
@@ -84,6 +90,7 @@ typedef struct {
  uint64_t queue,window;
  int32_t texture_index;
  uint32_t reserved;
+ uint64_t detail;
 } Nx2GpuBoundary;
 #define NX2_SHARED_TRACE_SLOTS 256U
 typedef struct {
