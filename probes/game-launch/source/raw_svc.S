@@ -32,6 +32,8 @@ OUTPUT nx2_raw_async, 0x23, w1
 SIMPLE nx2_raw_sync, 0x21
 SIMPLE nx2_raw_buffer, 0x22
 SIMPLE nx2_raw_close, 0x16
+SIMPLE nx2_raw_map_shared, 0x13
+SIMPLE nx2_raw_unmap_shared, 0x14
 SIMPLE nx2_raw_map_physical, 0x2c
 SIMPLE nx2_raw_unmap_physical, 0x2d
 

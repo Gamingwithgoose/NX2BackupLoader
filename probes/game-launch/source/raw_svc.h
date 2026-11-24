@@ -6,6 +6,8 @@ uint32_t nx2_raw_connect(uint32_t *,const char *);
 uint32_t nx2_raw_sync(uint32_t);
 uint32_t nx2_raw_buffer(void *,uint64_t,uint32_t);
 uint32_t nx2_raw_close(uint32_t);
+uint32_t nx2_raw_map_shared(uint32_t,uint64_t,uint64_t,uint32_t);
+uint32_t nx2_raw_unmap_shared(uint32_t,uint64_t,uint64_t);
 uint32_t nx2_raw_async(uint32_t *,void *,uint64_t,uint32_t);
 uint32_t nx2_raw_map_physical(uint64_t,uint64_t);
 uint32_t nx2_raw_unmap_physical(uint64_t,uint64_t);

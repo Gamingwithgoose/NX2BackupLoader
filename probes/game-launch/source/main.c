@@ -846,7 +846,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   u64 began = armGetSystemTick(), previous_frames = 0, heartbeat = began;
   uint64_t diagnostic_min_free=UINT64_MAX, diagnostic_max_io_age=0;
   uint64_t diagnostic_previous_tick=began, diagnostic_sequence=0;
-  uint32_t diagnostic_gpu_cursor=0;
+  uint32_t diagnostic_gpu_cursor=0,diagnostic_shared_cursor=0;
   u64 trace_sample = began;
   u64 ipc_event_flush=began;
   uint32_t ipc_event_cursor=0,ipc_event_dropped=0;
@@ -1210,6 +1210,34 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           (unsigned long long)allocator_total,(unsigned long long)allocator_free,
           (unsigned long long)diagnostic_min_free);
       diagnostic_previous_tick=crash_sample;
+      uint32_t shared_next=__atomic_load_n(&l->shared_trace_next,__ATOMIC_ACQUIRE);
+      uint32_t shared_pending=shared_next-diagnostic_shared_cursor;
+      if(shared_pending>NX2_SHARED_TRACE_SLOTS){
+        row(crash,"SHARED_HISTORY_GAP lost=%u\n",shared_pending-NX2_SHARED_TRACE_SLOTS);
+        diagnostic_shared_cursor=shared_next-NX2_SHARED_TRACE_SLOTS;
+      }
+      for(unsigned n=0;n<NX2_SHARED_TRACE_SLOTS && diagnostic_shared_cursor!=shared_next;n++){
+        uint32_t ticket=diagnostic_shared_cursor;
+        const Nx2SharedEvent *e=&l->shared_trace[ticket%NX2_SHARED_TRACE_SLOTS];
+        uint32_t seq=__atomic_load_n(&e->sequence,__ATOMIC_ACQUIRE);
+        if(seq!=ticket+1)break;
+        Nx2SharedEvent v={0};
+#define SHARED_READ(f) v.f=__atomic_load_n(&e->f,__ATOMIC_RELAXED)
+        SHARED_READ(id);SHARED_READ(operation);SHARED_READ(phase);SHARED_READ(handle);
+        SHARED_READ(permission);SHARED_READ(result);SHARED_READ(tick);SHARED_READ(tls);
+        SHARED_READ(caller);SHARED_READ(address);SHARED_READ(bytes);SHARED_READ(owner);
+#undef SHARED_READ
+        if(__atomic_load_n(&e->sequence,__ATOMIC_ACQUIRE)!=seq)break;
+        char owner[9]={0};
+        for(unsigned k=0;k<8;k++)owner[k]=(char)(v.owner>>(8*k));
+        row(crash,"SHARED_MEMORY_EVENT seq=%u id=%u op=%u phase=%u handle=%08x owner=%s address=%016llx bytes=%llu perm=%x result=%08x tick=%llu tls=%016llx caller=%016llx\n",
+            seq,v.id,v.operation,v.phase,v.handle,owner,
+            (unsigned long long)v.address,(unsigned long long)v.bytes,v.permission,v.result,
+            (unsigned long long)v.tick,(unsigned long long)v.tls,(unsigned long long)v.caller);
+        diagnostic_shared_cursor++;
+      }
+      row(crash,"SHARED_HISTORY_PROGRESS produced=%u consumed=%u pending=%u\n",
+          shared_next,diagnostic_shared_cursor,shared_next-diagnostic_shared_cursor);
       uint64_t physical_total=0,physical_used=0;
       Result total_rc=svcGetInfo(&physical_total,6,CUR_PROCESS_HANDLE,0);
       Result used_rc=svcGetInfo(&physical_used,7,CUR_PROCESS_HANDLE,0);

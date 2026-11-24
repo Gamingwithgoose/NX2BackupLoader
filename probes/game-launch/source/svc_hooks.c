@@ -679,6 +679,44 @@ uint32_t nx2_sync(uint32_t h){
 uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){
  return filter_sync(p,n,h,1,(uintptr_t)__builtin_return_address(0));
 }
+/* Diagnostic-only ring: no guest payload or mapped memory is read.
+ * Owner is packed as eight ASCII bytes. Sequence is published last. */
+static void shared_event(uint32_t id,uint32_t op,uint32_t phase,uint32_t h,
+                         uint64_t address,uint64_t bytes,uint32_t perm,
+                         uint32_t rc,uintptr_t caller,const char owner[9]){
+ Nx2Launch *l=nx2_launch;
+ uint64_t tls=0,packed=0;
+ __asm__ volatile("mrs %0,tpidrro_el0":"=r"(tls));
+ for(unsigned i=0;i<8 && owner[i];i++)packed|=(uint64_t)(unsigned char)owner[i]<<(8*i);
+ uint32_t ticket=__atomic_fetch_add(&l->shared_trace_next,1,__ATOMIC_RELAXED);
+ Nx2SharedEvent *e=&l->shared_trace[ticket%NX2_SHARED_TRACE_SLOTS];
+ __atomic_store_n(&e->sequence,0,__ATOMIC_RELEASE);
+#define SHARED_FIELD(f,v) __atomic_store_n(&e->f,(v),__ATOMIC_RELAXED)
+ SHARED_FIELD(id,id);SHARED_FIELD(operation,op);SHARED_FIELD(phase,phase);
+ SHARED_FIELD(handle,h);SHARED_FIELD(address,address);SHARED_FIELD(bytes,bytes);
+ SHARED_FIELD(permission,perm);SHARED_FIELD(result,rc);SHARED_FIELD(caller,caller);
+ SHARED_FIELD(tls,tls);SHARED_FIELD(tick,armGetSystemTick());SHARED_FIELD(owner,packed);
+#undef SHARED_FIELD
+ __atomic_store_n(&e->sequence,ticket+1,__ATOMIC_RELEASE);
+}
+uint32_t nx2_map_shared(uint32_t h,uint64_t address,uint64_t bytes,uint32_t perm){
+ char owner[9]={0};trace_name(h,owner);
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,1,1,h,address,bytes,perm,UINT32_MAX,caller,owner);
+ uint32_t rc=nx2_raw_map_shared(h,address,bytes,perm);
+ shared_event(id,1,2,h,address,bytes,perm,rc,caller,owner);
+ return rc;
+}
+uint32_t nx2_unmap_shared(uint32_t h,uint64_t address,uint64_t bytes){
+ char owner[9]={0};trace_name(h,owner);
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,2,1,h,address,bytes,0,UINT32_MAX,caller,owner);
+ uint32_t rc=nx2_raw_unmap_shared(h,address,bytes);
+ shared_event(id,2,2,h,address,bytes,0,rc,caller,owner);
+ return rc;
+}
 uint32_t nx2_close_handle(uint32_t h){
  uint32_t kind=tag(h);
  Nx2IpcDecision empty={0};
@@ -687,7 +725,13 @@ uint32_t nx2_close_handle(uint32_t h){
  uintptr_t caller=(uintptr_t)__builtin_return_address(0);
  ipc_event_emit(call_id,1,h,kind,empty,2,0x80U,0,0,0,
                 UINT32_MAX,UINT32_MAX,caller,owner);
+ uint32_t shared_id=0;
+ if(owner[0]){
+   shared_id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+   shared_event(shared_id,3,1,h,0,0,0,UINT32_MAX,caller,owner);
+ }
  uint32_t rc=nx2_raw_close(h);
+ if(shared_id)shared_event(shared_id,3,2,h,0,0,0,rc,caller,owner);
  ipc_event_emit(call_id,2,h,kind,empty,2,0x80U,0,0,0,
                 rc,UINT32_MAX,caller,owner);
  if(!rc){set_tag(h,0);trace_forget(h);domain_cap_forget_handle(h);}

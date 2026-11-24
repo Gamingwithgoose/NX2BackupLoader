@@ -85,6 +85,11 @@ typedef struct {
  int32_t texture_index;
  uint32_t reserved;
 } Nx2GpuBoundary;
+#define NX2_SHARED_TRACE_SLOTS 256U
+typedef struct {
+ uint32_t sequence,operation,phase,handle,permission,result,id;
+ uint64_t tick,tls,caller,address,bytes,owner;
+} Nx2SharedEvent;
 #define NX2_SYNC_FLIGHT_SLOTS 128U
 /* Observe only the outer native sync IPC call. Entry/return snapshots
  * cannot identify kernel wait reason without additional OS support. */
@@ -149,6 +154,8 @@ typedef struct {
  uint64_t nvn_stage_last_tls[NX2_NVN_STAGE_COUNT];
  uint64_t nvn_stage_last_tick[NX2_NVN_STAGE_COUNT];
  uint64_t nvn_stage_return_tick[NX2_NVN_STAGE_COUNT];
+ uint32_t shared_trace_next,shared_trace_id;
+ Nx2SharedEvent shared_trace[NX2_SHARED_TRACE_SLOTS];
  uint32_t gpu_boundary_next;
  Nx2GpuBoundary gpu_boundary[NX2_GPU_BOUNDARY_RING_SLOTS];
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
@@ -183,6 +190,8 @@ uint32_t nx2_connect(uint32_t *,const char *);
 uint32_t nx2_sync(uint32_t);
 uint32_t nx2_sync_buffer(void *,uint64_t,uint32_t);
 uint32_t nx2_close_handle(uint32_t);
+uint32_t nx2_map_shared(uint32_t,uint64_t,uint64_t,uint32_t);
+uint32_t nx2_unmap_shared(uint32_t,uint64_t,uint64_t);
 void nx2_break(uint32_t,uint64_t,uint64_t);
 void nx2_debug(const char *,uint64_t);
 void nx2_main_gate(void);
