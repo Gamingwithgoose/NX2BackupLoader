@@ -33,6 +33,15 @@ typedef struct {
   } rom_windows[4];
   uint64_t rom_window_clock;
   uint64_t read_ahead_hits,read_ahead_fills;
+  /* Demand-built per-launch loose RomFS cache, max 256 KiB allocated. */
+  struct {
+    unsigned char *data;
+    uint32_t file;
+    uint64_t length,stamp;
+    uint32_t valid;
+  } small_rom[8];
+  uint32_t small_seen[64]; /* file index + 1, direct mapped */
+  uint64_t small_clock,small_hits,small_fills,small_fill_failures;
   /* Storage worker publishes this before blocking SD operations. */
   uint64_t rpc_started_tick,rpc_completed_count;
   uint32_t rpc_active_slot,rpc_active_op;
