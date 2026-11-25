@@ -92,9 +92,9 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
  * fake arena pointer. Preserve the host allocator's committed prefix,
  * stay in the game's original reserved heap span, and keep physical
  * headroom for native physical-memory maps. */
-/* The 512-MiB host partition gives previously reserved pages back to
- * the kernel. Retain a real 384-MiB minimum of uncommitted physical
- * headroom for GPU, host and other native allocations. Recheck actual
+/* The guest tail of the startup heap is returned to the kernel while
+ * the host partition stays committed. Retain a real 384-MiB minimum of
+ * uncommitted physical headroom for GPU, host and other native allocations. Recheck actual
  * kernel accounting on every growth; do NOT grant or fake an over-budget
  * request. This is a universal experimental policy, not a title exception.
  * Unchanged/shrinking requests still charge zero additional bytes. */
@@ -411,7 +411,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  int data_storage_domain=(kind==2 && d.domain && domain_kind==4);
  /* OpenDataStorageByDataId (202) creates a read-only IStorage.
   * Forward only this root method; never mutate host saves. */
- int data_storage_open=(kind==2 && d.domain && domain_kind==0 &&
+ int data_storage_open=(kind==2 && (!d.domain || domain_kind==0) &&
                         !d.control && d.command==202);
  int data_storage_allowed=(d.valid && !d.control &&
                            (d.command==0 || d.command==4));

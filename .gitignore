@@ -34,6 +34,7 @@ tools/
 # Local game inputs and generated NUP archives; never commit game content.
 /extracted/
 /nups/
+/.work/
 
 # Arch NUP packer local venv.
 /.venv-nup-arch/

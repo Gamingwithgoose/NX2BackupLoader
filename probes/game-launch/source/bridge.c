@@ -3,6 +3,7 @@
 #include "raw_svc.h"
 #include "file_range_policy.h"
 #include "cache_catalog.h"
+#include "diagnostic_queue.h"
 #include <switch.h>
 #include <stdio.h>
 Nx2Launch *nx2_launch;
@@ -24,6 +25,15 @@ static uint64_t nx2_guest_system_tick(void){
 }
 uint32_t nx2_rpc(uint32_t op,uint64_t a,uint64_t b,uint64_t c,uint64_t d,void *buffer,const char *path,const char *path2,uint64_t *answer){
  Nx2Launch *l=nx2_launch;Nx2Request *r=0;
+ /* Observations must not serialize a service/allocator call behind SD I/O.
+  * Explicit breaks, aborts, filesystem operations and their results keep
+  * their original synchronous RPC contract. */
+ if(op==RPC_LOG){
+  nx2_log_enqueue(l,a,b,c,d,path,path2);
+  if(answer)*answer=0;
+  wake();
+  return 0;
+ }
  /* The host can persist the last guest callsites even if the guest disappears
   * before its log RPC finishes. Never log from the exception handler. */
  uint32_t ticket=__atomic_fetch_add(&l->rpc_trace_next,1,__ATOMIC_RELAXED)+1;
@@ -305,44 +315,70 @@ uint32_t nx2_mount_rom_app(const char *name,uint64_t app,void *p,uint64_t n){(vo
 uint32_t nx2_mount_rom_index(const char *name,int index,void *p,uint64_t n){(void)index;return nx2_mount_rom(name,p,n);}
 /* Each game-selected user has an immutable, distinct mounted filesystem.
  * Preserve the original shared data for one persistently bound UID. */
-static uint32_t mount_save_uid(const char *name,Nx2UserId uid){
- if(!nx2_profile_has_uid(uid))return nx2_mount_save(name);
+static uint32_t mount_save_base(const char *name,uint64_t caller);
+/* SDK Register has already completed. This notice is diagnostic only:
+ * do not make the guest wait for the storage/logging worker to reply.
+ * Real profile binding, filesystem registration and file I/O still retain
+ * their genuine synchronous result contracts. */
+static int notify_save_mount(Nx2Launch *l,uint32_t result,uint64_t caller,
+                               uint32_t profile,const char *name){
+ int queued=nx2_save_mount_notice_enqueue(l,result,caller,profile,name);
+ if(!result)__atomic_store_n(&l->late_trace_active,1,__ATOMIC_RELEASE);
+ wake();return queued;
+}
+static uint32_t mount_save_uid(const char *name,Nx2UserId uid,uint64_t caller){
+ if(!nx2_profile_has_uid(uid))return mount_save_base(name,caller);
+ Nx2Launch *l=nx2_launch;
+ __atomic_store_n(&l->save_gate_caller,caller,__ATOMIC_RELAXED);
+ __atomic_store_n(&l->save_gate_phase,10,__ATOMIC_RELEASE);
  uint64_t primary=0;
  uint32_t rc=nx2_rpc(RPC_SAVE_PROFILE_BIND,uid.lo,uid.hi,0,0,0,0,0,&primary);
- if(rc)return rc;
+ __atomic_store_n(&l->save_gate_result,rc,__ATOMIC_RELAXED);
+ if(rc){__atomic_store_n(&l->save_gate_phase,9,__ATOMIC_RELEASE);return rc;}
+ __atomic_store_n(&l->save_gate_phase,11,__ATOMIC_RELEASE);
  Nx2Object *fs=object((uintptr_t)&nx2_launch->fs_table[2],uid.lo,
                NX2_PROFILE_FS_MODE|(primary?NX2_PROFILE_PRIMARY_FLAG:0));
- if(!fs)return NX2_LIMIT;
+ if(!fs){
+  __atomic_store_n(&l->save_gate_result,NX2_LIMIT,__ATOMIC_RELAXED);
+  __atomic_store_n(&l->save_gate_phase,9,__ATOMIC_RELEASE);
+  return NX2_LIMIT;
+ }
  fs->profile_high=uid.hi;
+ __atomic_store_n(&l->save_gate_phase,1,__ATOMIC_RELEASE);
  void *owned=fs;rc=nx2_launch->api.register_fs(name,&owned);
+ __atomic_store_n(&l->save_gate_result,rc,__ATOMIC_RELAXED);
+ __atomic_store_n(&l->save_gate_phase,2,__ATOMIC_RELEASE);
  if(rc)__atomic_store_n(&fs->active,0,__ATOMIC_RELEASE);
  /* Preserve the original save mount's late-startup trace and crash marker
   * even when this mount is scoped to an individual guest profile. */
  nx2_rpc(RPC_LOG,rc,primary,0,0,0,"SAVE_PROFILE_MOUNT",name,0);
- nx2_rpc(RPC_SAVE_MOUNT,rc,0,0,0,0,name,0,0);
+ int queued=notify_save_mount(l,rc,caller,1,name);
+ __atomic_store_n(&l->save_gate_phase,3,__ATOMIC_RELEASE);
+ nx2_rpc(RPC_LOG,rc,(uint32_t)queued,caller,1,0,"SAVE_PROFILE_MOUNT_NOTICE_QUEUED",name,0);
+ __atomic_store_n(&l->save_gate_phase,4,__ATOMIC_RELEASE);
  return rc;
 }
 uint32_t nx2_mount_save_user_ref(const char *s,const Nx2UserId *u){
- return mount_save_uid(s,u?*u:(Nx2UserId){0,0});
+ return mount_save_uid(s,u?*u:(Nx2UserId){0,0},(uint64_t)(uintptr_t)__builtin_return_address(0));
 }
 uint32_t nx2_mount_save_user_value(const char *s,Nx2UserId u){
- return mount_save_uid(s,u);
+ return mount_save_uid(s,u,(uint64_t)(uintptr_t)__builtin_return_address(0));
 }
 uint32_t nx2_mount_save_app_user_ref(const char*s,uint64_t app,const Nx2UserId*u){
- (void)app;return nx2_mount_save_user_ref(s,u);
+ (void)app;return mount_save_uid(s,u?*u:(Nx2UserId){0,0},(uint64_t)(uintptr_t)__builtin_return_address(0));
 }
 uint32_t nx2_mount_save_app_user_value(const char*s,uint64_t app,Nx2UserId u){
- (void)app;return mount_save_uid(s,u);
+ (void)app;return mount_save_uid(s,u,(uint64_t)(uintptr_t)__builtin_return_address(0));
 }
 uint32_t nx2_mount_save_detail_user(const char*s,uint32_t space,uint64_t app,
                           Nx2UserId u,uint32_t type,uint32_t a,uint32_t b){
  (void)space;(void)app;(void)type;(void)a;(void)b;
- return mount_save_uid(s,u);
+ return mount_save_uid(s,u,(uint64_t)(uintptr_t)__builtin_return_address(0));
 }
-uint32_t __attribute__((noinline)) nx2_mount_save(const char *name){
+static uint32_t mount_save_base(const char *name,uint64_t caller){
  Nx2Launch *l=nx2_launch;
  __atomic_store_n(&l->save_gate_caller,
-                  (uint64_t)(uintptr_t)__builtin_return_address(0),__ATOMIC_RELEASE);
+                  caller,__ATOMIC_RELEASE);
  __atomic_store_n(&l->save_gate_phase,1,__ATOMIC_RELEASE);
  void *owned=&nx2_launch->save_fs;
  nx2_rpc(RPC_LOG,0,0,0,0,0,"SAVE_MOUNT_REGISTER_BEGIN",name,0);
@@ -350,11 +386,14 @@ uint32_t __attribute__((noinline)) nx2_mount_save(const char *name){
  __atomic_store_n(&l->save_gate_result,rc,__ATOMIC_RELEASE);
  __atomic_store_n(&l->save_gate_phase,2,__ATOMIC_RELEASE);
  nx2_rpc(RPC_LOG,rc,0,0,0,0,"SAVE_MOUNT_REGISTER_RETURN",name,0);
- uint32_t reported=nx2_rpc(RPC_SAVE_MOUNT,rc,0,0,0,0,name,0,0);
+ int queued=notify_save_mount(l,rc,caller,0,name);
  __atomic_store_n(&l->save_gate_phase,3,__ATOMIC_RELEASE);
- nx2_rpc(RPC_LOG,rc,reported,0,0,0,"SAVE_MOUNT_GATE_RETURN",name,0);
+ nx2_rpc(RPC_LOG,rc,(uint32_t)queued,caller,0,0,"SAVE_MOUNT_NOTICE_QUEUED",name,0);
  __atomic_store_n(&l->save_gate_phase,4,__ATOMIC_RELEASE);
  return rc;
+}
+uint32_t __attribute__((noinline)) nx2_mount_save(const char *name){
+ return mount_save_base(name,(uint64_t)(uintptr_t)__builtin_return_address(0));
 }
 /* Back cache storage with a real, private SD subtree. Never claim
  * creation if the host rejected the requested capacity or directory. */
@@ -890,7 +929,19 @@ uint32_t nx2_ro_initialize_compat(void){
  nx2_rpc(RPC_LOG,0,0,0,0,0,"COMPAT_SYNTHETIC_RO_INIT_SUCCESS","no kernel RO init; host process owns ldr:ro; dynamic modules unsupported",0);
  return 0;
 }
-uint32_t nx2_save_sizes(int64_t *size,int64_t *journal){if(size)*size=0x20000000;if(journal)*journal=0;return 0;}
+uint32_t nx2_save_sizes(int64_t *size,int64_t *journal){
+ if(!size && !journal)return NX2_INVALID;
+ /* This backend is an unquotaed SD directory, not a native 512-MiB
+  * archive. Advertise its actual backing filesystem capacity. It has
+  * no separate journal; file/commit errors continue to propagate. */
+ uint64_t actual=0;
+ uint32_t rc=nx2_rpc(RPC_SAVE_TOTAL,0,0,0,0,0,"",0,&actual);
+ if(rc)return rc;
+ if(actual>INT64_MAX)return NX2_INVALID;
+ if(size)*size=(int64_t)actual;
+ if(journal)*journal=0;
+ return 0;
+}
 /* Query real free bytes on this guest's isolated SD-backed archive.
  * The previous 512 MiB success was fictitious regardless of SD capacity. */
 uint32_t nx2_save_available(int64_t *size){

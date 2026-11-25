@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include "rom_view.h"
 #define NX2_RPC_SLOTS 16
+#define NX2_LOG_SLOTS 32
 #define NX2_RPC_TRACE_SLOTS 32
 #define NX2_PATH_MAX 1024
 #define NX2_OBJECTS 512
@@ -23,6 +24,13 @@ typedef struct {
  void *buffer;
  char path[NX2_PATH_MAX],path2[NX2_PATH_MAX];
 } Nx2Request;
+/* Best-effort diagnostics and completed-mount notices never borrow an I/O slot.
+ * Slots own their strings and values; no guest pointers outlive the call. */
+typedef struct {
+ uint32_t state,op; /* only RPC_LOG or RPC_SAVE_MOUNT notifications */
+ uint64_t a,b,c,d;
+ char path[NX2_PATH_MAX],path2[NX2_PATH_MAX];
+} Nx2LogRecord;
 /* Append-only ring. sequence is published last, so the host can reject
  * incomplete entries without relying on the faulted thread. */
 typedef struct {
@@ -137,6 +145,8 @@ typedef struct {
  Nx2RomView rom;
  Nx2LaunchApi api;
  Nx2Request requests[NX2_RPC_SLOTS];
+ Nx2LogRecord logs[NX2_LOG_SLOTS];
+ uint32_t log_enqueued,log_drained,log_dropped,log_next;
  uint32_t rpc_trace_next;
  Nx2RpcTrace rpc_trace[NX2_RPC_TRACE_SLOTS];
  Nx2Object objects[NX2_OBJECTS];
@@ -146,12 +156,13 @@ typedef struct {
  uint64_t guest_program_id;
  uint64_t arena_base,arena_capacity,arena_used;
  uint32_t worker_handle,stage,finished,abort_requested;
- uint32_t late_trace_active; /* host arms diagnostics on successful save mount */
+ uint32_t late_trace_active; /* diagnostic only; armed after real SDK registration */
  /* Guest-side C++ filesystem callback entry sites (before RPC helpers). */
  uint32_t fs_guest_read_entries,fs_guest_read_returns;
  uint64_t fs_guest_read_caller,fs_guest_read_offset,fs_guest_read_size;
  uint32_t fs_guest_read_result;
  uint32_t save_gate_phase,save_gate_result;
+ uint32_t save_notice_enqueued,save_notice_served,save_notice_dropped;
  uint64_t save_gate_caller;
  uint32_t guest_main_returned;
  uint64_t fsp_denied,rom_reads,save_calls,main_entered,frames;

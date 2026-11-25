@@ -5,6 +5,7 @@
 #include "path_guard.h"
 #include "rom_prefetch.h"
 #include "file_range_policy.h"
+#include "diagnostic_queue.h"
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -302,7 +303,9 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
                 relative,(unsigned long long)r->b,(unsigned long long)r->c);
       return 0;
     }
-    if (!nx2_save_path(p, sizeof(p), h->rom_root, relative))
+    uint32_t source=nx2_rom_source(&l->rom,i);
+    if(source>1 || (source==1 && !h->rom_base_root[0]))return NX2_INVALID;
+    if (!nx2_save_path(p, sizeof(p), source?h->rom_base_root:h->rom_root, relative))
       return NX2_INVALID;
     unsigned slot = 16;
     for (unsigned n = 0; n < 16; n++)
@@ -766,8 +769,8 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
             (unsigned)r->a, (unsigned long long)r->b);
     break;
   case RPC_SAVE_MOUNT:
-    logline(h, "PRIVATE_SAVE_MOUNT name=%s result=%08x root=%s\n", r->path,
-            (unsigned)r->a, h->save_root);
+    logline(h, "PRIVATE_SAVE_MOUNT name=%s result=%08x root=%s caller=%016llx profile_route=%u\n", r->path,
+            (unsigned)r->a, h->save_root,(unsigned long long)r->b,(unsigned)r->c);
     if(r->a==0){
       __atomic_store_n(&l->late_trace_active,1,__ATOMIC_RELEASE);
       logline(h,"LATE_STARTUP_TRACE_ARMED after_successful_save_mount=1\n");
@@ -1100,6 +1103,15 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
 }
 int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   int served = 0;
+  /* Bounded diagnostic work per poll; ready storage requests still run
+   * every poll even if guest threads produce text continuously. */
+  Nx2Request diagnostic={0};
+  for(unsigned n=0;n<4 && nx2_log_dequeue(l,&diagnostic);n++){
+    serve(h,l,&diagnostic);
+    if(diagnostic.op==RPC_SAVE_MOUNT)
+      __atomic_fetch_add(&l->save_notice_served,1,__ATOMIC_RELEASE);
+    served++;
+  }
   for (unsigned i = 0; i < NX2_RPC_SLOTS; i++) {
     Nx2Request *r = &l->requests[i];
     if (__atomic_load_n(&r->state, __ATOMIC_ACQUIRE) == 2) {

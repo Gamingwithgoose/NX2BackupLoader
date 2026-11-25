@@ -25,5 +25,7 @@ int nx2_nup_entry_detail(const char *path, uint64_t *stored, uint64_t *offset);
 typedef struct {
  uint32_t active,file,codec,phase;
  uint64_t requested,sd_bytes,decoded_bytes,delivered_bytes;
+ uint64_t chunk_offset;
+ uint32_t chunk_bytes,io_result,io_inflight,native_io;
 } Nx2NupReadProgress;
 void nx2_nup_get_progress(Nx2NupReadProgress *out);

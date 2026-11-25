@@ -13,6 +13,8 @@
 #endif
 #ifdef _WIN32
 #include <windows.h>
+#include <direct.h>
+#define mkdir(path,mode) _mkdir(path)
 #define STAT _stat64
 #else
 #include <dirent.h>
@@ -254,6 +256,7 @@ static int catalog_entry(void *v, const char *name) {
       unsigned char h[128], aci[32];
       if (fread(h, 1, 128, f) == 128 && !memcmp(h, "META", 4)) {
         game.resource = read_le32(h + 0x14);
+        game.remote_resource = read_le32(h + 0x10);
         game.main_stack_size = read_le32(h + 0x1c);
         game.main_priority = h[0x0e];
         game.main_core = h[0x0f];
@@ -268,6 +271,16 @@ static int catalog_entry(void *v, const char *name) {
     child(path, sizeof(path), folder, "updates");
     game.updates = update.found && base==0 ? 2 : type(path, 1);
     game.update_version = (update.found && base==0) ? update.version : 0;
+    if(game.updates==2){
+      /* ExeFS remains a single complete update set; RomFS is a file union.
+       * A base need not have runnable ExeFS to supply unchanged assets. */
+      char candidate[1200],assets[1400];
+      if(child(candidate,sizeof(candidate),folder,"base") &&
+         child(assets,sizeof(assets),candidate,"romfs") && type(assets,1))
+        strcpy(game.base_root,candidate);
+      else if(child(assets,sizeof(assets),folder,"romfs") && type(assets,1))
+        strcpy(game.base_root,folder);
+    }
     if (c->out->count >= 4096)
       return 0;
     void *items = realloc(c->out->items, (c->out->count + 1) * sizeof(game));
@@ -300,7 +313,7 @@ void nx2_catalog_free(Nx2Catalog *c) {
 typedef struct {
   char *path;
   uint64_t size, data;
-  uint32_t at, parent, next, dir, file, hash, po;
+  uint32_t at, parent, next, dir, file, hash, po, source;
 } Entry;
 typedef struct {
   Entry *files, *dirs;
@@ -308,7 +321,7 @@ typedef struct {
   const char *root;
   char relative[1024];
   unsigned depth;
-  int failed;
+  int failed,layered;
 } Tree;
 static uint64_t align64(uint64_t n, uint64_t a) {
   return (n + a - 1) & ~(a - 1);
@@ -486,15 +499,17 @@ static uint64_t part_root_hash(const char *s) {
   while (*s) h=(h^(unsigned char)*s++)*UINT64_C(1099511628211);
   return h;
 }
-static int part_path(const char *root, char out[160]) {
+static int part_path(const char *root,int layered,char out[160]) {
   int n=snprintf(out,160,
     "sdmc:/switch/BackupLoaderMKW/cache/%016llx.part",
-    (unsigned long long)part_root_hash(root));
+    (unsigned long long)(part_root_hash(root)^
+                        (layered?UINT64_C(0x554e494f4e303031):0)));
   return n>0 && n<160;
 }
 void nx2_folder_part_clear(const char *root) {
   char name[160];
-  if(part_path(root,name))remove(name);
+  for(int layered=0;layered<2;layered++)
+    if(part_path(root,layered,name))remove(name);
 }
 static void part_dirs(void) {
   mkdir("sdmc:/switch",0777);
@@ -532,11 +547,12 @@ static int part_add_record(Tree *t, const unsigned char *p, uint32_t len) {
 }
 static FILE *part_open(Tree *t, const char *root) {
   char name[160];
-  if(!part_path(root,name)) return NULL;
+  if(!part_path(root,t->layered,name)) return NULL;
   struct STAT st;
   if(STAT(root,&st)) return NULL;
   PartHeader wanted={{'N','X','2','P','A','R','T','1'},
                      part_root_hash(root),(int64_t)st.st_mtime};
+  if(t->layered)wanted.magic[7]='2';
   part_dirs();
   FILE *f=fopen(name,"rb+");
   if(f) {
@@ -561,7 +577,7 @@ static FILE *part_open(Tree *t, const char *root) {
       if(ftruncate(fileno(f),valid)) {fclose(f);return NULL;}
 #endif
       fseek(f,valid,SEEK_SET);
-      resume_files=t->nf;
+      resume_files+=t->nf;
       if(progress_callback && t->nf) progress_callback(t->nf,progress_context);
       return f;
     }
@@ -620,32 +636,89 @@ static int nup_entry(void *ctx,const char *path,int directory,uint64_t size) {
     progress_callback(t->nf,progress_context);
   return ok;
 }
-void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
+static void tree_free(Tree *t){
+  for(uint32_t i=0;i<t->nf;i++)free(t->files[i].path);
+  for(uint32_t i=0;i<t->nd;i++)free(t->dirs[i].path);
+  free(t->files);free(t->dirs);
+}
+static int tree_scan(Tree *t,int nup){
+  if(!add(&t->dirs,&t->nd,&t->dc,"",0))return 0;
+  FILE *part=nup?NULL:part_open(t,t->root);
+  int ok=nup?nx2_nup_romfs_walk(nup_entry,t):1;
+  for(uint32_t d=0;!nup && d<t->nd;d++){
+    if(t->dirs[d].hash)continue;
+    char dir[2400],rel[1024];
+    snprintf(rel,sizeof(rel),"%s",t->dirs[d].path);
+    snprintf(t->relative,sizeof(t->relative),"%s",rel);
+    if(!*rel)snprintf(dir,sizeof(dir),"%s",t->root);
+    else if(!child(dir,sizeof(dir),t->root,rel)){ok=0;break;}
+    uint32_t file_from=t->nf,dir_from=t->nd;
+    if(!list_game(dir,t) || !part_write(part,t,rel,file_from,dir_from)){
+      ok=0;break;
+    }
+    t->dirs[d].hash=1;
+  }
+  if(part)fclose(part);
+  return ok;
+}
+static int tree_has(Entry *entries,uint32_t count,const char *path){
+  Entry key={.path=(char *)path};
+  return count && bsearch(&key,entries,count,sizeof(*entries),entry_compare)!=NULL;
+}
+static int shadowed_by_file(Entry *files,uint32_t count,const char *path){
+  char prefix[1024];
+  snprintf(prefix,sizeof(prefix),"%s",path);
+  for(char *p=prefix;*p;p++)if(*p=='/'){
+    *p=0;int found=tree_has(files,count,prefix);*p='/';
+    if(found)return 1;
+  }
+  return tree_has(files,count,path);
+}
+static int tree_union(Tree *update,const Tree *base){
+  qsort(update->files,update->nf,sizeof(Entry),entry_compare);
+  qsort(update->dirs,update->nd,sizeof(Entry),entry_compare);
+  /* Appends preserve these sorted prefixes even when arrays reallocate. */
+  uint32_t files=update->nf,dirs=update->nd;
+  for(uint32_t i=0;i<base->nd;i++){
+    const char *p=base->dirs[i].path;
+    if(cancel_callback && cancel_callback(cancel_context))return 0;
+    if(shadowed_by_file(update->files,files,p) ||
+       tree_has(update->dirs,dirs,p))continue;
+    if(!add(&update->dirs,&update->nd,&update->dc,p,0))return 0;
+  }
+  for(uint32_t i=0;i<base->nf;i++){
+    const Entry *e=&base->files[i];
+    if(cancel_callback && cancel_callback(cancel_context))return 0;
+    if(shadowed_by_file(update->files,files,e->path) ||
+       tree_has(update->dirs,dirs,e->path))continue;
+    if(!add(&update->files,&update->nf,&update->fc,e->path,e->size))return 0;
+    update->files[update->nf-1].source=1;
+    if(progress_callback && !(update->nf%1024))
+      progress_callback(update->nf,progress_context);
+  }
+  return 1;
+}
+void *nx2_folder_rom(const char *root,size_t *out_size,char error[160]){
+  return nx2_folder_rom_layered(root,NULL,out_size,error);
+}
+void *nx2_folder_rom_layered(const char *root,const char *base_root,
+                             size_t *out_size,char error[160]) {
   resume_files=0;
   Tree t = {.root = root};
+  Tree base_tree={.root=base_root};
   Entry **index = NULL;
   unsigned char *blob = NULL;
   uint32_t *dh = NULL, *fh = NULL;
   *out_size = 0;
   snprintf(error, 160, "Could not scan or allocate the RomFS directory index");
-  if (!add(&t.dirs,&t.nd,&t.dc,"",0)) goto done;
   int nup=nx2_nup_active();
-  FILE *part=nup?NULL:part_open(&t,root);
-  int scan_ok=1;
-  if(nup)scan_ok=nx2_nup_romfs_walk(nup_entry,&t);
-  for (uint32_t d=0;!nup && d<t.nd;d++) {
-    if(t.dirs[d].hash) continue;
-    char dir[2400], rel[1024];
-    snprintf(rel,sizeof(rel),"%s",t.dirs[d].path);
-    snprintf(t.relative,sizeof(t.relative),"%s",rel);
-    if(!*rel) snprintf(dir,sizeof(dir),"%s",root);
-    else if(!child(dir,sizeof(dir),root,rel)) {scan_ok=0;break;}
-    uint32_t file_from=t.nf,dir_from=t.nd;
-    if(!list_game(dir,&t)) {scan_ok=0;break;}
-    if(!part_write(part,&t,rel,file_from,dir_from)) {scan_ok=0;break;}
-    t.dirs[d].hash=1;
-  }
-  if(part) fclose(part);
+  int layered=base_root && *base_root && !nup;
+  /* Old single-root checkpoints may have been made during an incomplete
+   * transfer. Layered scans get fresh identities, then resume normally. */
+  t.layered=base_tree.layered=layered;
+  int scan_ok=tree_scan(&t,nup);
+  if(scan_ok && layered)
+    scan_ok=tree_scan(&base_tree,0) && tree_union(&t,&base_tree);
   if(!scan_ok || !t.nf) goto done;
   qsort(t.files, t.nf, sizeof(Entry), entry_compare);
   qsort(t.dirs, t.nd, sizeof(Entry), dir_compare);
@@ -745,6 +818,7 @@ void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
     p64(p + 8, e->size);
     p32(p + 16, e->po);
     p32(p + 20, (uint32_t)strlen(e->path));
+    p64(p + 24, e->source);
     memcpy(blob + so + e->po, e->path, strlen(e->path));
   }
   for (uint32_t i = 0; i < db; i++)
@@ -756,7 +830,7 @@ void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
   for (unsigned i = 0; i < 10; i++)
     p64(blob + mo + i * 8, meta[i]);
   memcpy(blob, "NX2ROM01", 8);
-  p32(blob + 8, 1);
+  p32(blob + 8, layered?2:1);
   p32(blob + 12, 80);
   p64(blob + 16, ms);
   p64(blob + 24, align64(base + data, 4096));
@@ -770,12 +844,7 @@ void *nx2_folder_rom(const char *root, size_t *out_size, char error[160]) {
   *out_size = (size_t)bytes;
   error[0] = 0;
 done:
-  for (uint32_t i = 0; i < t.nf; i++)
-    free(t.files[i].path);
-  for (uint32_t i = 0; i < t.nd; i++)
-    free(t.dirs[i].path);
-  free(t.files);
-  free(t.dirs);
+  tree_free(&t);tree_free(&base_tree);
   free(index);
   free(dh);
   free(fh);

@@ -12,6 +12,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 
 static uint32_t rd32(const unsigned char *p) {
   return (uint32_t)p[0] | (uint32_t)p[1]<<8 |
@@ -182,6 +185,10 @@ done:
  * offset rather than unpacking its siblings onto the SD card. */
 typedef struct {
   FILE *f;
+#ifdef __SWITCH__
+  FsFile native_file;
+  int native_open;
+#endif
   unsigned char *toc;
   size_t toc_size;
   uint64_t blob_start, file_length;
@@ -286,6 +293,9 @@ static uint32_t lookup_file(const char *path) {
   return UINT32_MAX;
 }
 void nx2_nup_close(void) {
+#ifdef __SWITCH__
+  if(mounted.native_open)fsFileClose(&mounted.native_file);
+#endif
   if(mounted.f)fclose(mounted.f);
   free(mounted.toc);
   for(unsigned j=0;j<2;j++){
@@ -343,6 +353,11 @@ int nx2_nup_open(const char *path) {
   NupMount m={0};
   m.f=f;m.toc=toc;m.toc_size=(size_t)count;
   m.blob_start=rd64(h+0x38);m.file_length=rd64(h+0x40);
+  probe_error="NUP mount size or blob bounds changed since discovery";
+  if(m.blob_start<128 || (m.blob_start&15) ||
+     count>m.blob_start-128 || m.file_length<m.blob_start ||
+     nup_seek(f,0,SEEK_END) || nup_tell(f)<0 ||
+     (uint64_t)nup_tell(f)!=m.file_length)goto fail;
   m.ndirs=nd;m.nfiles=nf;
   m.dirs=toc+dirs_start;m.files=toc+files_start;
   m.children=toc+children_start;m.pool=toc+pool_off;
@@ -387,6 +402,23 @@ int nx2_nup_open(const char *path) {
                     at>m.file_length||stored>m.file_length-at))||
        (codec==0 && stored!=size))goto fail;
   }
+#ifdef __SWITCH__
+  /* Runtime reads bypass FILE seek state and newlib stream locking. The
+   * archive stays owned by the single storage worker; TOC/NPDM metadata
+   * preparation can still use the original stream before guest entry. */
+  probe_error="NUP native SD file open failed";
+  FsFileSystem *sd=fsdevGetDeviceFileSystem("sdmc");
+  if(!sd || strncmp(path,"sdmc:/",6) ||
+     R_FAILED(fsFsOpenFile(sd,path+5,FsOpenMode_Read,&m.native_file)))goto fail;
+  m.native_open=1;
+  s64 actual=0;
+  Result native_rc=fsFileGetSize(&m.native_file,&actual);
+  if(R_FAILED(native_rc) || actual<0 || (uint64_t)actual!=m.file_length){
+    fsFileClose(&m.native_file);
+    probe_error="NUP native file size changed during mount";
+    goto fail;
+  }
+#endif
   mounted=m;
   snprintf(probe_details,sizeof(probe_details),
     "NUP mounted %s pkg %u (complete ExeFS+RomFS)",
@@ -429,10 +461,11 @@ void *nx2_nup_package_npdm(size_t *length) {
   free(meta);return NULL;
 }
 static const char *read_error="No archive read attempted";
+static char io_error[160];
 const char *nx2_nup_read_error(void){return read_error;}
 
 /* The worker mutates and the launcher watchdog reads this without RPC.
- * Stalling in fread does not prevent observing the last actual I/O phase. */
+ * A blocked backend call still leaves its last I/O phase observable. */
 static Nx2NupReadProgress read_progress;
 static void progress_begin(uint32_t file,uint32_t codec,uint64_t n){
  __atomic_store_n(&read_progress.active,0,__ATOMIC_RELEASE);
@@ -443,6 +476,10 @@ static void progress_begin(uint32_t file,uint32_t codec,uint64_t n){
  __atomic_store_n(&read_progress.decoded_bytes,0,__ATOMIC_RELAXED);
  __atomic_store_n(&read_progress.delivered_bytes,0,__ATOMIC_RELAXED);
  __atomic_store_n(&read_progress.phase,1,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.io_inflight,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.io_result,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.chunk_offset,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.chunk_bytes,0,__ATOMIC_RELAXED);
  __atomic_store_n(&read_progress.active,1,__ATOMIC_RELEASE);
 }
 static void progress_phase(uint32_t phase){
@@ -462,19 +499,51 @@ void nx2_nup_get_progress(Nx2NupReadProgress *out){
  out->sd_bytes=__atomic_load_n(&read_progress.sd_bytes,__ATOMIC_RELAXED);
  out->decoded_bytes=__atomic_load_n(&read_progress.decoded_bytes,__ATOMIC_RELAXED);
  out->delivered_bytes=__atomic_load_n(&read_progress.delivered_bytes,__ATOMIC_RELAXED);
+ out->chunk_offset=__atomic_load_n(&read_progress.chunk_offset,__ATOMIC_RELAXED);
+ out->chunk_bytes=__atomic_load_n(&read_progress.chunk_bytes,__ATOMIC_RELAXED);
+ out->io_result=__atomic_load_n(&read_progress.io_result,__ATOMIC_RELAXED);
+ out->io_inflight=__atomic_load_n(&read_progress.io_inflight,__ATOMIC_ACQUIRE);
+ out->native_io=__atomic_load_n(&read_progress.native_io,__ATOMIC_RELAXED);
 }
-/* Same real bytes as fread of the full request, but in 64 KiB SD calls.
- * A short native read is a failure, never a fabricated successful asset. */
-static int read_exact_chunks(FILE *f,void *dst,size_t length){
+/* Exact offset-based archive reads. A returned failure or short transfer
+ * stays a failure; no retries of an in-flight call or synthetic asset bytes. */
+static int read_archive(uint64_t offset,void *dst,size_t length){
  unsigned char *p=dst;
  size_t pos=0;
+ if(offset>mounted.file_length || length>mounted.file_length-offset){
+  read_error="NUP archive read exceeds mounted file bounds";return 0;
+ }
+#ifndef __SWITCH__
+ if(offset>INT64_MAX || nup_seek(mounted.f,(int64_t)offset,SEEK_SET)){
+  read_error="NUP archive seek failed";return 0;
+ }
+#endif
  progress_phase(2);
  while(pos<length){
   size_t want=length-pos;
   if(want>0x10000U)want=0x10000U;
-  size_t got=fread(p+pos,1,want,f);
+  __atomic_store_n(&read_progress.chunk_offset,offset+pos,__ATOMIC_RELAXED);
+  __atomic_store_n(&read_progress.chunk_bytes,(uint32_t)want,__ATOMIC_RELAXED);
+  __atomic_store_n(&read_progress.io_result,UINT32_MAX,__ATOMIC_RELAXED);
+  __atomic_store_n(&read_progress.io_inflight,1,__ATOMIC_RELEASE);
+  uint64_t got=0;uint32_t rc=0;
+#ifdef __SWITCH__
+  __atomic_store_n(&read_progress.native_io,1,__ATOMIC_RELAXED);
+  rc=fsFileRead(&mounted.native_file,offset+pos,p+pos,want,FsReadOption_None,&got);
+#else
+  got=fread(p+pos,1,want,mounted.f);
+  if(ferror(mounted.f))rc=1;
+#endif
   if(got)__atomic_fetch_add(&read_progress.sd_bytes,(uint64_t)got,__ATOMIC_RELAXED);
-  if(got!=want)return 0;
+  __atomic_store_n(&read_progress.io_result,rc,__ATOMIC_RELAXED);
+  __atomic_store_n(&read_progress.io_inflight,0,__ATOMIC_RELEASE);
+  if(rc || got!=want){
+   snprintf(io_error,sizeof(io_error),
+            "NUP I/O result=%08x offset=%llu requested=%llu read=%llu",
+            rc,(unsigned long long)(offset+pos),
+            (unsigned long long)want,(unsigned long long)got);
+   read_error=io_error;return 0;
+  }
   pos+=got;
  }
  return 1;
@@ -494,10 +563,6 @@ int nx2_nup_file_info(const char *path,uint64_t *size,unsigned *codec){
   if(size)*size=rd64(e+8);
   if(codec)*codec=e[64];
   return 1;
-}
-static int nup_seek_file(FILE *f,uint64_t offset) {
-  if(offset>INT64_MAX)return 0;
-  return nup_seek(f,(int64_t)offset,SEEK_SET)==0;
 }
 
 static int large_begin(NupLargeStream *s,uint32_t file,
@@ -561,10 +626,11 @@ static int read_large_compressed(const unsigned char *e,uint32_t file,
     if(s->input_pos==s->input_size && s->consumed<s->packed) {
       size_t n=(size_t)(s->packed-s->consumed);
       if(n>128*1024)n=128*1024;
-      if(s->consumed>UINT64_MAX-s->at ||
-         !nup_seek_file(mounted.f,s->at+s->consumed) ||
-         !read_exact_chunks(mounted.f,s->input,n)) {
-        read_error="Zstandard large-stream packed read failed";
+      if(s->consumed>UINT64_MAX-s->at){
+        read_error="Zstandard large-stream packed offset overflow";
+        large_discard(s);return 0;
+      }
+      if(!read_archive(s->at+s->consumed,s->input,n)) {
         large_discard(s);
         return 0;
       }
@@ -643,8 +709,7 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       mounted.cached_file[slot]=UINT32_MAX;
       mounted.cached_size[slot]=0;
       unsigned char *raw=malloc((size_t)packed),*out=malloc((size_t)total);
-      if(!raw||!out||!nup_seek_file(mounted.f,at)||
-         !read_exact_chunks(mounted.f,raw,(size_t)packed)) {
+      if(!raw||!out||!read_archive(at,raw,(size_t)packed)) {
         free(raw);free(out);return 0;
       }
       progress_phase(3);
@@ -701,11 +766,11 @@ int nx2_nup_read(const char *path,uint64_t offset,void *dest,size_t length){
   if(e[64]==0) {
     /* Validate the absolute archive offset separately from virtual
      * extent bounds; an overflow must not alias another NUP entry. */
+    read_error="Raw NUP archive offset overflow";
     int ok=at<=UINT64_MAX-offset &&
-           nup_seek_file(mounted.f,at+offset) &&
-           read_exact_chunks(mounted.f,dest,length);
+           read_archive(at+offset,dest,length);
     if(ok)__atomic_fetch_add(&read_progress.delivered_bytes,(uint64_t)length,__ATOMIC_RELAXED);
-    read_error=ok?"OK":"Raw NUP seek/read failed";
+    if(ok)read_error="OK";
     progress_done();
     return ok;
   }

@@ -5,8 +5,8 @@
 enum { NX2_HEAP_READY=1, NX2_HEAP_TOO_SMALL, NX2_HEAP_INVALID };
 /* A 512 MiB committed host prefix is insufficient for large multi-module
  * ExeFS images: every mapped NSO retains its real backing pages while later
- * modules are still being decoded. Reserve 768 MiB for BOTH NUP and folder
- * loading, without returning to the former 1 GiB fixed host reservation.
+ * modules are still being decoded. The current policy reserves 1 GiB for
+ * BOTH NUP and folder loading.
  * The guest still gets actual bounded non-system-memory accounting and
  * real physical reserve checks; do not fabricate guest heap success. */
 #define NX2_HOST_MIN_BYTES UINT64_C(0x40000000) /* 1024 MiB */

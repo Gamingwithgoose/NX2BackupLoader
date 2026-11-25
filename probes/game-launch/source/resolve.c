@@ -6,6 +6,46 @@ static uint32_t w(const unsigned char *p) {
   return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 |
          (uint32_t)p[3] << 24;
 }
+/* Recognize complete output-pointer wrappers, not arbitrary instructions
+ * around an SVC. All accepted forms save the same ABI argument, store the
+ * expected-width x1 result, balance SP, and return. Replacing their entry
+ * therefore leaves argument/result conversion to the normal C hook. */
+static int output_wrapper(const Nx2Module *m,uint32_t off,uint32_t prefix,
+                           uint32_t store){
+  uint64_t end=m->file_size[0];
+  if(off<4 || (uint64_t)off+16>end || w(m->guest+off-4)!=prefix)
+    return 0;
+  const unsigned char *p=m->guest+off+4;
+  if((uint64_t)off+20<=end && w(p)==0xf94003e2U && w(p+4)==store &&
+     w(p+8)==0x910043ffU && w(p+12)==0xd65f03c0U)return 1;
+  /* ldr x2,[sp],#16; [cbz x2,ret]; str x1/w1,[x2]; ret */
+  if(w(p)!=0xf84107e2U)return 0;
+  if(w(p+4)==store && w(p+8)==0xd65f03c0U)return 1;
+  if((uint64_t)off+20<=end && w(p+4)==0xb4000042U && w(p+8)==store &&
+     w(p+12)==0xd65f03c0U)return 1;
+  return 0;
+}
+static int simple_wrapper(const Nx2Module *m,uint32_t off){
+  /* Only inert NOPs are permitted between SVC and RET. Never swallow an
+   * epilogue, an output store, authentication, or another function. */
+  uint64_t at=(uint64_t)off+4;
+  for(unsigned n=0;n<4 && at+4<=m->file_size[0];n++,at+=4){
+    uint32_t ins=w(m->guest+at);
+    if(ins==0xd65f03c0U)return 1;
+    if(ins!=0xd503201fU)return 0;
+  }
+  return 0;
+}
+static void wrapper_error(char error[160],const Nx2Module *m,
+                           uint32_t svc,uint32_t off){
+  uint32_t words[5]={0};
+  for(unsigned i=0;i<5;i++)
+    if((uint64_t)off+4ULL*i+4<=m->file_size[0])
+      words[i]=w(m->guest+off+4*i);
+  snprintf(error,160,"Unsupported SVC wrapper %x at %x prev=%08x code=%08x,%08x,%08x,%08x,%08x",
+           svc,off,off>=4?w(m->guest+off-4):0,
+           words[0],words[1],words[2],words[3],words[4]);
+}
 static int add(Nx2PatchSpec *out, unsigned *n, size_t capacity,
                const Nx2PatchSpec *p, char error[160]) {
   for (unsigned i = 0; i < *n; i++) {
@@ -80,19 +120,13 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
     if (output) {
       uint32_t store = (svc == 1 || svc == 0x29) ? 0xf9000041 : 0xb9000041;
       uint32_t prefix = (role == 0 && svc == 6) ? 0xf81f0fe1 : 0xf81f0fe0;
-      if (off < 4 || off + 20 > m->file_size[0] ||
-          w(m->guest + off - 4) != prefix ||
-          w(m->guest + off + 4) != 0xf94003e2 ||
-          w(m->guest + off + 8) != store ||
-          w(m->guest + off + 12) != 0x910043ff ||
-          w(m->guest + off + 16) != 0xd65f03c0) {
-        snprintf(error, 160, "Unsupported SVC wrapper %x at %x", svc, off);
+      if (!output_wrapper(m,off,prefix,store)) {
+        wrapper_error(error,m,svc,off);
         return 0;
       }
       p.offset -= 4;
-    } else if (off + 8 > m->file_size[0] ||
-               w(m->guest + off + 4) != 0xd65f03c0) {
-      snprintf(error, 160, "Unsupported simple SVC wrapper %x at %x", svc, off);
+    } else if (!simple_wrapper(m,off)) {
+      wrapper_error(error,m,svc,off);
       return 0;
     }
     if (!add(out, count, capacity, &p, error))

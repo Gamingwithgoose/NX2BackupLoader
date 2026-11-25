@@ -1,6 +1,7 @@
 param(
  [Parameter(Mandatory=$true)][string]$Nro,
- [Parameter(Mandatory=$true)][string]$Icon
+ [Parameter(Mandatory=$true)][string]$Icon,
+ [string]$Title='BackupLoaderMKW'
 )
 $ErrorActionPreference='Stop'
 if(-not [IO.File]::Exists($Icon)){
@@ -21,7 +22,7 @@ if($size -ne $bytes.Length){throw 'NRO already has trailing assets; refusing to 
 # ordinary Homebrew Menu metadata without changing the Switch 2 ELF/startup.
 # NACP language records each contain 0x200-byte name and 0x100-byte author.
 $nacp=New-Object byte[] 0x4000
-$nameBytes=[Text.Encoding]::UTF8.GetBytes('BackupLoaderMKW')
+$nameBytes=[Text.Encoding]::UTF8.GetBytes($Title)
 $authorBytes=[Text.Encoding]::UTF8.GetBytes('Goose')
 if($nameBytes.Length -ge 0x200 -or $authorBytes.Length -ge 0x100){
  throw 'NACP title/author exceeds fixed language record limits'
