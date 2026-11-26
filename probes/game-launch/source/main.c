@@ -1644,16 +1644,13 @@ static void draw(const Nx2Catalog *catalog, size_t selected) {
   consoleClear();
   printf("BackupLoaderMKW 0.14\n\n");
   if (!catalog->count)
-    printf("No extracted games or NUP backups found in /games.\n\n");
+    printf("No NUP backups found in /games.\n\n");
   else {
     size_t page = (selected / 15) * 15;
     for (size_t i = page; i < catalog->count && i < page + 15; i++)
       printf("%s %.66s\n", i == selected ? ">" : " ", catalog->items[i].name);
     printf("\n%u / %u\n", (unsigned)selected + 1, (unsigned)catalog->count);
-    if (catalog->items[selected].is_nup)
-      printf("NUP: %s\n", catalog->items[selected].nup_status);
-    else if (catalog->items[selected].updates)
-      printf("This selection loads base; updates are not merged.\n");
+    printf("NUP: %s\n", catalog->items[selected].nup_status);
   }
   printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
          "B+A: rebuild index   R+A: Horizon check\n"
