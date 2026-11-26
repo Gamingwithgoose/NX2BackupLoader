@@ -72,6 +72,7 @@ static inline int nx2_part_native_open(Nx2PartFile *f){
 }
 static inline uint32_t nx2_part_native_read(Nx2PartFile *f,uint64_t offset,void *dst,size_t len,uint64_t *got){
  *got=0;unsigned char *p=dst;
+ if(!f||offset>f->size||len>f->size-offset)return 1;
  while(*got<len){
   uint64_t at,left,n=0;int i=nup_parts_at(f->parts,f->count,offset+*got,&at,&left);
   if(i<0||i>=f->native_count)return 1;
