@@ -148,8 +148,7 @@ static int catalog_entry(void *v, const char *name) {
   if (name[0] == '.' || strlen(name) >= 256 || strchr(name, '\\') ||
       strchr(name, ':'))
     return 1;
-  char folder[1200], path[1400], modules[13][16];
-  unsigned count;
+  char folder[1200];
   if (!child(folder, sizeof(folder), c->root, name))
     return 1;
   size_t len = strlen(name);
@@ -176,49 +175,7 @@ static int catalog_entry(void *v, const char *name) {
     c->out->items[c->out->count++] = archive;
     return 1;
   }
-  if (!type(folder, 1))
-    return 1;
-  Nx2Game game = {0};
-  strcpy(game.name, name);
-  for (unsigned base = 0; base < 2; base++) {
-    if (base) {
-      if (!child(game.root, sizeof(game.root), folder, "base"))
-        continue;
-    } else
-      strcpy(game.root, folder);
-    if (!child(path, sizeof(path), game.root, "romfs") || !type(path, 1) ||
-        !nx2_folder_modules(game.root, modules, &count))
-      continue;
-    if (!child(path, sizeof(path), game.root, "exefs/main.npdm"))
-      return 0;
-    FILE *f = fopen(path, "rb");
-    if (f) {
-      unsigned char h[128], aci[32];
-      if (fread(h, 1, 128, f) == 128 && !memcmp(h, "META", 4)) {
-        game.resource = read_le32(h + 0x14);
-        game.main_stack_size = read_le32(h + 0x1c);
-        game.main_priority = h[0x0e];
-        game.main_core = h[0x0f];
-        game.has_thread_metadata = 1;
-        uint32_t at = read_le32(h + 0x70);
-        if (at >= 128 && at <= 0x100000 && !fseek(f, (long)at, SEEK_SET) &&
-            fread(aci, 1, 32, f) == 32 && !memcmp(aci, "ACI0", 4))
-          game.id = read_le64(aci + 16);
-      }
-      fclose(f);
-    }
-    child(path, sizeof(path), folder, "updates");
-    game.updates = type(path, 1);
-    if (c->out->count >= 4096)
-      return 0;
-    void *items = realloc(c->out->items, (c->out->count + 1) * sizeof(game));
-    if (!items)
-      return 0;
-    c->out->items = items;
-    c->out->items[c->out->count++] = game;
-    return 1;
-  }
-  return 1;
+  return 1; /* NUP-only library; ignore extracted directories. */
 }
 static int game_compare(const void *a, const void *b) {
   return strcmp(((const Nx2Game *)a)->name, ((const Nx2Game *)b)->name);
