@@ -2147,7 +2147,7 @@ int main(int argc,char **argv){
     if(!strcmp(argv[i],"--ui-launch"))requested=1;
     if(!strcmp(argv[i],"--ui-report"))report=1;
   }
-  int valid=requested && nx2_launch_request_read(&game,&detailed) && game.is_nup!=2;
+  int valid=requested && nx2_launch_request_read(&game,&detailed) && game.is_nup==1;
   /* One-shot: a failed preparation/reboot never silently relaunches a title. */
   remove(NX2_REQUEST_PATH);
   if(requested&&!valid)snprintf(outcome,sizeof(outcome),

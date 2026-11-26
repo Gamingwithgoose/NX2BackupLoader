@@ -8,6 +8,7 @@
 typedef struct {
  uint64_t host,system_resource,pid;
  uint32_t query_result,version;
+ uint64_t user_lo,user_hi;
 } Nx2LaunchOrigin;
 extern Nx2LaunchOrigin nx2_launch_origin;
 int nx2_launch_request_write(const Nx2Game *,int detailed);

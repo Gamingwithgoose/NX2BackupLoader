@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "host.h"
+#include "launch_request.h"
 #include "native_compat.h"
 #include "cache_catalog.h"
 #include "nup.h"
@@ -51,16 +52,10 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
   memset(h, 0, sizeof(*h));
   h->guest_program_id = guest_id;
   h->report = report;
-  /* Read hbloader's existing selection without consuming applet launch
-   * parameters or opening another account service/session. Never guess a UID. */
-  AccountUid *selected=envGetUserIdStorage();
-  if(nx2_native_compat&&selected){
-    _Static_assert(sizeof(*selected)==sizeof(h->selected_user),"selected UID ABI");
-    memcpy(&h->selected_user,selected,sizeof(h->selected_user));
-    if(nx2_profile_has_uid(h->selected_user))h->selected_user_source=1;
-  }
-  logline(h,"SAVE_PROFILE_CONTEXT selected_uid_available=%u source=%u missing_selection=legacy_or_explicit_sdk_uid\n",
-          nx2_profile_has_uid(h->selected_user),h->selected_user_source);
+  h->selected_user=(Nx2UserId){nx2_launch_origin.user_lo,nx2_launch_origin.user_hi};
+  if(!nx2_profile_has_uid(h->selected_user))return 0;
+  h->selected_user_source=3;
+  logline(h,"SAVE_PROFILE_CONTEXT selected_uid_available=1 source=3 GUI_handoff=1\n");
   h->sd = fsdevGetDeviceFileSystem("sdmc");
   if (!h->sd || strncmp(rom, "sdmc:", 5))
     return 0;
@@ -71,21 +66,17 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
       !strcmp(save_key, "..") || strchr(save_key, '/') ||
       strchr(save_key, '\\') || strchr(save_key, ':'))
     return 0;
-  /* New archives use a dedicated SD directory. Legacy archives are left
-   * untouched; their path-derived metadata is not migrated implicitly. */
-  int n;
-  if(guest_id)
-    n=snprintf(h->save_root,sizeof(h->save_root),
-               "/switch/BackupLoaderMKW/saves/%s [%016llx]",
-               save_key,(unsigned long long)guest_id);
-  else
-    n=snprintf(h->save_root,sizeof(h->save_root),
-               "/switch/BackupLoaderMKW/saves/%s",save_key);
+  /* New layout; legacy directories remain untouched. UID is stable across nickname changes. */
+  char game_dir[512],user_dir[512];
+  if(!guest_id)return 0;
+  int n=snprintf(game_dir,sizeof(game_dir),"/BackupLoaderMKW/saves/%s [%016llx]",save_key,(unsigned long long)guest_id);
+  if(n<0||n>=(int)sizeof(game_dir))return 0;
+  n=snprintf(user_dir,sizeof(user_dir),"%s/%016llx%016llx",game_dir,(unsigned long long)h->selected_user.lo,(unsigned long long)h->selected_user.hi);
+  if(n<0||n>=(int)sizeof(user_dir))return 0;
+  n=snprintf(h->save_root,sizeof(h->save_root),"%s/save",user_dir);
   if(n<0||n>=(int)sizeof(h->save_root))return 0;
-  logline(h,"SAVE_NAMESPACE strategy=isolated_sd guest=%016llx root=%s\n",
-          (unsigned long long)guest_id,h->save_root);
-  const char *paths[] = {"/switch/BackupLoaderMKW",
-                         "/switch/BackupLoaderMKW/saves", h->save_root};
+  logline(h,"SAVE_NAMESPACE strategy=selected_profile guest=%016llx root=%s\n",(unsigned long long)guest_id,h->save_root);
+  const char *paths[]={"/BackupLoaderMKW","/BackupLoaderMKW/saves",game_dir,user_dir,h->save_root};
   for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
     Result rc = mkdir_one(h->sd, paths[i]);
     logline(h, "PRIVATE_SAVE_DIRECTORY path=%s result=%08x\n", paths[i], rc);
@@ -224,53 +215,12 @@ static Result archive_provision_at(Nx2Host *h,const char *root){
  * subsequent users receive independent subdirectories. */
 static Result profile_scope(Nx2Host *h,Nx2UserId uid,int create,
                             char root[620],int *primary){
+ (void)create;
  if(!h||!primary||!root||!nx2_profile_has_uid(uid))return NX2_INVALID;
- if(nx2_native_compat&&!nx2_profile_has_uid(h->selected_user)){
-   h->selected_user=uid;h->selected_user_source=2;
-   logline(h,"SAVE_PROFILE_CONTEXT selected_uid_available=1 source=2 explicit_sdk_user=1\n");
- }
- uint64_t hash=UINT64_C(14695981039346656037);
- for(const unsigned char *p=(const unsigned char*)h->save_root;*p;p++){
-  hash^=*p;hash*=UINT64_C(1099511628211);
- }
- char marker[160],disk[170];FsDirEntryType type=0;
- int n=snprintf(marker,sizeof(marker),
-        "/switch/BackupLoaderMKW/.nx2-primary-%016llx",
-        (unsigned long long)hash);
- if(n<0||n>=(int)sizeof(marker))return NX2_INVALID;
- n=snprintf(disk,sizeof(disk),"sdmc:%s",marker);
- if(n<0||n>=(int)sizeof(disk))return NX2_INVALID;
- Result rc=fsFsGetEntryType(h->sd,marker,&type);
- uint64_t record[3]={0};
- if(R_SUCCEEDED(rc)){
-  if(type!=FsDirEntryType_File)return NX2_INVALID;
-  FILE *f=fopen(disk,"rb");if(!f)return NX2_INVALID;
-  size_t count=fread(record,1,sizeof(record),f);int closed=fclose(f);
-  if(count!=sizeof(record)||closed||
-     record[0]!=NX2_PROFILE_MARKER_MAGIC||
-     (!record[1]&&!record[2]))return NX2_INVALID;
- }else if(rc==NX2_NOT_FOUND){
-  record[0]=NX2_PROFILE_MARKER_MAGIC;
-  record[1]=uid.lo;record[2]=uid.hi;
-  FILE *f=fopen(disk,"wb");if(!f)return NX2_INVALID;
-  size_t count=fwrite(record,1,sizeof(record),f);
-  int flushed=fflush(f),closed=fclose(f);
-  if(count!=sizeof(record)||flushed||closed)return NX2_INVALID;
-  logline(h,"SAVE_PROFILE_PRIMARY_BOUND old_save_kept_in_place=1\n");
- }else return rc;
- *primary=(record[1]==uid.lo&&record[2]==uid.hi);
- if(*primary){
-  n=snprintf(root,620,"%s",h->save_root);
-  return n>0&&n<620?0:NX2_INVALID;
- }
- char rel[80];if(!nx2_profile_relative(rel,sizeof(rel),uid))return NX2_INVALID;
- n=snprintf(root,620,"%s/%s",h->save_root,rel);
- if(n<0||n>=620)return NX2_INVALID;
- if(!create)return 0;
- char parent[600];n=snprintf(parent,sizeof(parent),"%s/profiles",h->save_root);
- if(n<0||n>=(int)sizeof(parent))return NX2_INVALID;
- rc=mkdir_one(h->sd,parent);if(R_FAILED(rc))return rc;
- return mkdir_one(h->sd,root);
+ if(uid.lo!=h->selected_user.lo||uid.hi!=h->selected_user.hi)return NX2_INVALID;
+ *primary=1;
+ int n=snprintf(root,620,"%s",h->save_root);
+ return n>0&&n<620?0:NX2_INVALID;
 }
 static uint64_t token(Nx2Host *h, unsigned i) {
   if (!++h->handles[i].generation)
