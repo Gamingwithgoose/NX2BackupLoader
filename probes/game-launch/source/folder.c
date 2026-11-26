@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "folder.h"
 #include "nup.h"
+#include "nupparts.h"
 #ifdef __SWITCH__
 #include <switch.h>
 #endif
@@ -210,16 +211,22 @@ static int catalog_entry(void *v, const char *name) {
   if (!child(folder, sizeof(folder), c->root, name))
     return 1;
   size_t len = strlen(name);
-  if (len > 4 && name[len-4]=='.' &&
-      (name[len-3]=='n'||name[len-3]=='N') &&
-      (name[len-2]=='u'||name[len-2]=='U') &&
-      (name[len-1]=='p'||name[len-1]=='P') &&
-      type(folder,0)) {
+  NupPart *parts=calloc(NUP_PARTS_MAX,sizeof(*parts));
+  if(!parts)return 0;
+  int count=nup_parts_entry(c->root,name,type(folder,1),parts,NUP_PARTS_MAX);
+  free(parts);
+  if(count>0) {
     uint64_t id = 0, files = 0;
     int valid = nx2_nup_probe(folder, &id, &files);
     Nx2Game archive = {0};
-    memcpy(archive.name, name, len - 4);
-    archive.name[len - 4] = 0;
+    NupPartName part;
+    if(!type(folder,1)&&nup_part_name(name,&part)&&count>1){
+      snprintf(archive.name,sizeof(archive.name),"%s",part.stem);
+      size_t s=strlen(archive.name);if(nup_name_is_nup(archive.name))archive.name[s-4]=0;
+    }else{
+      size_t s=nup_name_is_nup(name)?len-4:len;
+      memcpy(archive.name,name,s);archive.name[s]=0;
+    }
     strcpy(archive.root, folder);
     strcpy(archive.library_root,folder);
     archive.id = id;

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "media.h"
 #include "nup_meta.h"
+#include "nup_part_io.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,95 @@ static int placeholder(const char *s){
  }
  return !*s;
 }
+static int text(char out[256],const unsigned char *p,size_t n){
+ size_t k=0;while(k<n&&p[k]){if(p[k]<32)return 0;k++;}
+ if(!k||k>=n)return 0;
+ if(k>255){k=255;while(k && (p[k]&0xc0)==0x80)k--;}
+ memcpy(out,p,k);out[k]=0;return !placeholder(out);
+}
+static int title_bytes(char out[256],const unsigned char *p,size_t n){
+ unsigned char value[513];if(!n||n>512)return 0;
+ memcpy(value,p,n);value[n]=0;return text(out,value,n+1);
+}
+static int nacp_title(char out[256],const unsigned char *p,size_t n){
+ /* NPDM starts with META. Some older packers put it in a NACP-tagged TLV.
+  * A short binary header is not a language table or an application title. */
+ if(n<16*0x300||nx2_meta_npdm(p,n))return 0;
+ const unsigned order[]={0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
+ for(unsigned i=0;i<16;i++){
+  size_t at=(size_t)order[i]*0x300;
+  if(at<=n&&n-at>=0x200&&text(out,p+at,0x200))return 1;
+ }
+ return 0;
+}
+static unsigned char *file_bytes(const char *path,size_t *size){
+ *size=0;FILE *f=fopen(path,"rb");if(!f)return NULL;
+ if(seek_file(f,0,SEEK_END)){fclose(f);return NULL;}
+ int64_t n=tell_file(f);
+ if(n<=0||n>MEDIA_LIMIT||seek_file(f,0,SEEK_SET)){fclose(f);return NULL;}
+ unsigned char *b=malloc((size_t)n);size_t got=b?fread(b,1,(size_t)n,f):0;
+ int closed=fclose(f);if(!b||got!=(size_t)n||closed){free(b);return NULL;}
+ *size=got;return b;
+}
+static int image_bytes(const unsigned char *p,size_t n){
+ return (n>=2&&p[0]==0xff&&p[1]==0xd8)||
+   (n>=8&&!memcmp(p,"\x89PNG\r\n\x1a\n",8));
+}
+static unsigned char *folder_bytes(const Nx2Game *g,const char *suffix,size_t *size){
+ char base[1250],path[1600];
+ int nb=snprintf(base,sizeof(base),"%s/base",g->library_root);
+ const char *roots[]={g->root,g->base_root,g->library_root,nb>0&&nb<(int)sizeof(base)?base:""};
+ for(unsigned i=0;i<4;i++){
+  if(!*roots[i])continue;
+  int n=snprintf(path,sizeof(path),"%s/%s",roots[i],suffix);
+  if(n<=0||n>=(int)sizeof(path))continue;
+  unsigned char *b=file_bytes(path,size);if(b)return b;
+ }
+ return NULL;
+}
+#ifdef __SWITCH__
+static int ns_attempted,ns_live;
+static void cached_control(const Nx2Game *g,char title[256],unsigned char **image,size_t *bytes){
+ if(!g->id)return;
+ if(!ns_attempted){ns_attempted=1;ns_live=R_SUCCEEDED(nsInitialize());}
+ if(!ns_live)return;
+ NsApplicationControlData *data=calloc(1,sizeof(*data));if(!data)return;
+ u64 actual=0;
+ /* CacheOnly never requests a download or imports game data into the system. */
+ Result rc=nsGetApplicationControlData(NsApplicationControlSource_CacheOnly,g->id,data,sizeof(*data),&actual);
+ if(R_SUCCEEDED(rc)&&actual<=sizeof(*data)){
+  char name[256];
+  if(actual>=sizeof(data->nacp)&&nacp_title(name,(const unsigned char *)&data->nacp,sizeof(data->nacp)))snprintf(title,256,"%s",name);
+  size_t offset=offsetof(NsApplicationControlData,icon);
+  if(image&&bytes&&!*image&&actual>offset&&actual-offset<=sizeof(data->icon)){
+   size_t n=(size_t)(actual-offset);
+   if(n>=2&&data->icon[0]==0xff&&data->icon[1]==0xd8){
+    *image=malloc(n);if(*image){memcpy(*image,data->icon,n);*bytes=n;}
+   }
+  }
+ }
+ free(data);
+}
+void nx2_ui_media_exit(void){if(ns_live)nsExit();ns_live=0;ns_attempted=0;}
+#else
+static void cached_control(const Nx2Game *g,char title[256],unsigned char **image,size_t *bytes){(void)g;(void)title;(void)image;(void)bytes;}
+void nx2_ui_media_exit(void){}
+#endif
+/* Actual NUP v1 localized records: u8 tag length, tag, u32 value length, value. */
+static const unsigned char *localized(const unsigned char *b,size_t n,size_t *bytes){
+ size_t at=0;const unsigned char *first=NULL;size_t first_size=0;
+ while(at<n){
+  unsigned k=b[at++];if(!k||k>n-at||n-at-k<4)return NULL;
+  const unsigned char *tag=b+at;at+=k;uint32_t len=read32(b+at);at+=4;
+  if(len>n-at)return NULL;
+  if(!first){first=b+at;first_size=len;}
+  if((k==5&&!memcmp(tag,"en-us",5))||(k==2&&!memcmp(tag,"en",2))){*bytes=len;return b+at;}
+  at+=len;
+ }
+ *bytes=first_size;return first;
+}
+/* Read only candidate artwork records; never mount the guest archive. */
+
 static int text(char out[256],const unsigned char *p,size_t n){
  size_t k=0;while(k<n&&p[k]){if(p[k]<32)return 0;k++;}
  if(!k||k>=n)return 0;

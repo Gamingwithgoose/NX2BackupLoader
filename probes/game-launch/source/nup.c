@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "nup.h"
+#include "nup_part_io.h"
 #include "nup_layout.h"
 #include "nup_meta.h"
 #include <limits.h>
@@ -120,14 +121,14 @@ static char probe_details[160];
 const char *nx2_nup_probe_error(void) { return probe_error; }
 int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
   unsigned char header[128], digest[32];
-  FILE *f=fopen(path,"rb");
+  Nx2PartFile *f=nx2_part_open(path);
   probe_details[0]=0;
   probe_error = "Cannot open NUP file";
   if (!f) return 0;
   probe_error = "Incomplete NUP header";
   int ok=0;
   unsigned char *toc=NULL;
-  if (fread(header,1,sizeof(header),f)!=sizeof(header)) goto done;
+  if (nx2_part_read(header,1,sizeof(header),f)!=sizeof(header)) goto done;
   probe_error = "Invalid NUP v1 header";
   if (memcmp(header,"NUP\1",4) || header[4]!=0x80 || header[5] ||
       header[6]!=1 || header[7] || rd32(header+0x4c) ||
@@ -138,11 +139,11 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
   probe_error = "Incomplete copy, invalid file size or TOC bounds";
   if (!packages || packages>4096 || toc_size<48 || toc_size>128*1024*1024 ||
       blob%16 || blob<128 || toc_size>blob-128 || file_size<blob ||
-      nup_seek(f,0,SEEK_END) || nup_tell(f)<0 || (uint64_t)nup_tell(f)!=file_size ||
-      nup_seek(f,128,SEEK_SET)) goto done;
+      nx2_part_seek(f,0,SEEK_END) || nx2_part_tell(f)<0 || (uint64_t)nx2_part_tell(f)!=file_size ||
+      nx2_part_seek(f,128,SEEK_SET)) goto done;
   probe_error = "Cannot read NUP table of contents";
   toc=malloc((size_t)toc_size);
-  if (!toc || fread(toc,1,(size_t)toc_size,f)!=(size_t)toc_size) goto done;
+  if (!toc || nx2_part_read(toc,1,(size_t)toc_size,f)!=(size_t)toc_size) goto done;
   probe_error = "NUP table checksum or format mismatch";
   sha256(toc,(size_t)toc_size,digest);
   if (memcmp(digest,header+0x18,32) || memcmp(toc,"TOC\1",4) ||
@@ -195,7 +196,7 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
   }
 done:
   free(toc);
-  fclose(f);
+  nx2_part_close(f);
   return ok;
 }
 
@@ -203,11 +204,7 @@ done:
  * offset rather than unpacking its siblings onto the SD card. */
 typedef struct {uint32_t root,version,package;} NupLayer;
 typedef struct {
-  FILE *f;
-#ifdef __SWITCH__
-  FsFile native_file;
-  int native_open;
-#endif
+  Nx2PartFile *f;
   unsigned char *toc;
   unsigned char *ordered; /* validated bytewise child ordering; optional */
   size_t toc_size;
@@ -349,10 +346,7 @@ static uint32_t lookup_file(const char *path){
  path_cache[slot].hash=hash;path_cache[slot].file=file;path_cache[slot].valid=1;return file;
 }
 void nx2_nup_close(void) {
-#ifdef __SWITCH__
-  if(mounted.native_open)fsFileClose(&mounted.native_file);
-#endif
-  if(mounted.f)fclose(mounted.f);
+  nx2_part_close(mounted.f);
   free(mounted.layers);
   free(mounted.ordered);
   free(mounted.toc);
@@ -391,11 +385,11 @@ int nx2_nup_open(const char *path) {
    * performed the full probe; repeat validation here against the data that
    * this mount will actually use without rereading the TOC twice. */
   probe_error="NUP reopen failed";
-  FILE *f=fopen(path,"rb");
+  Nx2PartFile *f=nx2_part_open(path);
   if(!f)return 0;
   probe_error="NUP header read failed";
   unsigned char h[128];
-  if(fread(h,1,128,f)!=128){fclose(f);return 0;}
+  if(nx2_part_read(h,1,128,f)!=128){nx2_part_close(f);return 0;}
   probe_error="NUP TOC too large or invalid";
   uint64_t count=rd64(h+0x10),nd=0,nf=0;
   uint32_t declared=rd32(h+0x48);
@@ -403,19 +397,19 @@ int nx2_nup_open(const char *path) {
      h[6]!=1 || h[7] || rd64(h+8)!=128 ||
      !declared || declared>4096 || count>128*1024*1024 ||
      count<48+(uint64_t)declared*64) {
-    fclose(f);return 0;
+    nx2_part_close(f);return 0;
   }
   probe_error="NUP TOC allocation or read failed";
   unsigned char *toc=malloc((size_t)count);
-  if(!toc||fread(toc,1,(size_t)count,f)!=(size_t)count) {
-    free(toc);fclose(f);return 0;
+  if(!toc||nx2_part_read(toc,1,(size_t)count,f)!=(size_t)count) {
+    free(toc);nx2_part_close(f);return 0;
   }
   unsigned char digest[32];
   sha256(toc,(size_t)count,digest);
   if(memcmp(digest,h+0x18,32)||memcmp(toc,"TOC\1",4) ||
      rd32(toc+4)!=declared) {
     probe_error="NUP TOC checksum or package count mismatch";
-    free(toc);fclose(f);return 0;
+    free(toc);nx2_part_close(f);return 0;
   }
   uint32_t pc=rd32(toc+4);
   nd=rd64(toc+8);nf=rd64(toc+16);
@@ -424,7 +418,7 @@ int nx2_nup_open(const char *path) {
   probe_error="NUP TOC node or string-pool layout invalid";
   uint64_t files_start=0,children_start=0;
   if(!nx2_nup_layout(count,pc,nd,nf,pool_off,pool_len,&files_start,&children_start)){
-    free(toc);fclose(f);return 0;
+    free(toc);nx2_part_close(f);return 0;
   }
   NupMount m={0};
   m.f=f;m.toc=toc;m.toc_size=(size_t)count;
@@ -432,8 +426,8 @@ int nx2_nup_open(const char *path) {
   probe_error="NUP mount size or blob bounds changed since discovery";
   if(m.blob_start<128 || (m.blob_start&15) ||
      count>m.blob_start-128 || m.file_length<m.blob_start ||
-     nup_seek(f,0,SEEK_END) || nup_tell(f)<0 ||
-     (uint64_t)nup_tell(f)!=m.file_length)goto fail;
+     nx2_part_seek(f,0,SEEK_END) || nx2_part_tell(f)<0 ||
+     (uint64_t)nx2_part_tell(f)!=m.file_length)goto fail;
   m.ndirs=nd;m.nfiles=nf;
   m.dirs=toc+dirs_start;m.files=toc+files_start;
   m.children=toc+children_start;m.pool=toc+pool_off;
@@ -488,17 +482,7 @@ int nx2_nup_open(const char *path) {
    * archive stays owned by the single storage worker; TOC/NPDM metadata
    * preparation can still use the original stream before guest entry. */
   probe_error="NUP native SD file open failed";
-  FsFileSystem *sd=fsdevGetDeviceFileSystem("sdmc");
-  if(!sd || strncmp(path,"sdmc:/",6) ||
-     R_FAILED(fsFsOpenFile(sd,path+5,FsOpenMode_Read,&m.native_file)))goto fail;
-  m.native_open=1;
-  s64 actual=0;
-  Result native_rc=fsFileGetSize(&m.native_file,&actual);
-  if(R_FAILED(native_rc) || actual<0 || (uint64_t)actual!=m.file_length){
-    fsFileClose(&m.native_file);
-    probe_error="NUP native file size changed during mount";
-    goto fail;
-  }
+  if(!nx2_part_native_open(f))goto fail;
 #endif
   mounted=m;
   snprintf(probe_details,sizeof(probe_details),
@@ -510,7 +494,7 @@ fail:
   free(m.layers);
   free(m.ordered);
   free(toc);
-  fclose(f);
+  nx2_part_close(f);
   return 0;
 }
 /* Metadata is outside the ExeFS file tree: package record 0x20/0x28
@@ -524,8 +508,8 @@ void *nx2_nup_package_npdm(size_t *length) {
   unsigned char *meta=malloc((size_t)mounted.meta_size);
   if(!meta)return NULL;
   if(mounted.meta_offset>INT64_MAX ||
-     nup_seek(mounted.f,(int64_t)mounted.meta_offset,SEEK_SET) ||
-     fread(meta,1,(size_t)mounted.meta_size,mounted.f)!=(size_t)mounted.meta_size){
+     nx2_part_seek(mounted.f,(int64_t)mounted.meta_offset,SEEK_SET) ||
+     nx2_part_read(meta,1,(size_t)mounted.meta_size,mounted.f)!=(size_t)mounted.meta_size){
     free(meta);return NULL;
   }
   size_t pos=0;
@@ -597,7 +581,7 @@ static int read_archive(uint64_t offset,void *dst,size_t length){
   read_error="NUP archive read exceeds mounted file bounds";return 0;
  }
 #ifndef __SWITCH__
- if(offset>INT64_MAX || nup_seek(mounted.f,(int64_t)offset,SEEK_SET)){
+ if(offset>INT64_MAX || nx2_part_seek(mounted.f,(int64_t)offset,SEEK_SET)){
   read_error="NUP archive seek failed";return 0;
  }
 #endif
@@ -612,10 +596,10 @@ static int read_archive(uint64_t offset,void *dst,size_t length){
   uint64_t got=0;uint32_t rc=0;
 #ifdef __SWITCH__
   __atomic_store_n(&read_progress.native_io,1,__ATOMIC_RELAXED);
-  rc=fsFileRead(&mounted.native_file,offset+pos,p+pos,want,FsReadOption_None,&got);
+  rc=nx2_part_native_read(mounted.f,offset+pos,p+pos,want,&got);
 #else
-  got=fread(p+pos,1,want,mounted.f);
-  if(ferror(mounted.f))rc=1;
+  got=nx2_part_read(p+pos,1,want,mounted.f);
+  if(got!=want)rc=1;
 #endif
   if(got)__atomic_fetch_add(&read_progress.sd_bytes,(uint64_t)got,__ATOMIC_RELAXED);
   __atomic_store_n(&read_progress.io_result,rc,__ATOMIC_RELAXED);
