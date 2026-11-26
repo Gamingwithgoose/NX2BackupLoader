@@ -2,7 +2,6 @@
 #include "ui.h"
 #include "media.h"
 #include "launch_request.h"
-#include "index_cache.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -283,14 +282,14 @@ static void modal_draw(UI *u){
  for(int y=0;y<HEIGHT;y++)for(int x=0;x<WIDTH;x++)pixel(u,x,y,0,150);
  int height=u->modal==2?320:u->modal==1?230:435;
  rect(u,367,150,546,height,16,t->panel);text(u,397,196,30,t->text,u->modal==1?"Filter":u->modal==2?"Sort":"Options",480);
- unsigned count=u->modal==1?2:u->modal==2?2:6;
+ unsigned count=u->modal==1?2:u->modal==2?2:5;
  for(unsigned i=0;i<count;i++){
   int y=219+(int)i*44;char label[160];
   if(u->modal==1)snprintf(label,sizeof(label),"[%s] %s",(u->settings.filter&(1U<<i))?"x":" ",i?"NUP":"Folder");
   else if(u->modal==2)snprintf(label,sizeof(label),"%s%s",sort_names[i],u->settings.sort==i?"  (selected)":"");
   else if(i==0)snprintf(label,sizeof(label),"Theme: < %s >",t->name);
   else if(i==1)snprintf(label,sizeof(label),"Diagnostics: %s",u->settings.detailed?"Verbose":"Minimal");
-  else snprintf(label,sizeof(label),"%s",i==2?"Refresh library":i==3?"Refresh library":i==4?"Export last system crash report":"Back");
+  else snprintf(label,sizeof(label),"%s",i==2?"Refresh library":i==3?"Export last system crash report":"Back");
   if((unsigned)u->choice==i)rect(u,387,y-23,506,39,8,mix(t->panel,t->accent,75));
   text(u,405,y+4,24,t->text,label,471);
  }
@@ -351,20 +350,7 @@ static int export_report(UI *u){
  if(R_FAILED(rc)){snprintf(u->notice,sizeof(u->notice),"Report handoff failed: %08x",rc);return 0;}
  return 1;
 }
-static void rebuild_index(UI *u){
- u->modal=0;
- if(!u->count){snprintf(u->notice,sizeof(u->notice),"Select a folder title first.");return;}
- const Nx2Game *g=&u->catalog->items[u->view[u->selected]];
- if(g->is_nup){snprintf(u->notice,sizeof(u->notice),"NUP uses its own archive table; there is no loose-folder index to rebuild.");return;}
- char root[1400],base[1400]={0};
- int n=snprintf(root,sizeof(root),"%s/romfs",g->root);
- if(n<=0||n>=(int)sizeof(root)){snprintf(u->notice,sizeof(u->notice),"Folder path is too long.");return;}
- if(*g->base_root){n=snprintf(base,sizeof(base),"%s/romfs",g->base_root);if(n<=0||n>=(int)sizeof(base)){snprintf(u->notice,sizeof(u->notice),"Base folder path is too long.");return;}}
- int ok=nx2_cache_invalidate_layered(root,base);
- if(!nx2_folder_part_clear_checked(root))ok=0;
- if(*base&&!nx2_folder_part_clear_checked(base))ok=0;
- snprintf(u->notice,sizeof(u->notice),"%s",ok?"Selected index cleared. Press A to rebuild and launch.":"Could not clear the selected index/checkpoint; check SD access.");
-}
+
 int nx2_library_ui(Nx2Catalog *catalog,ConsoleFont fallback){
  UI *u=calloc(1,sizeof(*u));if(!u)return failed(NULL,"ui_allocation",UINT32_MAX);u->catalog=catalog;u->fallback=fallback;u->settings=settings_read();
  size_t count=catalog->count?catalog->count:1;
@@ -399,7 +385,7 @@ int nx2_library_ui(Nx2Catalog *catalog,ConsoleFont fallback){
   else if(next&&tick>=repeat){move=next;repeat=tick+armNsToTicks(110000000);}direction=next;
   if(down||move)u->dirty=1;
   if(u->modal){
-   int total=u->modal==1?2:u->modal==2?2:6;
+   int total=u->modal==1?2:u->modal==2?2:5;
    if(move==-5)u->choice=(u->choice+total-1)%total;else if(move==5)u->choice=(u->choice+1)%total;
    int changed=0;
    if(down&HidNpadButton_B)u->modal=0;
@@ -409,8 +395,7 @@ int nx2_library_ui(Nx2Catalog *catalog,ConsoleFont fallback){
     else if(u->modal==2){u->settings.sort=(unsigned)u->choice;view_build(u);u->modal=0;changed=1;}
     else if(u->choice==1){u->settings.detailed^=1;changed=1;}
     else if(u->choice==2){action=2;break;}
-    else if(u->choice==3){action=2;break;}
-    else if(u->choice==4){if(export_report(u)){action=1;break;}}
+    else if(u->choice==3){if(export_report(u)){action=1;break;}}
     else u->modal=0;
    }
    if(changed&&!settings_write(u))snprintf(u->notice,sizeof(u->notice),"Settings could not be saved; current choices still apply.");
