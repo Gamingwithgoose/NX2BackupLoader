@@ -6,25 +6,42 @@ function File-Sha256([string]$Path){
  finally{$stream.Dispose();$sha.Dispose()}
 }
 $repo=[IO.Path]::GetFullPath($Root)
-$source=Join-Path $repo 'probes\game-launch'
 $release=Join-Path $repo 'release'
-$binary=Join-Path $source 'BackupLoaderMKW.nro'
-& (Join-Path $repo 'scripts\verify-nro.ps1') -Path $binary
-if(-not $?){throw 'Executable verification failed'}
 $app=Join-Path $release 'switch\BackupLoaderMKW'
-New-Item -ItemType Directory -Force -Path $app | Out-Null
-$target=Join-Path $app 'BackupLoaderMKW.nro'
-$stage=$target+'.tmp';Copy-Item -LiteralPath $binary -Destination $stage
-if((File-Sha256 $stage) -ne (File-Sha256 $binary)){throw 'Staged executable mismatch'}
-& (Join-Path $repo 'scripts\embed-icon.ps1') -Nro $stage -Icon (Join-Path $repo 'assets\BackupLoaderMKW.jpg')
-if(-not $?){throw 'Icon embedding failed'}
-Move-Item -LiteralPath $stage -Destination $target -Force
+$runtime=Join-Path $app 'runtime'
+New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+$pairs=@(
+ @{Source=(Join-Path $repo 'probes\library-ui\BackupLoaderMKW-UI.nro');Target=(Join-Path $app 'BackupLoaderMKW.nro');Icon=$true},
+ @{Source=(Join-Path $repo 'probes\game-launch\BackupLoaderMKW.nro');Target=(Join-Path $runtime 'BackupLoaderMKW-core.nro');Icon=$false}
+)
+try {
+ foreach($pair in $pairs){
+  & (Join-Path $repo 'scripts\verify-nro.ps1') -Path $pair.Source
+  if(-not $?){throw 'Executable verification failed'}
+  $stage=$pair.Target+'.tmp'
+  Copy-Item -LiteralPath $pair.Source -Destination $stage
+  if((File-Sha256 $stage) -ne (File-Sha256 $pair.Source)){throw 'Staged executable mismatch'}
+  if($pair.Icon){
+   & (Join-Path $repo 'scripts\embed-icon.ps1') -Nro $stage -Icon (Join-Path $repo 'assets\BackupLoaderMKW.jpg')
+   if(-not $?){throw 'Icon embedding failed'}
+  }
+  & (Join-Path $repo 'scripts\verify-nro.ps1') -Path $stage
+  if(-not $?){throw 'Staged executable verification failed'}
+ }
+ # Both candidates are verified before either is published; failure removes the pair.
+ foreach($pair in $pairs){Move-Item -LiteralPath ($pair.Target+'.tmp') -Destination $pair.Target -Force}
+} catch {
+ foreach($pair in $pairs){
+  foreach($path in @($pair.Target,($pair.Target+'.tmp'))){if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Force}}
+ }
+ throw
+}
 Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination (Join-Path $release 'README.md')
-# Only the launcher NRO and its README are included in the release folder.
+# Package the GUI and runtime together. No game content or user settings are staged.
 # Remove stale package names from older local builds (not user SD data).
 foreach($relative in @('switch\nx2-folder-exec','nx2backuploader.nro','nx2-sdprobe.nro')){
  $old=[IO.Path]::GetFullPath((Join-Path $release $relative))
  if(-not $old.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Cleanup path escapes release'}
  if(Test-Path -LiteralPath $old){Remove-Item -LiteralPath $old -Recurse -Force}
 }
-Write-Output '[OK] BackupLoaderMKW staged in release/switch; game indices are generated on the console.'
+Write-Output '[OK] GUI and runtime staged in release/switch; copy the entire folder to your SD card.'

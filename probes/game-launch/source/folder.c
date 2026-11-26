@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <errno.h>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -221,6 +222,7 @@ static int catalog_entry(void *v, const char *name) {
     memcpy(archive.name, name, len - 4);
     archive.name[len - 4] = 0;
     strcpy(archive.root, folder);
+    strcpy(archive.library_root,folder);
     archive.id = id;
     archive.is_nup = valid ? 1 : 2;
     snprintf(archive.nup_status, sizeof(archive.nup_status),
@@ -237,6 +239,7 @@ static int catalog_entry(void *v, const char *name) {
     return 1;
   Nx2Game game = {0};
   strcpy(game.name, name);
+  strcpy(game.library_root,folder);
   Nx2UpdateChoice update={0};
   nx2_choose_update(folder,&update);
   for (unsigned base = 0; base < 3; base++) {
@@ -328,10 +331,12 @@ static uint64_t align64(uint64_t n, uint64_t a) {
 }
 static int add(Entry **items, uint32_t *count, uint32_t *capacity,
                const char *path, uint64_t bytes) {
-  if (*count >= 262144)
+  const uint32_t limit=(128U*1024*1024)/sizeof(Entry);
+  if (*count >= limit)
     return 0;
   if (*count == *capacity) {
     uint32_t cap = *capacity ? *capacity * 2 : 64;
+    if(cap>limit)cap=limit;
     void *p = realloc(*items, (size_t)cap * sizeof(Entry));
     if (!p)
       return 0;
@@ -506,11 +511,17 @@ static int part_path(const char *root,int layered,char out[160]) {
                         (layered?UINT64_C(0x554e494f4e303031):0)));
   return n>0 && n<160;
 }
-void nx2_folder_part_clear(const char *root) {
+int nx2_folder_part_clear_checked(const char *root) {
   char name[160];
-  for(int layered=0;layered<2;layered++)
-    if(part_path(root,layered,name))remove(name);
+  int ok=1;
+  if(!root||!*root)return 0;
+  for(int layered=0;layered<2;layered++){
+    if(!part_path(root,layered,name)){ok=0;continue;}
+    if(remove(name)&&errno!=ENOENT)ok=0;
+  }
+  return ok;
 }
+void nx2_folder_part_clear(const char *root){(void)nx2_folder_part_clear_checked(root);}
 static void part_dirs(void) {
   mkdir("sdmc:/switch",0777);
   mkdir("sdmc:/switch/BackupLoaderMKW",0777);
@@ -522,7 +533,8 @@ static int part_add_record(Tree *t, const unsigned char *p, uint32_t len) {
   if (dl>=1024 || dl>len-4) return 0;
   char dir[1024];memcpy(dir,p,dl);dir[dl]=0;p+=dl;len-=dl;
   uint32_t count;memcpy(&count,p,4);p+=4;len-=4;
-  if (count>524288) return 0;
+  /* Every child needs at least its 11-byte header and one name byte. */
+  if (count>len/12) return 0;
   uint32_t id=t->nd;
   for(uint32_t j=0;j<t->nd;j++)
     if (!strcmp(t->dirs[j].path,dir)) {id=j;break;}

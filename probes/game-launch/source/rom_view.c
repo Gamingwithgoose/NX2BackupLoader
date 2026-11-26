@@ -16,12 +16,12 @@ static int path_ok(const unsigned char *p,size_t n){
 }
 int nx2_rom_view(const void *data,size_t size,Nx2RomView *out){
  const unsigned char *p=data;static const unsigned char magic[8]={'N','X','2','R','O','M','0','1'};
- if(!p||!out||size<80)return 0;
+ if(!p||!out||size<80||size>128U*1024*1024)return 0;
  for(unsigned i=0;i<8;i++)if(p[i]!=magic[i])return 0;
  uint32_t version=w(p+8);
  if((version!=1&&version!=2)||w(p+12)!=80||w(p+36)!=32)return 0;
  uint64_t ms=q(p+16),total=q(p+24),eo=q(p+40),so=q(p+48),ss=q(p+56),mo=q(p+64),base=q(p+72);uint32_t n=w(p+32);
- if(!n||n>262144||!span(eo,(uint64_t)n*32,size)||!span(so,ss,size)||!span(mo,ms,size)||ms<80||ms>base||base>total||total>INT64_MAX)return 0;
+ if(!n||!span(eo,(uint64_t)n*32,size)||!span(so,ss,size)||!span(mo,ms,size)||ms<80||ms>base||base>total||total>INT64_MAX)return 0;
  if(eo!=80||so<eo+(uint64_t)n*32||mo<so+ss)return 0;
  Nx2RomView v={p,p+eo,p+so,p+mo,ms,total,base,ss,n};
  uint64_t previous=base;

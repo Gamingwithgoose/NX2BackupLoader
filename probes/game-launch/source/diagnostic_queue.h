@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #pragma once
+/* Bounded freestanding label classification; no stdio or allocation. */
+static inline int nx2_diag_failure(const char *s){
+ const char *keys[]={"FAILED","REFUSED","ERROR"};
+ if(!s)return 0;
+ for(unsigned i=0;i<96&&s[i];i++)for(unsigned k=0;k<3;k++){
+  unsigned j=0;while(keys[k][j]&&i+j<96&&s[i+j]==keys[k][j])j++;
+  if(!keys[k][j])return 1;
+ }
+ return 0;
+}
 #include "launch.h"
 /* Bounded, allocation-free multiple-producer / single-consumer queue.
  * Full queues drop diagnostics, never stall guest execution. */

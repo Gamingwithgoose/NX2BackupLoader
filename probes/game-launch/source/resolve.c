@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "resolve.h"
+#include "native_compat.h"
 #include <stdio.h>
 #include <string.h>
 static uint32_t w(const unsigned char *p) {
@@ -142,6 +143,10 @@ int nx2_resolve_plan(Nx2Module *m, unsigned role, Nx2PatchSpec *out,
           (role == 1 && p->module == 1)))
       continue;
     const char *name = p->symbol ? p->symbol : p->label;
+    /* Resolve by API name rather than guest identity. Retain the SDK's
+     * mounting/registration code; its FSP requests use the private VFS. */
+    if(nx2_native_compat && strstr(name,"Mount") && strstr(name,"SaveData"))
+      continue;
     uintptr_t address = 0;
     if (nx2_module_function(m, name, &address)) {
       if (role == 1 && !strcmp(name, "nnMain")) {

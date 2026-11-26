@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <errno.h>
 #ifdef _WIN32
 #include <direct.h>
 #define mkdir(path,mode) _mkdir(path)
@@ -46,6 +47,11 @@ static int filename(const char *root,const char *base,char *out,size_t capacity)
 static int64_t modified(const char *root) {
   struct stat st;
   return stat(root, &st) ? -1 : (int64_t)st.st_mtime;
+}
+int nx2_cache_invalidate_layered(const char *root,const char *base){
+  char path[160];
+  if(!root||!*root||!filename(root,base,path,sizeof(path)))return 0;
+  return !remove(path)||errno==ENOENT;
 }
 static int64_t stamp(const char *root,const char *base){
   int64_t a=modified(root);

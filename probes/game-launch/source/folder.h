@@ -4,6 +4,7 @@
 #include <stdint.h>
 typedef struct {
   char name[256], root[1200];
+  char library_root[1200]; /* catalog container, for control artwork */
   char base_root[1200]; /* optional loose-file fallback for selected update */
   uint64_t id;
   uint32_t resource;
@@ -34,6 +35,7 @@ void nx2_folder_cancel(int (*fn)(void *), void *ctx);
 
 /* Discard an interrupted scan when the user requests a fresh rebuild. */
 void nx2_folder_part_clear(const char *root);
+int nx2_folder_part_clear_checked(const char *root);
 
 /* Number of files recovered from a completed .part checkpoint. */
 uint32_t nx2_folder_resumed_files(void);

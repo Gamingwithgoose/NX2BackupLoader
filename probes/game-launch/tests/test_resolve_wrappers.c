@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Synthetic ABI wrappers: accepted variants and malformed near matches. */
 #include "resolve.h"
+#include "native_compat.h"
+uint32_t nx2_native_compat;
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>

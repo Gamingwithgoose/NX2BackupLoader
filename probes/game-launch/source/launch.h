@@ -14,7 +14,7 @@
 #define NX2_NOT_FOUND 0x202U
 #define NX2_LIMIT 0x2f6a02U
 
-enum {RPC_ROM_READ=1,RPC_SAVE_CREATE,RPC_SAVE_DELETE,RPC_SAVE_MKDIR,RPC_SAVE_RMDIR,RPC_SAVE_RMTREE,RPC_SAVE_CLEAN,RPC_SAVE_RENAME_FILE,RPC_SAVE_RENAME_DIR,RPC_SAVE_TYPE,RPC_SAVE_FREE,RPC_SAVE_TOTAL,RPC_SAVE_OPEN,RPC_SAVE_READ,RPC_SAVE_WRITE,RPC_SAVE_FLUSH,RPC_SAVE_RESIZE,RPC_SAVE_SIZE,RPC_SAVE_CLOSE,RPC_DIR_OPEN,RPC_DIR_READ,RPC_DIR_COUNT,RPC_DIR_CLOSE,RPC_COMMIT,RPC_LOG,RPC_ABORT,RPC_MAIN_ENTERED,RPC_ROM_MOUNT,RPC_SAVE_MOUNT,RPC_IPC,RPC_SAVE_TIMESTAMP,RPC_BREAK,RPC_PHYSICAL_MEMORY,RPC_CACHE_CREATE,RPC_CACHE_CHECK,RPC_VFS_PREPARE_ROOT,RPC_SAVE_ARCHIVE_EXISTS,RPC_SAVE_ARCHIVE_CREATE,RPC_CACHE_ENUM,RPC_SAVE_OPERATE_RANGE,RPC_CACHE_QUERY_SIZE,RPC_CACHE_PROVISION,RPC_SAVE_PROFILE_BIND,RPC_SAVE_PROFILE_EXISTS,RPC_SAVE_PROFILE_CREATE,RPC_SAVE_ATTRIBUTE};
+enum {RPC_ROM_READ=1,RPC_SAVE_CREATE,RPC_SAVE_DELETE,RPC_SAVE_MKDIR,RPC_SAVE_RMDIR,RPC_SAVE_RMTREE,RPC_SAVE_CLEAN,RPC_SAVE_RENAME_FILE,RPC_SAVE_RENAME_DIR,RPC_SAVE_TYPE,RPC_SAVE_FREE,RPC_SAVE_TOTAL,RPC_SAVE_OPEN,RPC_SAVE_READ,RPC_SAVE_WRITE,RPC_SAVE_FLUSH,RPC_SAVE_RESIZE,RPC_SAVE_SIZE,RPC_SAVE_CLOSE,RPC_DIR_OPEN,RPC_DIR_READ,RPC_DIR_COUNT,RPC_DIR_CLOSE,RPC_COMMIT,RPC_LOG,RPC_ABORT,RPC_MAIN_ENTERED,RPC_ROM_MOUNT,RPC_SAVE_MOUNT,RPC_IPC,RPC_SAVE_TIMESTAMP,RPC_BREAK,RPC_PHYSICAL_MEMORY,RPC_CACHE_CREATE,RPC_CACHE_CHECK,RPC_VFS_PREPARE_ROOT,RPC_SAVE_ARCHIVE_EXISTS,RPC_SAVE_ARCHIVE_CREATE,RPC_CACHE_ENUM,RPC_SAVE_OPERATE_RANGE,RPC_CACHE_QUERY_SIZE,RPC_CACHE_PROVISION,RPC_SAVE_PROFILE_BIND,RPC_SAVE_PROFILE_EXISTS,RPC_SAVE_PROFILE_CREATE,RPC_SAVE_ATTRIBUTE,RPC_SAVE_PROFILE_ROOT};
 typedef struct {
  uint32_t state,op,result,reserved;
  /* Published before state=2; observed by watchdog without altering RPC. */
@@ -65,6 +65,8 @@ typedef struct {
  void (*original_present)(void *queue,void *window,int texture_index);
  void (*rtld)(uint64_t,uint64_t);
  void (*original_os_init)(uint32_t,const void *);
+ /* Optional SDK service resolver observer; always forwards the real result. */
+ uint32_t (*original_connect_hipc)(uint32_t *,const char *);
  uint32_t (*original_device_initialize)(void *,const void *);
  uint32_t (*original_queue_initialize)(void *,const void *);
  uint32_t (*original_window_initialize)(void *,const void *);
@@ -153,10 +155,14 @@ typedef struct {
  uintptr_t storage_table[10],fs_table[24],file_table[10],dir_table[6];
  Nx2Object storage,save_fs;
  uint64_t heap_base,heap_capacity,heap_size;
- uint64_t guest_program_id;
+ /* Logical heap layout can include an unmapped virtual reservation.
+  * Never used as permission to fabricate physical allocation success. */
+ uint64_t guest_virtual_reserve,guest_logical_budget,guest_program_bytes,physical_floor;
+ uint64_t guest_program_id,host_program_id;
  uint64_t arena_base,arena_capacity,arena_used;
  uint32_t worker_handle,stage,finished,abort_requested;
  uint32_t late_trace_active; /* diagnostic only; armed after real SDK registration */
+ uint32_t sdk_save_open_count; /* native IPC open, NOT proof of SDK registration */
  /* Guest-side C++ filesystem callback entry sites (before RPC helpers). */
  uint32_t fs_guest_read_entries,fs_guest_read_returns;
  uint64_t fs_guest_read_caller,fs_guest_read_offset,fs_guest_read_size;

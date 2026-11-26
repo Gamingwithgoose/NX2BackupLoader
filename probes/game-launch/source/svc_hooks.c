@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "launch.h"
+#include "native_compat.h"
 #include "ipc_policy.h"
 #include "guest_fsp_vfs.h"
 #include "raw_svc.h"
@@ -43,7 +44,24 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
       * live kernel values. The real guest SetHeapSize path is unchanged
       * and still enforces all address, ownership, physical and SVC
       * checks. Never invent extra free pages or accept a fake heap. */
-     if(!rc && (type==21 || type==22) && l &&
+     if(!rc && l->guest_virtual_reserve &&
+        (type==6||type==7||type==21||type==22)){
+       uint64_t real_used=0;
+       Result query=nx2_raw_info(&real_used,22,handle,sub);
+       if(R_FAILED(query))return query;
+       uint64_t guest_used=real_used>nx2_process_heap.host_bytes?
+                            real_used-nx2_process_heap.host_bytes:0;
+       if(guest_used<l->guest_program_bytes)guest_used=l->guest_program_bytes;
+       if(l->guest_logical_budget>UINT64_MAX-l->guest_program_bytes)return 0xd001;
+       uint64_t logical_total=l->guest_program_bytes+l->guest_logical_budget;
+       if(guest_used>logical_total)return 0xd001;
+       *out=(type==6||type==21)?logical_total:guest_used;
+       static uint32_t layout_queries;
+       uint32_t ordinal=__atomic_fetch_add(&layout_queries,1,__ATOMIC_RELAXED);
+       if(ordinal<32 || !(ordinal&(ordinal-1)))
+         nx2_rpc(RPC_LOG,*out,type,l->guest_virtual_reserve,real_used,0,
+                 "GUEST_LAYOUT_MEMORY_INFO",0,0);
+     }else if(!rc && (type==21 || type==22) && l &&
         nx2_process_heap_status==NX2_HEAP_READY){
        uint64_t kernel_total=0,kernel_used=0,physical_total=0,physical_used=0;
        Result a=0,b=0,c=0,d=0;
@@ -101,7 +119,8 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
 #define NX2_NATIVE_PHYSICAL_FLOOR NX2_NATIVE_PHYSICAL_FLOOR_BYTES
 uint32_t nx2_virtual_heap(void **out,uint64_t size){
  Nx2Launch *l=nx2_launch;
- if(!out || !size || (size & (NX2_GAME_ALIGNMENT-1)))return 0xd001;
+ uint64_t physical_floor=l&&l->physical_floor?l->physical_floor:NX2_NATIVE_PHYSICAL_FLOOR;
+ if(!out || (size & (NX2_GAME_ALIGNMENT-1)))return 0xd001;
  if(!__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE)){
    if(size>l->heap_capacity)return 0xd001;
    __atomic_store_n(&l->heap_size,size,__ATOMIC_RELEASE);
@@ -158,11 +177,11 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
    return 0xd001;
  }
  const uint64_t kernel_size=retain+size;
- nx2_rpc(RPC_LOG,previous_guest,size,kernel_size,NX2_NATIVE_PHYSICAL_FLOOR,0,
+ nx2_rpc(RPC_LOG,previous_guest,size,kernel_size,physical_floor,0,
          "GUEST_HEAP_RESIZE_GUARD",0,0);
  if(!nx2_heap_growth_allowed(previous_guest,size,available,
-                             NX2_NATIVE_PHYSICAL_FLOOR)) {
-   nx2_rpc(RPC_LOG,size,kernel_size,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
+                             physical_floor)) {
+   nx2_rpc(RPC_LOG,size,kernel_size,available,physical_floor,0,
            "GUEST_HEAP_BUDGET_REFUSED",0,0);
    return 0xd001;
  }
@@ -172,7 +191,10 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
  rc=svcSetHeapSize(&returned,kernel_size);
  nx2_rpc(RPC_LOG,size,kernel_size,available,rc,0,
          "GUEST_HEAP_SET_RESULT",0,0);
- if(R_FAILED(rc))return rc;
+ if(R_FAILED(rc)){
+   nx2_rpc(RPC_LOG,size,kernel_size,available,rc,0,"KERNEL_SET_HEAP_FAILED",0,0);
+   return rc;
+ }
  if((uintptr_t)returned!=base) {
    nx2_rpc(RPC_ABORT,(uintptr_t)returned,base,size,0,0,
            "Native heap base changed unexpectedly",0,0);
@@ -329,7 +351,8 @@ static void trace_reply_handles(const unsigned char *p,uint64_t n,
    trace_owner(child,owner,root);
    /* Handle ownership remains tracked after save mount, but successful
     * child acquisition needn't block its caller on a diagnostic RPC. */
-   if(!__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE))
+   if(!__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE) &&
+      !__atomic_load_n(&nx2_launch->sdk_save_open_count,__ATOMIC_ACQUIRE))
      nx2_rpc(RPC_LOG,child,parent,i>=copies,sh,0,
              "IPC_RETURNED_HANDLE",owner,0);
  }
@@ -355,6 +378,11 @@ static void ipc_event_emit(uint32_t call_id,uint32_t phase,uint32_t h,
                            uint32_t kernel,uint32_t cmif,
                            uintptr_t caller,const char *name){
  Nx2Launch *l=nx2_launch;
+ /* Keep true failures/local rejections without two records for each
+  * successful audio/HID/graphics poll. Routing and native calls unchanged. */
+ if(nx2_minimal_logging)return;
+ if(nx2_native_compat && !nx2_detailed_trace &&
+    (phase==1 || (kernel==0 && (cmif==0||cmif==UINT32_MAX))))return;
  uint32_t seq=__atomic_fetch_add(&l->ipc_event_next,1,__ATOMIC_RELAXED);
  Nx2IpcEvent *e=&l->ipc_events[seq%NX2_IPC_EVENT_SLOTS];
  __atomic_store_n(&e->sequence,0,__ATOMIC_RELAXED);
@@ -914,6 +942,7 @@ static uint32_t physical(uint64_t address,uint64_t bytes,int unmap){
  shared_event(id,unmap?5:4,1,0,address,bytes,0,UINT32_MAX,caller,"physical");
  uint32_t rc=unmap?nx2_raw_unmap_physical(address,bytes):nx2_raw_map_physical(address,bytes);
  shared_event(id,unmap?5:4,2,0,address,bytes,0,rc,caller,"physical");
+ if(rc)nx2_rpc(RPC_LOG,address,bytes,rc,unmap,0,"KERNEL_PHYSICAL_MAPPING_FAILED",0,0);
  return rc;
 }
 uint32_t nx2_map_physical(uint64_t address,uint64_t bytes){return physical(address,bytes,0);}

@@ -17,7 +17,7 @@ void fsFileClose(FsFile *f){(void)f;}
 Result fsFileGetSize(FsFile *f,s64 *size){(void)f;*size=0;return 0;}
 Result fsFileRead(FsFile *f,uint64_t offset,void *out,uint64_t n,
                    uint32_t option,uint64_t *actual){
- (void)f;assert(offset==expected_offset && n<=65536 && option==0);
+ (void)f;assert(offset==expected_offset && n<=0x100000 && option==0);
  calls++;expected_offset+=n;
  if(mode==1){*actual=0;return 0x1234;}
  *actual=mode==2?n-1:n;
@@ -26,7 +26,7 @@ Result fsFileRead(FsFile *f,uint64_t offset,void *out,uint64_t n,
  return 0;
 }
 int main(void){
- unsigned char out[65540];
+ static unsigned char out[0x100004];
  mounted.file_length=UINT64_C(0x200000000);mounted.native_open=1;
  uint64_t offset=UINT64_C(0x100000010);
  expected_offset=offset;progress_begin(0,0,sizeof(out));
@@ -34,15 +34,15 @@ int main(void){
  for(unsigned i=0;i<sizeof(out);i++)assert(out[i]==0x5a);
  Nx2NupReadProgress p;nx2_nup_get_progress(&p);
  assert(p.native_io==1 && p.sd_bytes==sizeof(out) && !p.io_inflight);
- assert(p.chunk_offset==offset+65536 && p.chunk_bytes==4 && p.io_result==0);
+ assert(p.chunk_offset==offset+0x100000 && p.chunk_bytes==4 && p.io_result==0);
  mode=1;calls=0;expected_offset=offset;progress_begin(0,0,sizeof(out));
  assert(!read_archive(offset,out,sizeof(out)) && calls==1);
  nx2_nup_get_progress(&p);assert(p.io_result==0x1234 && !p.io_inflight && p.sd_bytes==0);
  assert(strstr(nx2_nup_read_error(),"result=00001234"));
  mode=2;calls=0;expected_offset=offset;progress_begin(0,0,sizeof(out));
  assert(!read_archive(offset,out,sizeof(out)) && calls==1);
- nx2_nup_get_progress(&p);assert(p.io_result==0 && p.sd_bytes==65535);
- assert(strstr(nx2_nup_read_error(),"requested=65536 read=65535"));
+ nx2_nup_get_progress(&p);assert(p.io_result==0 && p.sd_bytes==0xfffff);
+ assert(strstr(nx2_nup_read_error(),"requested=1048576 read=1048575"));
  calls=0;assert(!read_archive(mounted.file_length-3,out,4) && calls==0);
  assert(!read_archive(UINT64_MAX,out,4) && calls==0);
  /* Exercise real standard-Zstd decoding, partial reads and cached rereads
@@ -55,6 +55,8 @@ int main(void){
  sha256((const unsigned char *)"nup-bytes",9,files+32);
  mounted.f=(FILE *)(uintptr_t)1;
  mounted.ndirs=1;mounted.nfiles=1;mounted.romfs_dir=0;
+ mounted.layers=calloc(1,sizeof(*mounted.layers));assert(mounted.layers);
+ mounted.layers[0]=(NupLayer){0,0,0};mounted.layer_count=1;
  mounted.dirs=dirs;mounted.files=files;mounted.children=children;
  mounted.child_count=1;mounted.pool=pool;mounted.pool_size=4;
  mounted.cached_file[0]=mounted.cached_file[1]=UINT32_MAX;

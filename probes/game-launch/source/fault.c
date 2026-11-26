@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "fault.h"
+#include "raw_fault.h"
 
 Nx2Fault nx2_fault;
+Nx2RawFault nx2_raw_fault __attribute__((aligned(16)));
 /* Use libounce's existing exception entry/context decoder and a separate stack.
  * The handler parks the faulted thread; the healthy host loop writes the report
  * and ends the process without resuming or unmapping faulted game code. */

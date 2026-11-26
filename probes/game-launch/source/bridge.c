@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "launch.h"
+#include "native_compat.h"
 #include "raw_svc.h"
 #include "file_range_policy.h"
 #include "cache_catalog.h"
@@ -29,6 +30,12 @@ uint32_t nx2_rpc(uint32_t op,uint64_t a,uint64_t b,uint64_t c,uint64_t d,void *b
   * Explicit breaks, aborts, filesystem operations and their results keep
   * their original synchronous RPC contract. */
  if(op==RPC_LOG){
+  if(nx2_minimal_logging){
+   static uint32_t failures;
+   if(!nx2_diag_failure(path)){if(answer)*answer=0;return 0;}
+   uint32_t n=__atomic_fetch_add(&failures,1,__ATOMIC_RELAXED);
+   if(n>=64 && (n&(n-1))){if(answer)*answer=0;return 0;}
+  }
   nx2_log_enqueue(l,a,b,c,d,path,path2);
   if(answer)*answer=0;
   wake();
@@ -514,7 +521,7 @@ void nx2_preflight_worker(Nx2Launch *l){
  uint64_t restored_tp;__asm__ volatile("mrs %0,tpidr_el0":"=r"(restored_tp));if(restored_tp!=tp)__atomic_store_n(&l->abort_requested,1,__ATOMIC_RELEASE);for(unsigned i=0;i<128;i++)if(tlr[0x180+i]!=saved[i])__atomic_store_n(&l->abort_requested,1,__ATOMIC_RELEASE);
  __atomic_store_n(&l->stage,4,__ATOMIC_RELEASE);__atomic_store_n(&l->finished,1,__ATOMIC_RELEASE);
 }
-void nx2_game_worker(Nx2Launch *l){volatile unsigned char *tlr;__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));if(*(volatile uint16_t *)(tlr+0x100)){__atomic_store_n(&l->abort_requested,1,__ATOMIC_RELEASE);for(;;)wait();}for(unsigned i=0;i<128;i++)tlr[0x180+i]=0;__asm__ volatile("msr tpidr_el0,xzr\n\tisb" ::: "memory");__atomic_store_n(&l->stage,10,__ATOMIC_RELEASE);l->api.rtld(0,l->worker_handle);nx2_rpc(RPC_ABORT,0,0,0,0,0,"Original rtld returned unexpectedly",0,0);for(;;)wait();}
+void nx2_game_worker(Nx2Launch *l){volatile unsigned char *tlr;__asm__ volatile("mrs %0,tpidrro_el0":"=r"(tlr));if(*(volatile uint16_t *)(tlr+0x100)){__atomic_store_n(&l->abort_requested,1,__ATOMIC_RELEASE);for(;;)wait();}for(unsigned i=nx2_native_compat?0x120:0x180;i<0x200;i++)tlr[i]=0;__asm__ volatile("msr tpidr_el0,xzr\n\tisb" ::: "memory");__atomic_store_n(&l->stage,10,__ATOMIC_RELEASE);l->api.rtld(0,l->worker_handle);nx2_rpc(RPC_ABORT,0,0,0,0,0,"Original rtld returned unexpectedly",0,0);for(;;)wait();}
 
 void nx2_nninit_gate(void){nx2_rpc(RPC_LOG,0,0,0,0,0,"NNINIT_STARTUP_ENTERED",0,0);nx2_launch->api.original_nninit();nx2_rpc(RPC_LOG,0,0,0,0,0,"NNINIT_STARTUP_RETURNED",0,0);}
 void nx2_sdk_init_gate(void){nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_MODULE_INIT_ENTERED",0,0);nx2_launch->api.original_sdk_init();nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_MODULE_INIT_RETURNED",0,0);}
@@ -555,21 +562,21 @@ static void present_gate(void *queue,void *window,int texture_index){
  * arguments, or returned success/failure result. No RPC or synchronous I/O. */
 static uint32_t device_init_gate(void *obj,const void *builder){
  __atomic_fetch_add(&nx2_launch->nvn_device_entered,1,__ATOMIC_RELAXED);
- uint32_t rc=nx2_launch->api.original_device_initialize(obj,builder);
+ uint32_t rc=__atomic_load_n(&nx2_launch->api.original_device_initialize,__ATOMIC_ACQUIRE)(obj,builder);
  __atomic_store_n(&nx2_launch->nvn_device_result,rc,__ATOMIC_RELEASE);
  __atomic_fetch_add(&nx2_launch->nvn_device_returned,1,__ATOMIC_RELEASE);
  return rc;
 }
 static uint32_t queue_init_gate(void *obj,const void *builder){
  __atomic_fetch_add(&nx2_launch->nvn_queue_entered,1,__ATOMIC_RELAXED);
- uint32_t rc=nx2_launch->api.original_queue_initialize(obj,builder);
+ uint32_t rc=__atomic_load_n(&nx2_launch->api.original_queue_initialize,__ATOMIC_ACQUIRE)(obj,builder);
  __atomic_store_n(&nx2_launch->nvn_queue_result,rc,__ATOMIC_RELEASE);
  __atomic_fetch_add(&nx2_launch->nvn_queue_returned,1,__ATOMIC_RELEASE);
  return rc;
 }
 static uint32_t window_init_gate(void *obj,const void *builder){
  __atomic_fetch_add(&nx2_launch->nvn_window_entered,1,__ATOMIC_RELAXED);
- uint32_t rc=nx2_launch->api.original_window_initialize(obj,builder);
+ uint32_t rc=__atomic_load_n(&nx2_launch->api.original_window_initialize,__ATOMIC_ACQUIRE)(obj,builder);
  __atomic_store_n(&nx2_launch->nvn_window_result,rc,__ATOMIC_RELEASE);
  __atomic_fetch_add(&nx2_launch->nvn_window_returned,1,__ATOMIC_RELEASE);
  return rc;
@@ -754,9 +761,10 @@ static uint8_t pool_map_virtual_gate(void *pool,int count,const void *requests){
  gpu_boundary_detail(65,c,pool,requests,rc,(uint32_t)count);
  return rc;
 }
-static uintptr_t getproc_gate(void *device,const char *name){
- __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
- uintptr_t result=nx2_launch->api.original_getproc(device,name);
+/* Apply one lookup policy to both NVN resolver entry points. Device
+ * initialization can be resolved directly by bootstrap before GetProcAddress
+ * exists. Returning its native pointer used to leave a hole in the trace. */
+static uintptr_t observe_nvn_proc(const char *name,uintptr_t result){
  /* Mode 1 (A) passes native NVN pointers except observed PresentTexture.
   * Mode 2 (L+A) passes all native pointers; ZR+A instruments all stages.
   * Keep this check safe even for a retained GetProcAddress wrapper. */
@@ -796,115 +804,147 @@ static uintptr_t getproc_gate(void *device,const char *name){
     !equal(name,"nvnSyncFinalize") &&
     !equal(name,"nvnMemoryPoolMapVirtual"))return result;
  if(result&&equal(name,"nvnQueueFenceSync")){
+   if(result==(uintptr_t)queue_fence_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_queue_fence,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_fence_gate;
  }
  if(result&&equal(name,"nvnQueueWaitSync")){
+   if(result==(uintptr_t)queue_wait_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_queue_wait,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_wait_gate;
  }
  if(result&&equal(name,"nvnSyncWait")){
+   if(result==(uintptr_t)sync_wait_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_sync_wait,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)sync_wait_gate;
  }
  if(result&&equal(name,"nvnQueueGetError")){
+   if(result==(uintptr_t)queue_error_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_queue_error,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_error_gate;
  }
  if(result&&equal(name,"nvnMemoryPoolInitialize")){
+   if(result==(uintptr_t)pool_init_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_pool_init,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)pool_init_gate;
  }
  if(result&&equal(name,"nvnMemoryPoolFinalize")){
+   if(result==(uintptr_t)pool_finalize_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_pool_finalize,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)pool_finalize_gate;
  }
  if(result&&equal(name,"nvnMemoryPoolBuilderSetStorage")){
+   if(result==(uintptr_t)pool_storage_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_pool_storage,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)pool_storage_gate;
  }
  if(result&&equal(name,"nvnMemoryPoolBuilderSetFlags")){
+   if(result==(uintptr_t)pool_flags_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_pool_flags,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)pool_flags_gate;
  }
  if(result&&equal(name,"nvnMemoryPoolGetBufferAddress")){
+   if(result==(uintptr_t)pool_address_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_pool_address,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)pool_address_gate;
  }
  if(result&&equal(name,"nvnCommandBufferBeginRecording")){
+   if(result==(uintptr_t)cmd_begin_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_cmd_begin,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)cmd_begin_gate;
  }
  if(result&&equal(name,"nvnCommandBufferEndRecording")){
+   if(result==(uintptr_t)cmd_end_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_cmd_end,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)cmd_end_gate;
  }
  if(result&&equal(name,"nvnCommandBufferAddCommandMemory")){
+   if(result==(uintptr_t)cmd_memory_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_cmd_memory,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)cmd_memory_gate;
  }
  if(result&&equal(name,"nvnCommandBufferAddControlMemory")){
+   if(result==(uintptr_t)control_memory_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_control_memory,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)control_memory_gate;
  }
  if(result&&equal(name,"nvnTextureInitialize")){
+   if(result==(uintptr_t)texture_init_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_texture_init,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)texture_init_gate;
  }
  if(result&&equal(name,"nvnTextureFinalize")){
+   if(result==(uintptr_t)texture_finalize_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_texture_finalize,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)texture_finalize_gate;
  }
  if(result&&equal(name,"nvnSyncInitialize")){
+   if(result==(uintptr_t)sync_init_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_sync_init,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)sync_init_gate;
  }
  if(result&&equal(name,"nvnSyncFinalize")){
+   if(result==(uintptr_t)sync_finalize_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_sync_finalize,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)sync_finalize_gate;
  }
  if(result&&equal(name,"nvnMemoryPoolMapVirtual")){
+   if(result==(uintptr_t)pool_map_virtual_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_pool_map_virtual,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)pool_map_virtual_gate;
  }
  if(result&&equal(name,"nvnQueueSubmitCommands")){
+   if(result==(uintptr_t)queue_submit_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_queue_submit,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_submit_gate;
  }
  if(result&&equal(name,"nvnQueueFlush")){
+   if(result==(uintptr_t)queue_flush_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_queue_flush,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_flush_gate;
  }
  if(result&&equal(name,"nvnQueueFinish")){
+   if(result==(uintptr_t)queue_finish_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_queue_finish,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_finish_gate;
  }
  if(result&&equal(name,"nvnWindowAcquireTexture")){
+   if(result==(uintptr_t)window_acquire_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_window_acquire,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)window_acquire_gate;
  }
  if(result&&equal(name,"nvnQueueAcquireTexture")){
+   if(result==(uintptr_t)queue_acquire_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_queue_acquire,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_acquire_gate;
  }
  if(result&&equal(name,"nvnDeviceInitialize")){
+   if(result==(uintptr_t)device_init_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_device_initialize,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)device_init_gate;
  }
  if(result&&equal(name,"nvnQueueInitialize")){
+   if(result==(uintptr_t)queue_init_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_queue_initialize,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)queue_init_gate;
  }
  if(result&&equal(name,"nvnWindowInitialize")){
+   if(result==(uintptr_t)window_init_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_window_initialize,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)window_init_gate;
  }
  if(result&&equal(name,"nvnQueuePresentTexture")){
    __atomic_fetch_add(&nx2_launch->nvn_present_lookups,1,__ATOMIC_RELAXED);
+   if(result==(uintptr_t)present_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_present,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)present_gate;
  }
  return result;
+}
+static uintptr_t getproc_gate(void *device,const char *name){
+ __atomic_fetch_add(&nx2_launch->nvn_getproc_calls,1,__ATOMIC_RELAXED);
+ uintptr_t result=__atomic_load_n(&nx2_launch->api.original_getproc,__ATOMIC_ACQUIRE)(device,name);
+ return observe_nvn_proc(name,result);
 }
 uintptr_t nx2_bootstrap_gate(const char *name){
  __atomic_fetch_add(&nx2_launch->nvn_bootstrap_calls,1,__ATOMIC_RELAXED);
@@ -914,10 +954,11 @@ uintptr_t nx2_bootstrap_gate(const char *name){
   * ZR+A retains the fully instrumented diagnostic path below. */
  if(nx2_launch->nvn_driver_passthrough==2) return result;
  if(result&&equal(name,"nvnDeviceGetProcAddress")){
+   if(result==(uintptr_t)getproc_gate)return result;
    __atomic_store_n(&nx2_launch->api.original_getproc,(void *)result,__ATOMIC_RELEASE);
    return (uintptr_t)getproc_gate;
  }
- return result;
+ return observe_nvn_proc(name,result);
 }
 
 /* All guest titles execute in the host process. Initializing the host
@@ -959,3 +1000,18 @@ uint32_t nx2_save_flags(uint32_t *flags){if(flags)*flags=0;return 0;}
 uint32_t nx2_true(void){return 1;}
 
 void nx2_os_init_gate(uint32_t handle,const void *args){nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_OS_INIT_ENTERED",0,0);nx2_launch->api.original_os_init(handle,args);nx2_rpc(RPC_LOG,0,0,0,0,0,"SDK_OS_INIT_RETURNED",0,0);}
+
+/* Observe the SDK's actual service resolver before its caller converts a
+ * failed Result to an assertion without retaining that Result. No alias,
+ * alternate service, retry, successful stub or host service is substituted. */
+uint32_t nx2_connect_hipc_gate(uint32_t *out,const char *name){
+ uint32_t rc=nx2_launch->api.original_connect_hipc(out,name);
+ if(rc){
+  char service[9];unsigned i=0;
+  if(name)for(;i<8 && name[i];i++)service[i]=name[i];
+  service[i]=0;
+  nx2_rpc(RPC_LOG,rc,(uintptr_t)__builtin_return_address(0),0,0,0,
+          "SDK_SERVICE_CONNECT_FAILED",service,0);
+ }
+ return rc;
+}

@@ -6,6 +6,41 @@ BackupLoaderMKW is an experimental **Switch 2** homebrew launcher for extracted 
 
 **Yoshi and the Mysterious Book Demo** has reached gameplay from an extracted folder and the title/profile-selection screen from a fast NUP. Other games remain experimental and may crash or stall. No games are included.
 
+## Current library interface (source update, not yet hardware tested)
+
+The native GUI uses a five-column scrolling game grid with Folder / NUP badges,
+backup artwork, and the system shared font when available. The header shows the
+library count, SD capacity, existing connection status and battery information.
+Artwork lookup also checks the console's existing application-control cache without downloading anything. Missing artwork gets a placeholder; unavailable system status shows unknown data. Native Nintendo Extended button glyphs are used when available.
+
+| Control | Action |
+| --- | --- |
+| D-pad / left stick | Browse |
+| A | Launch the selected game using the native path |
+| X | Filter Folder / NUP (both enabled shows all) |
+| Y | Sort A-Z, Z-A, Folder First or NUP First |
+| Minus | Options: theme, diagnostics, refresh, system report export |
+| B | Close a menu or return to Homebrew Menu |
+
+Themes: Red, Green, Blue, Purple, Black, White, Pink, Orange and Teal.
+White and Pink use dark text; dark themes use light text. Settings persist in
+SD:/switch/BackupLoaderMKW/ui.cfg. Display names do not change save locations.
+
+**Minimal diagnostics is the default.** It retains a small launch/failure log
+and CPU exception/raw crash capture, while disabling routine IPC logging,
+GPU gameplay tracing, periodic crash snapshots and ordinary guest text logs. Minimal still records the first presented frame and up to four short suspected-stall capsules for freeze investigation.
+Use Options > Diagnostics > Verbose for investigation, or manually select
+Export last system crash report. Old verbose trace flags do not override the
+GUI diagnostic choice. Minimal mode removes the preceding crash.log so an old
+verbose report is not mistaken for this run; existing game saves are untouched.
+
+**Copy the entire release/switch folder after building.** It contains the
+public BackupLoaderMKW.nro GUI and runtime/BackupLoaderMKW-core.nro. The GUI
+frees its artwork/glyph caches, display, font mapping and status sessions,
+then returns to hbloader for NRO replacement before game preparation. The
+runtime retains its required game/host memory reservation and closes its
+progress console before entering the game. This handoff needs console testing.
+
 ## What you need
 
 - A Switch 2 running compatible kaiHEN/Homebrew Menu software.
@@ -32,6 +67,8 @@ Create a folder called **games** at the root of the SD card. Extracted games can
       switch/
         BackupLoaderMKW/
           BackupLoaderMKW.nro
+          runtime/
+            BackupLoaderMKW-core.nro
 
 Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs. Updates are not merged into the base game automatically.
 
@@ -41,10 +78,10 @@ Also accepted: SD:/games/Game Name/base/exefs and SD:/games/Game Name/base/romfs
 2. Fully close Mario Kart World.
 3. Start Homebrew Menu using **Mario Kart World's title override**.
 4. Start BackupLoaderMKW.
-5. Select an extracted game folder or NUP archive using Up/Down or the left stick. Press **A** to launch, **X** to refresh the list, or **+** to exit. Hold **B** while pressing **A** to rebuild an extracted game’s index. While a large folder is being indexed, press **B** to cancel and return to the game list. Cancelled scans do not yet resume.
+5. Browse with the D-pad or left stick and press **A** to launch. **X** opens Filter, **Y** opens Sort, **Minus** opens Options, and **B** returns. During folder indexing, **B** cancels; completed directories can resume on the next attempt.
 6. Use HOME / Close Software to stop playing.
 
-If the list is empty, check that extracted games have valid exefs and romfs folders or that NUP archives are complete and valid. Extracted games use batched directory reads where supported and can save progress to a .part file in SD:/switch/BackupLoaderMKW/cache/. Press B during scanning to stop; launching the same game again resumes after completed directories instead of starting over. A directory interrupted halfway through is rescanned. After a full scan, the loader saves a compact .idx file for later launches. Hold B+A to force a rebuild after changing game files. The cache only checks the top-level romfs timestamp, so nested file changes can go unnoticed. NUP games read their existing archive table; they do not scan extracted directories or unpack the entire archive. A file with a .nup extension is listed even if its initial validation fails, with the reason shown when selected. Incomplete transfers and unsupported archives are not launchable.
+If the list is empty, check that extracted games have valid exefs and romfs folders or that NUP archives are complete and valid. Extracted games use batched directory reads where supported and can save progress to a .part file in SD:/switch/BackupLoaderMKW/cache/. Press B during scanning to stop; launching the same game again resumes after completed directories instead of starting over. A directory interrupted halfway through is rescanned. After a full scan, the loader saves a compact .idx file for later launches. After changing nested game files, select the title and use Options > Rebuild selected folder index, then press A to rebuild and launch. The cache only checks the top-level romfs timestamp, so nested file changes can go unnoticed. NUP games read their existing archive table; they do not scan extracted directories or unpack the entire archive. A file with a .nup extension is listed even if its initial validation fails, with the reason shown when selected. Incomplete transfers and unsupported archives are not launchable.
 
 ## Where saves go
 
@@ -96,7 +133,7 @@ Download the repository as a ZIP or clone it with GitHub Desktop. Keep the direc
 
 Temporary setup tools stay in the repository's local **tools** directory for portability. The full devkitPro/MSYS2 compiler lives in its normal installation location, not alongside the BAT file. A missing Switch 2 SDK stops the build; it will not make a Switch 1 binary by mistake.
 
-Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro**. Copy the contents of release/switch to the SD card root. The build verifies the Switch 2 executable format but cannot test actual gameplay.
+Successful output: **release/switch/BackupLoaderMKW/BackupLoaderMKW.nro** plus **release/switch/BackupLoaderMKW/runtime/BackupLoaderMKW-core.nro**. Copy the contents of release/switch to the SD card root. The build verifies the Switch 2 executable format but cannot test actual gameplay.
 
 ## Current limitations
 
@@ -290,3 +327,29 @@ The ZR+A fully instrumented NVN diagnostic mode now retains the last 256 GPU bou
 ### Extracted base/update folder union
 
 When a game has base/romfs and a complete updates/<version>/exefs plus updates/<version>/romfs, the launcher now presents update files together with unchanged base assets. It reads files directly from their original folders; no manual copying between base and update is needed. The menu shows `+ base assets`. This also accepts `update/` and an unversioned complete update folder. Wait for the entire SD transfer to finish before launching. Composite indexes use new cache identities automatically. B+A rebuilds both layers after editing nested game files. This file union applies to extracted folders; NUP package layering and binary patch containers remain unsupported.
+
+## Current source follow-up: large NUPs and system-resource checks
+
+The arbitrary 262,144-file/directory ceilings have been removed from NUP
+discovery/mounting and the generated RomFS index reader. Bounds still derive
+from the actual verified table, 32-bit child IDs and 128 MiB metadata budgets;
+this does not promise unlimited files or memory. Generic META/NPDM metadata
+is rejected as a display name, retaining the archive filename as fallback.
+
+On the native path, a nonzero host system-resource pool smaller than the
+guest's declared reservation is advisory, matching the observed nx2-flow
+startup policy. Actual kernel mapping/allocation failures remain failures;
+there is no quota increase or fabricated allocation success. An unreadable
+or required-but-absent pool still stops preparation. Minimal launch logs
+retain requested/available bytes and frontend host identity across the NRO
+handoff. Both NROs must come from the same build (launch request version 2).
+These source changes have not been compiled or console tested.
+
+The [2026-11-26 architecture review](docs/runtime-architecture-review-2026-11-26.md)
+compares pinned nx2-flow/nx2-relink sources with the frozen local source input,
+separating confirmed gaps, hypotheses and unsupported assumptions. It includes
+on-console preparation boundaries, licensing, rollback points and the required
+folder/NUP hardware regression matrix. Full linker/allocator or multi-update
+overlay parity is not implemented or claimed. The source now permits other
+application hosts subject to their real capabilities and retains fatal SDK
+diagnostics in Minimal mode.

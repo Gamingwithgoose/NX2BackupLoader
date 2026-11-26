@@ -1,0 +1,122 @@
+[
+  {
+    "path": "bananza/BackupLoaderMKW-gameplay.log",
+    "bytes": 17695,
+    "sha256": "effcd801799b69011c64186375288fab12f34c7ea87ea82ad6bb544cb5ead784"
+  },
+  {
+    "path": "bananza/BackupLoaderMKW-host-end.log",
+    "bytes": 512,
+    "sha256": "8e6fb9c7f5cebbb310af097bcbd55de0db7113ec7fb7e7e63d747372841d7786"
+  },
+  {
+    "path": "bananza/BackupLoaderMKW-last-launch.txt",
+    "bytes": 61,
+    "sha256": "19e22270b0d670bb3560dc01ffed0d4e02e14183156bdce0993bfc85d54f8435"
+  },
+  {
+    "path": "bananza/BackupLoaderMKW-raw-exception.bin",
+    "bytes": 512,
+    "sha256": "f4b428a5367a1e932cd857d41029c1631f59e4e90507d35153990f8306361fd6"
+  },
+  {
+    "path": "mario tennis/BackupLoaderMKW-host-end.log",
+    "bytes": 512,
+    "sha256": "a904887d127ea5dbc631cf0ea660b484305e8ef394cf6dc82ca641042f30ed70"
+  },
+  {
+    "path": "mario tennis/BackupLoaderMKW-last-launch.txt",
+    "bytes": 61,
+    "sha256": "18696fdfb6861a5a50c48e8259b5106f1037c0f359df45271de7654fea2b869a"
+  },
+  {
+    "path": "mario tennis/BackupLoaderMKW-nup.log",
+    "bytes": 16015,
+    "sha256": "d7519fd9eae75afe57ef0973987c374decc203c1d2a2a877b269002d9118e07c"
+  },
+  {
+    "path": "mario tennis/BackupLoaderMKW-raw-exception.bin",
+    "bytes": 512,
+    "sha256": "e8fb37e6ee6897e159ed5043eff73956478dcda9ad02031aaacbdf235547c018"
+  },
+  {
+    "path": "OOT/BackupLoaderMKW-host-end.log",
+    "bytes": 512,
+    "sha256": "a4764542525ee010fc683168177a352ebb07ee08074f2939495b1b3cc29c4b85"
+  },
+  {
+    "path": "OOT/BackupLoaderMKW-last-launch.txt",
+    "bytes": 61,
+    "sha256": "9c5ff593808e833eb99cb51dbee4ab5e209fddc95a48bd4e0bda169c6c330e8f"
+  },
+  {
+    "path": "OOT/BackupLoaderMKW-nup.log",
+    "bytes": 21199,
+    "sha256": "f873985d2671d835b89bad4ffdfd4c46901122547c2ab50ae9e2265347b03a2b"
+  },
+  {
+    "path": "OOT/BackupLoaderMKW-raw-exception.bin",
+    "bytes": 512,
+    "sha256": "3f3a73381377c557cc3f35f0ab47b0d14dec6b542eab37e09aab53e40584b863"
+  },
+  {
+    "path": "plza/BackupLoaderMKW-host-end.log",
+    "bytes": 1024,
+    "sha256": "77ff069f292443268fa62d664246fc1c0a525f55b47dc5d352cab1dbadee8cd8"
+  },
+  {
+    "path": "plza/BackupLoaderMKW-last-launch.txt",
+    "bytes": 61,
+    "sha256": "a766db13a404ae15803fd3179ea16745606f3248805693d3ee3e00d8d0160d43"
+  },
+  {
+    "path": "plza/BackupLoaderMKW-nup.log",
+    "bytes": 23493,
+    "sha256": "f6e44785bbcd49aa8e1b09a14a7b389ff6946fcd41cb4160a712c29ab721b8ff"
+  },
+  {
+    "path": "plza/BackupLoaderMKW-raw-exception.bin",
+    "bytes": 512,
+    "sha256": "e3edefca056f885433684c6bbd9bda3739fb4cece4971627a21f69eab3ea2d70"
+  },
+  {
+    "path": "xenoblade chronicles/BackupLoaderMKW-host-end.log",
+    "bytes": 512,
+    "sha256": "b4dc7a62014b284cb3fe95842bb72b52134755c92430707b989dfd97e24104fb"
+  },
+  {
+    "path": "xenoblade chronicles/BackupLoaderMKW-last-launch.txt",
+    "bytes": 61,
+    "sha256": "4f318324698a41112bc60f05130fac01e306f72c30b5b7ffa41e3f9f293fcd84"
+  },
+  {
+    "path": "xenoblade chronicles/BackupLoaderMKW-nup.log",
+    "bytes": 17020,
+    "sha256": "32512e0a84876e292689b536cffaf81f153982b42ae570e148be770c7119a6a1"
+  },
+  {
+    "path": "xenoblade chronicles/BackupLoaderMKW-raw-exception.bin",
+    "bytes": 512,
+    "sha256": "6a439b8028aa2272c50364f83565132d13c9c796f7c89b3e05cc2561eacea9b8"
+  },
+  {
+    "path": "yoshi now crashes when selecting a save profile in game/BackupLoaderMKW-host-end.log",
+    "bytes": 1024,
+    "sha256": "f4129be137420e8d415806454ffdd1f2149d973b844c152e4e80fdf000db11f7"
+  },
+  {
+    "path": "yoshi now crashes when selecting a save profile in game/BackupLoaderMKW-last-launch.txt",
+    "bytes": 61,
+    "sha256": "c2137ffd1adfd5d2b3e84516d7c4773215a39a317e5352dc7d6e7e3861a208ee"
+  },
+  {
+    "path": "yoshi now crashes when selecting a save profile in game/BackupLoaderMKW-nup.log",
+    "bytes": 22912,
+    "sha256": "62d965cb70c10fcf494d93d286b7afff53383009082981a8d7a0f15b4014cf33"
+  },
+  {
+    "path": "yoshi now crashes when selecting a save profile in game/BackupLoaderMKW-raw-exception.bin",
+    "bytes": 512,
+    "sha256": "c4e7a11b4521901ecbbe5491813ff01c0216248ce0aa425e1f5d93ea8ed423d7"
+  }
+]

@@ -1,8 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "fault.h"
+#include "raw_fault.h"
 #include "../../../plugins/crash-monitor/source/monitor_wire.h"
 #include "folder.h"
+#include "launch_request.h"
 #include "heap_plan.h"
+#include "native_compat.h"
+#include "heap_config.h"
 #include "guest_thread_policy.h"
 #include "guest_core_policy.h"
 #include "index_cache.h"
@@ -13,7 +17,9 @@
 #include "resource_diagnostic.h"
 #include "termination_trace.h"
 #include "exception_forwarder.h"
+#include "system_error.h"
 #include "vm_release.h"
+#include "report_archive.h"
 #include <malloc.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -27,11 +33,25 @@ static PadState pad;
 static FILE *nx2_deferred_crash_file;
 static unsigned nx2_defer_crash_flush;
 static char nx2_crash_buffer[32768];
+static char nx2_gameplay_buffer[65536];
+static unsigned nx2_gameplay_reporting;
 static uint32_t selected_resource;
 static char selected_save[256];
-static char outcome[192] = "Mario Kart World override required.";
+static char outcome[192] = "Application title override required.";
 static int monitor_enabled;
 static u64 monitor_title;
+/* The host prepares/observes on its own libounce thread. The original
+ * main thread waits here until the one-way SDK handoff is ready. */
+typedef struct {
+  const Nx2Game *game;
+  int rebuild_index, nvn_profile;
+  uint32_t state; /* 0 preparing, 1 ready, 2 preparation returned, 3 handed off */
+  Handle main_handle;
+  Nx2Launch *launch;
+  void *stack;
+} Nx2MainHandoff;
+static Nx2MainHandoff nx2_main_handoff;
+
 static int monitor_error_record(const char *fmt, ...){
   if(!monitor_enabled)return 0;
   FILE *m=fopen("sdmc:/kaihen/nx2-errors.pending","a");
@@ -51,6 +71,20 @@ static int monitor_failure_label(const char *fmt){
   return 0;
 }
 static void row(FILE *f, const char *fmt, ...) {
+  if(!f)return;
+  if(nx2_minimal_logging &&
+     strncmp(fmt,"BackupLoaderMKW",15) && strncmp(fmt,"REPORT_FORMAT",13) &&
+     strncmp(fmt,"HOST ",5) && strncmp(fmt,"MODULE_PREP_READY",17) &&
+     strncmp(fmt,"PERFORMANCE_PROFILE",19) && strncmp(fmt,"NVN_LAUNCH_MODE",15) &&
+     strncmp(fmt,"REPORT_END",10) && strncmp(fmt,"REPORT_ARCHIVE",14) &&
+     strncmp(fmt,"RUNTIME_SOURCE_REVISION",23) &&
+     strncmp(fmt,"RESOURCE_CHECK",14) &&
+     strncmp(fmt,"HOST_SYSTEM_RESOURCE",20) && strncmp(fmt,"HOST_INPUT_RELEASE",18) && strncmp(fmt,"GUI_HANDOFF",11) &&
+     strncmp(fmt,"FREEZE_",7) && strncmp(fmt,"FIRST_PRESENT",13) &&
+     !strstr(fmt,"SDK_MAIN_THREAD_HANDOFF") &&
+     !monitor_failure_label(fmt) && !strstr(fmt,"FAULT") &&
+     !strstr(fmt,"STOP") && !strstr(fmt,"FAILED") && !strstr(fmt,"REFUSED") &&
+     !strstr(fmt,"ERROR"))return;
   va_list a;
   va_start(a, fmt);
   vfprintf(f, fmt, a);
@@ -59,7 +93,10 @@ static void row(FILE *f, const char *fmt, ...) {
     char msg[1024];va_start(a,fmt);int n=vsnprintf(msg,sizeof(msg),fmt,a);va_end(a);
     if(n>0){size_t len=strlen(msg);while(len && msg[len-1]=='\n')msg[--len]=0;monitor_error_record("%s",msg);}
   }
-  if(f!=nx2_deferred_crash_file || !nx2_defer_crash_flush)
+  /* Gameplay diagnostics share the SD and stdio locks with real assets.
+   * Batch routine writes; explicit fault/stop paths still flush themselves. */
+  if(!(nx2_native_compat && !nx2_detailed_trace && nx2_gameplay_reporting) &&
+     (f!=nx2_deferred_crash_file || !nx2_defer_crash_flush))
     fflush(f);
 }
 /* All guest IPC requests and replies remain in the preallocated RAM ring.
@@ -192,6 +229,23 @@ static int start_worker(FILE *f, Nx2Launch *l, Thread *t, int game,
           "requested=%u free=%llu\n",
         stack_bytes,(unsigned long long)host_free);
     return 0;
+  }
+  if(game && nx2_native_compat){
+    void *stack=memalign(0x1000,stack_bytes);
+    if(!stack)return 0;
+    Handle main_handle=nx2_main_handoff.main_handle;
+    Result rc=svcSetThreadPriority(main_handle,priority);
+    if(R_SUCCEEDED(rc))rc=svcSetThreadCoreMask(main_handle,core,UINT64_C(1)<<core);
+    row(f,"SDK_MAIN_THREAD_HANDOFF version=1 handle=%08x priority=%d core=%d stack=%u result=%08x rtld=original\n",
+        main_handle,priority,core,stack_bytes,rc);
+    if(R_FAILED(rc)){free(stack);return 0;}
+    memset(t,0,sizeof(*t));t->handle=main_handle;
+    l->worker_handle=main_handle;
+    nx2_main_handoff.launch=l;
+    nx2_main_handoff.stack=(unsigned char*)stack+stack_bytes;
+    if(selected_core)*selected_core=core;
+    __atomic_store_n(&nx2_main_handoff.state,1,__ATOMIC_RELEASE);
+    return 1;
   }
   Result rc = threadCreate(t, game_entry, l, NULL, stack_bytes, priority, core);
   row(f, "WORKER_CREATE game=%d priority=%d result=%08x\n",game,priority,rc);
@@ -485,10 +539,60 @@ static void write_fault_report(FILE *f, const Nx2Images *images) {
     }
 
 }
+static int raw_fault_module(const Nx2Images *images,uint64_t address,uint64_t *offset){
+  *offset=0;
+  if(images)for(unsigned i=0;i<images->count;i++){
+    const Nx2Module *m=&images->modules[i];uint64_t start=(uintptr_t)m->guest;
+    if(address>=start&&address-start<m->file_size[0]){
+      *offset=address-start;return (int)i;
+    }
+  }
+  return -1;
+}
+static void check_raw_fault(FILE *f,FILE *crash,const Nx2Images *images){
+  static int reported;
+  static uint32_t last_trace_result=UINT32_MAX;
+  uint32_t trace_result=__atomic_load_n(&nx2_raw_fault_trace_result,__ATOMIC_ACQUIRE);
+  if(trace_result!=UINT32_MAX&&trace_result!=last_trace_result){
+    row(f,"RAW_FAULT_TRACE_WRITE result=%08x\n",trace_result);
+    if(crash){row(crash,"RAW_FAULT_TRACE_WRITE result=%08x\n",trace_result);fflush(crash);}
+    last_trace_result=trace_result;
+  }
+  if(reported||__atomic_load_n(&nx2_raw_fault.state,__ATOMIC_ACQUIRE)!=2)return;
+  reported=1;
+  const Nx2RawFault *r=&nx2_raw_fault;
+  uint64_t pc=r->context_valid?r->frame[11]:0;
+  uint64_t lr=r->context_valid?r->frame[9]:0;
+  uint64_t sp=r->context_valid?r->frame[10]:0;
+  uint64_t far=r->context_valid?r->frame[14]:0;
+  uint32_t esr=r->context_valid?(uint32_t)(r->frame[13]>>32):0;
+  uint64_t stripped_lr=lr&((UINT64_C(1)<<39)-1),pc_offset=0,lr_offset=0;
+  int pc_module=raw_fault_module(images,pc,&pc_offset);
+  int lr_module=raw_fault_module(images,stripped_lr,&lr_offset);
+  FILE *outputs[2]={f,crash};
+  for(unsigned i=0;i<2;i++)if(outputs[i]){
+    row(outputs[i],"RAW_EXCEPTION_CAPTURED version=1 kind=%llx context_valid=%u context=%016llx tick=%llu pc=%016llx lr=%016llx lr_stripped=%016llx sp=%016llx fp=%016llx esr=%08x far=%016llx pc_module=%d pc_text_offset=%llx lr_module=%d lr_text_offset=%llx before_libounce_decode=1\n",
+        (unsigned long long)r->kind,r->context_valid,(unsigned long long)r->context,
+        (unsigned long long)r->tick,(unsigned long long)pc,(unsigned long long)lr,
+        (unsigned long long)stripped_lr,(unsigned long long)sp,
+        (unsigned long long)r->gpr9_29[20],esr,(unsigned long long)far,
+        pc_module,(unsigned long long)pc_offset,lr_module,(unsigned long long)lr_offset);
+    /* Persist the core address evidence BEFORE releasing the observer.
+     * Remaining GPRs are secondary if the original handler terminates. */
+    fflush(outputs[i]);
+  }
+  __atomic_store_n(&nx2_raw_fault.state,3,__ATOMIC_RELEASE);
+  for(unsigned i=0;i<29;i++){
+    uint64_t value=i<9?(r->context_valid?r->frame[i]:0):r->gpr9_29[i-9];
+    if(crash)fprintf(crash,"RAW_EXCEPTION_REGISTER x%u=%016llx\n",i,(unsigned long long)value);
+  }
+  if(crash)fflush(crash);
+}
 /* The existing libounce exception handler only copies CPU state. Report it
  * from the still-running host thread to both logs, without doing I/O on the
  * faulted thread's emergency stack. */
 static void check_fault(FILE *f, FILE *crash, const Nx2Images *images) {
+  check_raw_fault(f,crash,images);
   if (__atomic_load_n(&nx2_fault.state, __ATOMIC_ACQUIRE) != 2)
     return;
   if (crash) {
@@ -510,6 +614,10 @@ static int prepare_phase(FILE *f, const char *root, Nx2Images *images,
                          size_t bytes, int game, uint64_t guest_id) {
   memset(l, 0, sizeof(*l));
   l->guest_program_id = guest_id;
+  /* Save requests can contain the real running application's identity.
+   * Retain it only as an alias for this guest's private save namespace. */
+  Result host_id_rc=svcGetInfo(&l->host_program_id,InfoType_ProgramId,CUR_PROCESS_HANDLE,0);
+  if(R_FAILED(host_id_rc))return 0;
   if (!nx2_rom_view(map, bytes, &l->rom))
     return 0;
   l->preflight_result = l->save_result = NX2_INVALID;
@@ -560,7 +668,8 @@ static int prepare_phase(FILE *f, const char *root, Nx2Images *images,
   }
   if (game) {
     screen("Returning unused heap memory for native game allocations...");
-    if (!nx2_release_heap_for_vm(f, &nx2_process_heap, selected_resource, 1,
+    uint64_t required_pool=nx2_native_compat?0:selected_resource;
+    if (!nx2_release_heap_for_vm(f, &nx2_process_heap, required_pool, 1,
                                  NX2_GAME_MIN_BYTES, &l->heap_capacity))
       stop(f, "Native VM memory transition refused/failed; game not started");
     l->heap_base = 0;
@@ -583,26 +692,31 @@ static void scan_progress(uint32_t files, void *unused) {
 }
 /* Universal NVN modes: 0=debug, 1=native+present tracking, 2=all native. */
 static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
+  nx2_gameplay_reporting=0;
   Nx2ResourceDiagnostic resource_diag={0};
   resource_diag.declared_remote=game->remote_resource;
   resource_diag.declared_remote_known=game->has_thread_metadata;
   monitor_faulted=0;
   if(monitor_enabled)remove("sdmc:/kaihen/nx2-cpu-fault.txt");
   monitor_emit(1,game->id,0,0,1);
+  int archived_reports=nx2_archive_previous_reports();
   FILE *f = fopen(game->is_nup ? "sdmc:/BackupLoaderMKW-nup.log" :
                           "sdmc:/BackupLoaderMKW-gameplay.log", "w");
   if (!f) {
     snprintf(outcome, sizeof(outcome), "Could not create launch report.");
     return;
   }
+  if(nx2_native_compat && !nx2_detailed_trace)
+    setvbuf(f,nx2_gameplay_buffer,_IOFBF,sizeof(nx2_gameplay_buffer));
   /* Separate, flushed diagnostic survives abrupt process termination where
    * the game cannot flush its own shutdown record. It is overwritten per run.
    * This cannot capture kernel/GPU faults that never reach the CPU handler. */
-  FILE *crash = fopen("sdmc:/BackupLoaderMKW-crash.log","w");
+  if(nx2_minimal_logging)remove("sdmc:/BackupLoaderMKW-crash.log"); /* avoid stale verbose evidence */
+  FILE *crash = nx2_minimal_logging?NULL:fopen("sdmc:/BackupLoaderMKW-crash.log","w");
   if(crash)
     setvbuf(crash,nx2_crash_buffer,_IOFBF,sizeof(nx2_crash_buffer));
   if (crash)
-    row(crash,"NX2_CRASH_DIAGNOSTIC version=2 game=%s guest=%016llx host=0400c3f00006e000\n"
+    row(crash,"NX2_CRASH_DIAGNOSTIC version=2 game=%s guest=%016llx host=queried_in_primary_report\n"
               "CAPTURE_MODE libounce_cpu_exception_plus_host_snapshot_and_prelaunch\n"
               "LIMITATION no_external_kernel_or_gpu_exception_monitor\n",
         game->name,(unsigned long long)game->id);
@@ -617,8 +731,11 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   if(crash)row(crash,"FOLDER_UNION_ATTEMPT version=1 base_root=%s\n",game->base_root);
   row(f,"RESOURCE_DIAGNOSTIC_BUILD version=3 sample_min_ms=1000 free_thread_handle=current_process remote_info31_info32=1 limit_changes=0\n");
   if(crash)row(crash,"RESOURCE_DIAGNOSTIC_BUILD version=3 sample_min_ms=1000 free_thread_handle=current_process remote_info31_info32=1 limit_changes=0\n");
-  row(f,"REPORT_FORMAT version=3 source=%s crash_path=sdmc:/BackupLoaderMKW-crash.log\n",
-      game->is_nup?"nup":"folder");
+  row(f,"REPORT_ARCHIVE result=%d path=sdmc:/switch/BackupLoaderMKW/reports previous_files_may_have_different_launch_ids=1\n",archived_reports);
+  row(f,"RUNTIME_SOURCE_REVISION version=20261126_ordered_nup_save_3 compiled=%s_%s\n",__DATE__,__TIME__);
+  row(f,"REPORT_FORMAT version=4 source=%s diagnostics=%s crash_path=%s\n",
+      game->is_nup?"nup":"folder",nx2_minimal_logging?"minimal":"verbose",
+      nx2_minimal_logging?"disabled":"sdmc:/BackupLoaderMKW-crash.log");
   if(crash)row(crash,"REPORT_FORMAT version=3 source=%s primary_path=%s\n",
       game->is_nup?"nup":"folder",
       game->is_nup?"sdmc:/BackupLoaderMKW-nup.log":"sdmc:/BackupLoaderMKW-gameplay.log");
@@ -627,15 +744,19 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       "BackupLoaderMKW experimental 0.15\nSELECTED_GAME name=%s root=%s "
       "program_id=%016llx\n",
       game->name, game->root, (unsigned long long)game->id);
+  row(f,"GUI_HANDOFF version=2 origin_version=%u frontend_host=%016llx frontend_system_resource=%llu query_result=%08x frontend_pid=%llu\n",
+      nx2_launch_origin.version,(unsigned long long)nx2_launch_origin.host,
+      (unsigned long long)nx2_launch_origin.system_resource,nx2_launch_origin.query_result,
+      (unsigned long long)nx2_launch_origin.pid);
   launch_phase="HOST_CHECK";
   u64 title = 0;
   Result rc = svcGetInfo(&title, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0);
   row(f, "HOST result=%08x title=%016llx\n", rc, (unsigned long long)title);
-  if (R_FAILED(rc) || title != UINT64_C(0x0400c3f00006e000)) {
-    row(f, "REFUSED MKW override required\n");
+  if (R_FAILED(rc)) {
+    row(f, "REFUSED cannot query host program identity result=%08x\n",rc);
     fclose(f);
     snprintf(outcome, sizeof(outcome),
-             "Start NX2 through Mario Kart World's override.");
+             "Cannot query host title (%08x). Use an application title override.",rc);
     if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
@@ -729,15 +850,34 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   rc = svcGetInfo(&resource, InfoType_SystemResourceSizeTotal, CUR_PROCESS_HANDLE, 0);
   row(f, "RESOURCE_CHECK result=%08x configured_total=%llu requested=%u remaining_not_measured_by_this_check=1\n", rc,
       (unsigned long long)resource, selected_resource);
-  if (R_FAILED(rc) || resource < selected_resource) {
-    row(f, "REFUSED insufficient host system resources\n");
+  u64 pool_used=0;
+  Result pool_used_rc=svcGetInfo(&pool_used,InfoType_SystemResourceSizeUsed,CUR_PROCESS_HANDLE,0);
+  row(f,"RESOURCE_CHECK_USED result=%08x used_bytes=%llu free_bytes=%llu free_known=%u native_npdm_gate_advisory=%u kernel_limits_preserved=1\n",
+      pool_used_rc,(unsigned long long)pool_used,
+      (unsigned long long)(R_SUCCEEDED(rc)&&R_SUCCEEDED(pool_used_rc)&&resource>=pool_used?resource-pool_used:0),
+      R_SUCCEEDED(rc)&&R_SUCCEEDED(pool_used_rc)&&resource>=pool_used,(unsigned)nx2_native_compat);
+
+  /* NPDM reserves for the original process; it is not a failed allocation.
+   * On the native path, the kernel decides actual mapping/heap requests.
+   * Even a zero pool is advisory here: the guest may not use that mapping
+   * facility. Query failure remains an error. Legacy retains its old gate. */
+  if (R_FAILED(rc) ||
+      (!nx2_native_compat && resource < selected_resource)) {
+    row(f, "REFUSED HOST_SYSTEM_RESOURCE query_result=%08x configured_bytes=%llu requested_bytes=%u\n",
+        rc,(unsigned long long)resource,selected_resource);
     nx2_nup_close();
     fclose(f);
-    snprintf(outcome, sizeof(outcome),
-             "This backup requires more resources than MKW provides.");
+    if(R_FAILED(rc))snprintf(outcome,sizeof(outcome),
+        "Cannot query host system-resource pool (%08x).",rc);
+    else snprintf(outcome,sizeof(outcome),
+        "Host system-resource pool: %llu KiB; this title requests %u KiB.",
+        (unsigned long long)(resource/1024),(unsigned)((selected_resource+1023ULL)/1024));
     if(crash){row(crash,"PRELAUNCH_STOP phase=%s\n",launch_phase);fclose(crash);}
     return;
   }
+  if(resource<selected_resource)
+    row(f,"HOST_SYSTEM_RESOURCE_ADVISORY configured_bytes=%llu declared_bytes=%u native_actual_requests=kernel_enforced no_quota_increase=1\n",
+        (unsigned long long)resource,selected_resource);
   launch_phase="ROMFS_INDEX";
   screen(rebuild_index ? "Rebuilding game index..." : "Loading game index...");
   char rom[1400],base_rom[1400]={0},error[160];
@@ -829,7 +969,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       (unsigned long long)(armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL));
   launch_phase="PREPARE_MODULES";
   module_prepare_started=armGetSystemTick();
-  nx2_resource_diagnostic(crash?crash:f,&resource_diag,"pre_modules",
+  if(!nx2_minimal_logging)nx2_resource_diagnostic(crash?crash:f,&resource_diag,"pre_modules",
       armTicksToNs(module_prepare_started-launch_started)/1000000ULL,selected_resource,1);
   fflush(crash?crash:f);
   Nx2Launch *l = calloc(1, sizeof(*l));
@@ -856,7 +996,14 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       goto done;
     }
   }
-  nx2_resource_diagnostic(crash?crash:f,&resource_diag,"pre_guest",
+  if(nx2_native_compat)
+    nx2_heap_configure(f,l,host);
+  row(f,"NATIVE_COMPAT_BUILD version=1 sdk_thread=%s tls_user_begin=%x save_mount=%s heap_config=%u rollback=legacy-launch.flag\n",
+      nx2_native_compat?"original_main":"worker",nx2_native_compat?0x120:0x180,
+      nx2_native_compat?"sdk_ipc":"cpp_bridge",nx2_native_compat);
+  if(crash)row(crash,"NATIVE_COMPAT_BUILD version=1 enabled=%u original_rtld=1 sdk_save_registration_native=%u\n",
+               nx2_native_compat,nx2_native_compat);
+  if(!nx2_minimal_logging)nx2_resource_diagnostic(crash?crash:f,&resource_diag,"pre_guest",
       armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL,selected_resource,1);
   fflush(crash?crash:f);
   row(f,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
@@ -868,19 +1015,14 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   if(crash)row(crash,"MODULE_PREP_READY source=%s guest=%016llx module_count=%u physical_budget=%llu\n",
       game->is_nup?"nup":"folder",(unsigned long long)game->id,
       images->count,(unsigned long long)l->heap_capacity);
-  /* A restores the best-observed compatibility baseline; other paths
-   * stay selectable for direct comparisons, independent of game title. */
-  /* Single-file opt-in for the gameplay GPU boundary tracer. The A-mode
-   * baseline stays untouched unless marker is explicitly present. */
-  l->nvn_gameplay_trace=0;
-  if(nvn_profile==1){
-    FILE *gpu_trace=fopen("sdmc:/switch/BackupLoaderMKW/gameplay-gpu-trace.flag","rb");
-    if(gpu_trace){l->nvn_gameplay_trace=1;fclose(gpu_trace);}
-  }
+  /* The same playable launch path is used in both logging settings. */
+  l->nvn_gameplay_trace=nx2_detailed_trace && nvn_profile==1;
+  row(f,"PERFORMANCE_PROFILE version=2 detailed_trace=%u gui_controls_diagnostics=%u batched_gameplay_flush=%u storage_requests_first=1\n",
+      nx2_detailed_trace,nx2_native_compat,nx2_native_compat&&!nx2_detailed_trace);
   row(f,"GAMEPLAY_GPU_TRACE enabled=%u mode=%d functions=submit,flush,finish,window_acquire,queue_acquire,fence,wait,sync_wait,queue_error,pool_init,pool_finalize "
         "native_results_unchanged=1 source=%s\n",
       l->nvn_gameplay_trace,nvn_profile,
-      l->nvn_gameplay_trace?"sd_flag":"default_off");
+      l->nvn_gameplay_trace?"gui_verbose":"default_off");
   if(crash)row(crash,"GAMEPLAY_GPU_TRACE enabled=%u nvn_mode=%d\n",
                l->nvn_gameplay_trace,nvn_profile);
   l->nvn_driver_passthrough=(uint32_t)nvn_profile;
@@ -889,7 +1031,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   row(f,"NVN_LAUNCH_MODE profile=%s mode=%d getproc_intercept=%u "
         "present_intercept=%u selected_by=%s\n",
       profile,nvn_profile,(unsigned)(nvn_profile!=2),(unsigned)(nvn_profile!=2),
-      nvn_profile==2?"L+A":nvn_profile==1?"A":"ZR+A");
+      "A");
   if(crash)row(crash,"NVN_LAUNCH_MODE profile=%s mode=%d "
                      "getproc_intercept=%u present_intercept=%u\n",
                profile,nvn_profile,(unsigned)(nvn_profile!=2),
@@ -899,21 +1041,39 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
           "getproc_and_present_counters_unobserved=1\n");
   launch_phase="GUEST_EXECUTE";
   extern void _start(void);
-  nx2_exception_forwarder_audit(crash?crash:f,(uint64_t)(uintptr_t)_start);
+  if(!nx2_minimal_logging)nx2_exception_forwarder_audit(crash?crash:f,(uint64_t)(uintptr_t)_start);
   Result termination_rc=nx2_termination_trace_open(title,game->id);
   row(f,"HOST_TERMINATION_TRACE_OPEN version=1 result=%08x path=sdmc:/BackupLoaderMKW-host-end.log\n",termination_rc);
   if(crash)row(crash,"HOST_TERMINATION_TRACE_OPEN version=1 result=%08x\n",termination_rc);
   row(f,"DIAGNOSTIC_PROFILE version=2 guest_fs_callsite=1 save_gate=1 exit_observer=existing CPU_exception_observer=libounce\n");
+  Result raw_trace_rc=nx2_raw_fault_trace_open(title,game->id);
+  row(f,"RAW_EXCEPTION_ENTRY_BUILD version=2 initial_capture_before_stack_or_svc=1 native_handler_forwarded=1 fault_only_grace_ms=100 data_abort_native_writer=experimental\n");
+  row(f,"RAW_FAULT_TRACE_OPEN version=2 result=%08x path=sdmc:/BackupLoaderMKW-raw-exception.bin\n",raw_trace_rc);
+  if(crash){
+    row(crash,"RAW_EXCEPTION_ENTRY_BUILD version=2 initial_capture_before_stack_or_svc=1 native_handler_forwarded=1 fault_only_grace_ms=100 data_abort_native_writer=experimental\n");
+    row(crash,"RAW_FAULT_TRACE_OPEN version=2 result=%08x path=sdmc:/BackupLoaderMKW-raw-exception.bin\n",raw_trace_rc);
+  }
   if(crash)row(crash,"GUEST_EXECUTION_BEGIN phase=%s\n",launch_phase);
   row(f, "ACTUAL_ENTRY_ABOUT_TO_EXECUTE rtld=%016llx physical_budget=%llu\n",
       (unsigned long long)(uintptr_t)l->api.rtld,
       (unsigned long long)l->heap_capacity);
+  row(f,"SYSTEM_ERROR_RUN_MARKER version=1 written=%u menu_readback=options_export\n",
+      (unsigned)nx2_system_error_mark(title,game->id));
+  row(f,"NVN_LOOKUP_COVERAGE version=2 bootstrap_and_getproc=1 self_wrapper_guard=1 raw_mode2_unobserved=1 unobserved_is_not_failure=1\n");
   screen("Starting game...");
   consoleExit(NULL);
   Result display_release = nwindowReleaseVi2Layer(nwindowGetDefault());
   row(f, "HOST_DISPLAY_RELEASE result=%08x\n", display_release);
   if (R_FAILED(display_release))
     stop(f, "Could not release launcher display");
+  /* The SDK opens its own HID applet resource. No launcher pad polls remain
+   * after this boundary; retaining libounce's session can compete with it. */
+  if(nx2_native_compat){
+    int had_hid=serviceIsActive(hidGetServiceSession());
+    if(had_hid)hidExit();
+    row(f,"HOST_INPUT_RELEASE was_active=%u remains_active=%u sdk_calls_preserved=1\n",
+        (unsigned)had_hid,(unsigned)serviceIsActive(hidGetServiceSession()));
+  }
   appletExit();
   row(f, "HOST_APPLET_PROXY_RELEASED\nGAMEPLAY_CUTOFF disabled\n");
   int guest_priority=0x2c,storage_priority=0x2b;
@@ -963,16 +1123,12 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
    * Guest threads still only publish lock-free in-memory metadata. */
   /* Hardware full-text IPC overran the ring; keep errors, local
    * decisions and important service activity on disk by default. */
-  int ipc_full_text=0;
-  FILE *full_flag=fopen("sdmc:/switch/BackupLoaderMKW/full-ipc-trace.flag","rb");
-  if(full_flag){ipc_full_text=1;fclose(full_flag);}
-  /* Explicit sparse override has precedence over full trace. */
-  FILE *sparse_flag=fopen("sdmc:/switch/BackupLoaderMKW/sparse-ipc-trace.flag","rb");
-  if(sparse_flag){ipc_full_text=0;fclose(sparse_flag);}
-  row(f,"IPC_CAPTURE mode=%s ring=%u request_reply=1 "
-      "crash_tail=1 payloads=omitted local_decisions=labeled\n",
+  int ipc_full_text=nx2_detailed_trace!=0;
+  row(f,"IPC_CAPTURE mode=%s ring=%u request_reply=%u "
+      "crash_tail=%u payloads=omitted local_decisions=labeled\n",
+      nx2_minimal_logging?"off":!nx2_detailed_trace?"errors_and_rejections":
       ipc_full_text?"complete_request_result_metadata":"sparse_metadata_override",
-      NX2_IPC_EVENT_SLOTS);
+      nx2_minimal_logging?0:NX2_IPC_EVENT_SLOTS,nx2_detailed_trace!=0,!nx2_minimal_logging);
   row(f,"IPC_EVENT_PHASES 1=REQUEST 2=KERNEL_RETURN 3=GUEST_VIRTUAL_FS "
       "4=LOCAL_UNSUPPORTED_REPLY 5=LOCAL_REJECT\n");
   u64 crash_sample = began;
@@ -994,6 +1150,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
   uint32_t last_nvn_stage_done[NX2_NVN_STAGE_COUNT]={0};
   /* Host-only suspect-stall snapshot; no guest calls or changed dispatch. */
   u64 passive_last_frame=0,passive_frame_tick=began;
+  unsigned minimal_stall_records=0;
   u64 passive_ipc_at_progress=0,passive_rom_at_progress=0;
   int passive_reported=0;
   u64 passive_last_report_tick=0;
@@ -1007,12 +1164,40 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     nx2_deferred_crash_file=crash;
     nx2_defer_crash_flush=1;
   }
+  nx2_gameplay_reporting=1;
   for (;;) {
     check_fault(f, crash, images);
-    if(!resource_save_sampled &&
-       __atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE)){
+    if(!nx2_minimal_logging && !resource_save_sampled &&
+       (__atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE) ||
+        __atomic_load_n(&l->sdk_save_open_count,__ATOMIC_ACQUIRE))){
       resource_save_sampled=1;
-      nx2_resource_diagnostic(crash?crash:f,&resource_diag,"save_mounted",
+      int registered=__atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE)!=0;
+      if(registered){
+      /* Persist the successful SDK registration signal before any resource
+       * queries. The old phase row later in this loop could remain stale
+       * if Horizon terminated us while this checkpoint was being written.
+       * These independent counters are a sample, not a transaction. */
+      uint32_t phase=__atomic_load_n(&l->save_gate_phase,__ATOMIC_ACQUIRE);
+      uint32_t result=__atomic_load_n(&l->save_gate_result,__ATOMIC_ACQUIRE);
+      uint64_t caller=__atomic_load_n(&l->save_gate_caller,__ATOMIC_ACQUIRE);
+      uint32_t enqueued=__atomic_load_n(&l->save_notice_enqueued,__ATOMIC_ACQUIRE);
+      uint32_t served=__atomic_load_n(&l->save_notice_served,__ATOMIC_ACQUIRE);
+      uint32_t dropped=__atomic_load_n(&l->save_notice_dropped,__ATOMIC_ACQUIRE);
+      row(f,"SAVE_REGISTER_SUCCESS_CHECKPOINT phase_sample=%u result_sample=%08x caller=%016llx enqueued=%u served=%u dropped=%u sdk_register_success_observed=1 guest_return_not_proven=1\n",
+          phase,result,(unsigned long long)caller,enqueued,served,dropped);
+      if(crash){
+        row(crash,"SAVE_REGISTER_SUCCESS_CHECKPOINT phase_sample=%u result_sample=%08x caller=%016llx enqueued=%u served=%u dropped=%u sdk_register_success_observed=1 guest_return_not_proven=1\n",
+            phase,result,(unsigned long long)caller,enqueued,served,dropped);
+        fflush(crash);
+      }
+      }else{
+        row(f,"SDK_SAVE_IPC_OPEN_CHECKPOINT count=%u registration_not_observed=1\n",
+            __atomic_load_n(&l->sdk_save_open_count,__ATOMIC_ACQUIRE));
+        if(crash)row(crash,"SDK_SAVE_IPC_OPEN_CHECKPOINT count=%u registration_not_observed=1\n",
+            __atomic_load_n(&l->sdk_save_open_count,__ATOMIC_ACQUIRE));
+      }
+      if(!nx2_minimal_logging)nx2_resource_diagnostic(crash?crash:f,&resource_diag,
+          registered?"save_mounted":"sdk_save_open",
           armTicksToNs(armGetSystemTick()-launch_started)/1000000ULL,selected_resource,1);
       fflush(crash?crash:f);
     }
@@ -1033,7 +1218,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       last_fsp_route_stage=fs_stage;
     }
     drain_ipc_events(f,l,&ipc_event_cursor,&ipc_event_dropped,ipc_full_text);
-    if(armTicksToNs(armGetSystemTick()-ipc_event_flush)>=2000000000ULL){
+    if(armTicksToNs(armGetSystemTick()-ipc_event_flush)>=
+       (nx2_detailed_trace?2000000000ULL:10000000000ULL)){
       ipc_event_flush=armGetSystemTick();
       fflush(f);
     }
@@ -1073,6 +1259,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
          armTicksToNs(now-passive_frame_tick)>=8000000000ULL &&
          (!passive_reported ||
           armTicksToNs(now-passive_last_report_tick)>=10000000000ULL)){
+        int new_stall=!passive_reported;
         passive_reported=1;
         passive_last_report_tick=now;
         /* Stage 1 expands to other non-watchdog cores. If rendering
@@ -1109,6 +1296,51 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
         u64 io_age=slot && now>=io_tick?
           armTicksToNs(now-io_tick)/1000000ULL:0;
         u64 elapsed=armTicksToNs(now-passive_frame_tick)/1000000ULL;
+        /* Keep useful freeze evidence without routine per-frame SD logging.
+         * At most four short event-triggered capsules per launch. A pause
+         * is only suspected; this does not prove deadlock or GPU failure. */
+        if(nx2_minimal_logging && new_stall && minimal_stall_records<4){
+          minimal_stall_records++;
+          row(f,"FREEZE_SUMMARY event=%u present_pause_ms=%llu frames=%llu ipc_since_present=%llu io_since_present=%llu storage_slot=%u storage_op=%u storage_age_ms=%llu confirmed_deadlock=0\n",
+              minimal_stall_records,(unsigned long long)elapsed,(unsigned long long)frames,
+              (unsigned long long)(ipc_now-passive_ipc_at_progress),
+              (unsigned long long)(rom_now-passive_rom_at_progress),slot,
+              __atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED),(unsigned long long)io_age);
+          if(slot&&slot<=NX2_RPC_SLOTS){
+            u32 file=__atomic_load_n(&host->rpc_rom_file,__ATOMIC_RELAXED);
+            const char *path=l->requests[slot-1].path;
+            if(__atomic_load_n(&host->rpc_active_op,__ATOMIC_RELAXED)==RPC_ROM_READ && file<l->rom.count)
+              path=nx2_rom_path(&l->rom,file);
+            row(f,"FREEZE_STORAGE_PATH best_effort=1 path=%.256s\n",path?path:"");
+            row(f,"FREEZE_STORAGE_STATE best_effort=1 phase=%u file=%u offset=%llu bytes=%llu completed=%llu chunk_bytes=%u result=%08x\n",
+                __atomic_load_n(&host->rpc_rom_phase,__ATOMIC_RELAXED),file,
+                (unsigned long long)__atomic_load_n(&host->rpc_rom_offset,__ATOMIC_RELAXED),
+                (unsigned long long)__atomic_load_n(&host->rpc_rom_bytes,__ATOMIC_RELAXED),
+                (unsigned long long)__atomic_load_n(&host->rpc_rom_completed,__ATOMIC_RELAXED),
+                __atomic_load_n(&host->rpc_rom_chunk_bytes,__ATOMIC_RELAXED),
+                __atomic_load_n(&host->rpc_rom_result,__ATOMIC_RELAXED));
+            if(nx2_nup_active()){
+              Nx2NupReadProgress progress;nx2_nup_get_progress(&progress);
+              row(f,"FREEZE_NUP_STATE best_effort=1 active=%u phase=%u file=%u codec=%u requested=%llu sd=%llu decoded=%llu delivered=%llu chunk_offset=%llu chunk_bytes=%u io_result=%08x io_inflight=%u native_io=%u\n",
+                  progress.active,progress.phase,progress.file,progress.codec,
+                  (unsigned long long)progress.requested,(unsigned long long)progress.sd_bytes,
+                  (unsigned long long)progress.decoded_bytes,(unsigned long long)progress.delivered_bytes,
+                  (unsigned long long)progress.chunk_offset,progress.chunk_bytes,
+                  progress.io_result,progress.io_inflight,progress.native_io);
+            }
+          }
+          u32 next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
+          for(u32 back=(next<8?next:8);back;back--){
+            Nx2IpcBreadcrumb *e=&l->ipc_breadcrumbs[(next-back)%NX2_IPC_TRACE_SLOTS];
+            u32 phase=__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE);if(!phase)continue;
+            Nx2IpcBreadcrumb snap=*e;
+            if(__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE)!=phase)continue;
+            snap.service[8]=0;
+            row(f,"FREEZE_IPC phase=%u service=%s command=%u kernel=%08x cmif=%08x caller=%016llx\n",
+                phase,snap.service,snap.command,snap.result,snap.service_result,(unsigned long long)snap.caller);
+          }
+          fflush(f);
+        }
         if(crash){
           row(crash,"WARNING_SUSPECTED_PRESENT_STALL duration_ms=%llu frames=%llu "
                     "ipc_end=%llu ipc_since_present=%llu rom_rpc=%llu "
@@ -1248,6 +1480,8 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       }
     }
     if (frames && (!previous_frames || frames - previous_frames >= 300)) {
+      if(!previous_frames){row(f,"FIRST_PRESENT elapsed_ms=%llu frames=%llu\n",
+          (unsigned long long)(armTicksToNs(armGetSystemTick()-began)/1000000ULL),(unsigned long long)frames);fflush(f);}
       row(f, "GRAPHICS_PRESENT_RETURNED calls=%llu\n",
           (unsigned long long)frames);
       previous_frames = frames;
@@ -1316,8 +1550,9 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     uint64_t since_start=armTicksToNs(armGetSystemTick()-began);
     /* Early no-frame boot still gets subsecond diagnostics, but regular
      * snapshots must not compete with game asset reads every 100-500ms. */
-    uint64_t crash_interval=(since_start<15000000000ULL && !frames)
-                          ?250000000ULL:2000000000ULL;
+    uint64_t crash_interval=nx2_detailed_trace?
+       ((since_start<15000000000ULL && !frames)?250000000ULL:2000000000ULL):
+       (frames?10000000000ULL:5000000000ULL);
     int captured_snapshot=0;
     if(crash && armTicksToNs(armGetSystemTick()-crash_sample)>=crash_interval){
       captured_snapshot=1;
@@ -1439,7 +1674,7 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
       }
       row(crash,"GPU_OBSERVATION_MODE mode=%u trace=%u zero_counters_not_proof_of_no_gpu_activity=%u\n",
           (unsigned)l->nvn_driver_passthrough,(unsigned)l->nvn_gameplay_trace,
-          (unsigned)(l->nvn_driver_passthrough==2));
+          (unsigned)(l->nvn_driver_passthrough==2 || !l->nvn_gameplay_trace));
       row(crash,"GPU_INIT_SNAPSHOT trace_enabled=%u device=%u/%u result=%08x queue=%u/%u result=%08x window=%u/%u result=%08x\n",
           (unsigned)l->nvn_gameplay_trace,
           __atomic_load_n(&l->nvn_device_entered,__ATOMIC_ACQUIRE),
@@ -1687,7 +1922,9 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     /* Capture recent guest SVCs from shared memory without generating
      * any guest RPCs. This survives a guest thread stuck inside the SVC.
      * A short interval is used only after private-save startup. */
-    if(__atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE) &&
+    if(nx2_detailed_trace &&
+       (__atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE) ||
+        __atomic_load_n(&l->sdk_save_open_count,__ATOMIC_ACQUIRE)) &&
        armTicksToNs(armGetSystemTick()-trace_sample)>=250000000ULL){
       trace_sample=armGetSystemTick();
       uint32_t next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
@@ -1715,9 +1952,10 @@ static void run(const Nx2Game *game, int rebuild_index, int nvn_profile) {
     }
     /* A post-save checkpoint is independent of guest RPC progress;
      * use shorter heartbeats only after the save mount succeeds. */
-    uint32_t late=__atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE);
-    if (armTicksToNs(armGetSystemTick() - heartbeat) >=
-        (late?2000000000ULL:5000000000ULL)) {
+    uint32_t late=__atomic_load_n(&l->late_trace_active,__ATOMIC_ACQUIRE) ||
+                  __atomic_load_n(&l->sdk_save_open_count,__ATOMIC_ACQUIRE);
+    if (!nx2_minimal_logging && armTicksToNs(armGetSystemTick() - heartbeat) >=
+        (nx2_detailed_trace?(late?2000000000ULL:5000000000ULL):10000000000ULL)) {
       heartbeat = armGetSystemTick();
       {
         uint64_t io_last=__atomic_load_n(&nx2_storage_service.last_poll_tick,__ATOMIC_ACQUIRE);
@@ -1857,192 +2095,78 @@ done:
   free(host);
   free(images);
 }
-/* The native CodeFS preflight is intentionally read-only. It tests the
- * actual HEN fsp-ldr root and a known-running host title before the selected
- * guest. No game process is started; no Loader global identity is changed.
- * This remains separate from legacy A and B+A and writes its own report. */
-static Result horizon_probe_codefs(FILE *report,Service *loader,
-                                   const char *role,u64 title){
-  const u8 stores[]={
-    NcmStorageId_BuiltInUser,NcmStorageId_SdCard,NcmStorageId_GameCard
-  };
-  Result last=0x2f5e02;
-  for(unsigned i=0;i<sizeof(stores)/sizeof(stores[0]);i++){
-    const struct {
-      u8 attributes,storage_id,padding[6];
-      u64 program_id;
-    } request={1,stores[i],{0},title};
-    unsigned char code_info[0x1a4]={0};
-    FsFileSystem codefs={0};
-    Result rc=serviceDispatchIn(loader,0,request,
-       .buffer_attrs={SfBufferAttr_HipcMapAlias|SfBufferAttr_Out},
-       .buffers={{code_info,sizeof(code_info)}},
-       .out_num_objects=1,.out_objects=&codefs.s);
-    row(report,"CODEFS role=%s title=%016llx storage=%u result=%08x\n",
-        role,(unsigned long long)title,(unsigned)stores[i],rc);
-    if(R_SUCCEEDED(rc)){
-      fsFsClose(&codefs);
-      return 0;
-    }
-    last=rc;
-  }
-  return last;
+static void native_host_entry(void *unused){
+  (void)unused;
+  run(nx2_main_handoff.game,nx2_main_handoff.rebuild_index,nx2_main_handoff.nvn_profile);
+  /* Preparation may return to the shelf; after handoff run() never returns. */
+  __atomic_store_n(&nx2_main_handoff.state,2,__ATOMIC_RELEASE);
 }
-static void horizon_preflight(const Nx2Game *game){
-  FILE *report=fopen("sdmc:/BackupLoaderMKW-horizon.log","w");
-  if(!report){
-    snprintf(outcome,sizeof(outcome),"R+A: cannot open Horizon preflight log");
+static void run_native(const Nx2Game *game,int rebuild,int profile){
+  FILE *legacy=fopen("sdmc:/switch/BackupLoaderMKW/legacy-launch.flag","rb");
+  nx2_native_compat=legacy?0:1;
+  /* The GUI choice is authoritative; stale diagnostic flags do not enable tracing. */
+  nx2_detailed_trace=!nx2_minimal_logging;
+  if(legacy){fclose(legacy);run(game,rebuild,profile);return;}
+  nx2_main_handoff=(Nx2MainHandoff){.game=game,.rebuild_index=rebuild,
+      .nvn_profile=profile,.main_handle=envGetMainThreadHandle()};
+  Thread observer;
+  s32 host_priority=0x2c;
+  Result rc=svcGetThreadPriority(&host_priority,nx2_main_handoff.main_handle);
+  if(R_FAILED(rc)){
+    snprintf(outcome,sizeof(outcome),"Main thread priority query failed: %08x",rc);
     return;
   }
-  row(report,"HORIZON_PREFLIGHT version=1 source=%s game=%s title=%016llx\n"
-      "MODE=read_only_codefs_probe NOT_A_GAME_LAUNCH=1\n",
-      game->is_nup?"nup":"folder",game->name,(unsigned long long)game->id);
-  u64 host=0;
-  Result rc=svcGetInfo(&host,InfoType_ProgramId,CUR_PROCESS_HANDLE,0);
-  row(report,"HOST_ID result=%08x title=%016llx\n",rc,(unsigned long long)host);
-  if(R_FAILED(rc))goto failed;
-  Service ro={0},hen={0};
-  rc=kaihenGetRoSession(&ro);
-  row(report,"RO_SESSION result=%08x\n",rc);
-  if(R_FAILED(rc))goto failed;
-  rc=kaihenOpenHomebrewSession(&ro,&hen);
-  row(report,"HEN_SESSION result=%08x\n",rc);
-  if(R_FAILED(rc))goto failed;
-  Handle loader_handle=INVALID_HANDLE;
-  rc=henGetLoaderRoot(&hen,&loader_handle);
-  row(report,"HEN_GET_FSP_LDR_ROOT result=%08x\n",rc);
-  serviceClose(&hen);
-  if(R_FAILED(rc))goto failed;
-  Service loader={0};
-  serviceCreate(&loader,loader_handle);
-  Result host_rc=horizon_probe_codefs(report,&loader,"host",host);
-  Result guest_rc=horizon_probe_codefs(report,&loader,"selected",game->id);
-  serviceClose(&loader);
-  row(report,"RESULT host_codefs=%08x selected_codefs=%08x\n",
-      host_rc,guest_rc);
-  if(R_FAILED(host_rc)){
-    snprintf(outcome,sizeof(outcome),
-      "R+A: Horizon CodeFS unavailable for host (%08x); see horizon.log",host_rc);
-  }else if(R_FAILED(guest_rc)){
-    snprintf(outcome,sizeof(outcome),
-      "R+A: host CodeFS works; selected title not available (%08x)",guest_rc);
-  }else{
-    snprintf(outcome,sizeof(outcome),
-      "R+A: selected title CodeFS available; native guest launch NOT implemented");
+  rc=threadCreate(&observer,native_host_entry,NULL,NULL,0x200000,host_priority,-2);
+  if(R_FAILED(rc)){
+    snprintf(outcome,sizeof(outcome),"Launch preparation thread failed: %08x",rc);
+    return;
   }
-  fclose(report);
-  return;
-failed:
-  row(report,"RESULT native_probe_unavailable=%08x\n",rc);
-  snprintf(outcome,sizeof(outcome),"R+A: Horizon probe unavailable (%08x)",rc);
-  fclose(report);
-}
-static void draw(const Nx2Catalog *catalog, size_t selected) {
-  consoleClear();
-  printf("BackupLoaderMKW 0.14\n\n");
-  if (!catalog->count)
-    printf("No extracted games or NUP backups found in /games.\n\n");
-  else {
-    size_t page = (selected / 15) * 15;
-    for (size_t i = page; i < catalog->count && i < page + 15; i++)
-      printf("%s %.66s\n", i == selected ? ">" : " ", catalog->items[i].name);
-    printf("\n%u / %u\n", (unsigned)selected + 1, (unsigned)catalog->count);
-    if (catalog->items[selected].is_nup)
-      printf("NUP: %s\n", catalog->items[selected].nup_status);
-    else if (catalog->items[selected].updates==2)
-      printf("Using update version %llu%s (SD-only).\n",
-             (unsigned long long)catalog->items[selected].update_version,
-             catalog->items[selected].base_root[0]?" + base assets":"");
-    else if (catalog->items[selected].updates)
-      printf("Base selected; no complete runnable update found.\n");
+  rc=threadStart(&observer);
+  if(R_FAILED(rc)){
+    threadClose(&observer);
+    snprintf(outcome,sizeof(outcome),"Launch preparation thread start failed: %08x",rc);
+    return;
   }
-  printf("\nA: native + present   L+A: full native   ZR+A: debug NVN\n"
-         "B+A: rebuild index   R+A: Horizon check\n"
-         "X: refresh   +: exit\n\n%s\n",
-         outcome);
-  consoleUpdate(NULL);
+  uint32_t state;
+  while(!(state=__atomic_load_n(&nx2_main_handoff.state,__ATOMIC_ACQUIRE)))
+    svcSleepThread(1000000);
+  if(state==2){
+    threadWaitForExit(&observer);threadClose(&observer);
+    nx2_native_compat=0;
+    return;
+  }
+  __atomic_store_n(&nx2_main_handoff.state,3,__ATOMIC_RELEASE);
+  nx2_enter_guest_stack(nx2_main_handoff.launch,nx2_main_handoff.stack);
 }
-/* Stage two: service connection and read-only enumeration diagnostics. */
-int main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
+/* This NRO owns game preparation only. hbloader has already unloaded the GUI. */
+int main(int argc,char **argv){
   consoleInit(NULL);
-  FILE *monitor_flag=fopen("sdmc:/kaihen/nx2-monitor.flag","rb");
-  if(monitor_flag){monitor_enabled=1;fclose(monitor_flag);monitor_emit(0,0,0,0,1);}
-  padConfigureInput(1, HidNpadStyleSet_NpadStandard);
-  padInitializeDefault(&pad);
-  Nx2Catalog catalog = {0};
-  nx2_catalog("sdmc:/games", &catalog);
-  size_t selected = 0;
-  u64 repeat = 0;
-  int direction = 0;
-  while (appletMainLoop()) {
-    monitor_emit(0,0,0,0,0);
-    padUpdate(&pad);
-    u64 down = padGetButtonsDown(&pad), held = padGetButtons(&pad);
-    if (down & HidNpadButton_Plus)
-      break;
-    if (down & HidNpadButton_X) {
-      nx2_catalog_free(&catalog);
-      nx2_catalog("sdmc:/games", &catalog);
-      selected = 0;
-    }
-    u64 up = HidNpadButton_Up | HidNpadButton_StickLUp,
-        dn = HidNpadButton_Down | HidNpadButton_StickLDown;
-    int next = (held & up) ? -1 : (held & dn) ? 1 : 0;
-    u64 tick = armGetSystemTick();
-    int move = 0;
-    if (next && ((down & (up | dn)) || next != direction)) {
-      move = next;
-      repeat = tick + armNsToTicks(350000000);
-    } else if (next && tick >= repeat) {
-      move = next;
-      repeat = tick + armNsToTicks(100000000);
-    }
-    direction = next;
-    if (catalog.count && move)
-      selected = move < 0 ? (selected ? selected - 1 : catalog.count - 1)
-                          : (selected + 1) % catalog.count;
-    if (catalog.count && (down & HidNpadButton_A)) {
-      const Nx2Game *game=&catalog.items[selected];
-      if(held & HidNpadButton_R){
-        horizon_preflight(game);
-      }else if (game->is_nup == 2) {
-        monitor_title=game->id;
-        /* A catalog rejection is still a launch attempt. Give it the same
-         * independent diagnostic file as every normal folder/NUP run. */
-        FILE *rejected=fopen("sdmc:/BackupLoaderMKW-nup.log","w");
-        FILE *crash_rejected=fopen("sdmc:/BackupLoaderMKW-crash.log","w");
-        if(rejected){
-          row(rejected,"BackupLoaderMKW experimental 0.15\n"
-             "REPORT_FORMAT version=3 source=nup crash_path=sdmc:/BackupLoaderMKW-crash.log\n"
-             "NUP_CATALOG_REFUSED name=%s path=%s title=%016llx reason=%s\n",
-             game->name,game->root,
-             (unsigned long long)game->id,game->nup_status);
-          fclose(rejected);
-        }
-        if(crash_rejected){
-          row(crash_rejected,"NX2_CRASH_DIAGNOSTIC version=2 game=%s guest=%016llx host=0400c3f00006e000\n"
-            "REPORT_FORMAT version=3 source=nup primary_path=sdmc:/BackupLoaderMKW-nup.log\n"
-            "PRELAUNCH_STOP phase=CATALOG_VALIDATION reason=%s\n",
-            game->name,(unsigned long long)game->id,game->nup_status);
-          fclose(crash_rejected);
-        }
-        snprintf(outcome,sizeof(outcome),"NUP not ready: %.95s",game->nup_status);
-      } else {
-        /* A = native with PresentTexture tracking; L+A = full native;
-         * ZR+A = instrumented. ZR takes priority over L. */
-        int mode = (held & HidNpadButton_ZR) ? 0 :
-                   (held & HidNpadButton_L) ? 2 : 1;
-        run(game, (held & HidNpadButton_B) != 0, mode);
-        monitor_emit(0,0,0,0,1);
-      }
-    }
-    draw(&catalog, selected);
-    svcSleepThread(16666667);
+  padConfigureInput(1,HidNpadStyleSet_NpadStandard);padInitializeDefault(&pad);
+  Nx2Game game={0};int detailed=0,requested=0,report=0;
+  for(int i=1;i<argc;i++){
+    if(!strcmp(argv[i],"--ui-launch"))requested=1;
+    if(!strcmp(argv[i],"--ui-report"))report=1;
   }
-  monitor_emit(3,0,0,0,1);
-  nx2_catalog_free(&catalog);
-  consoleExit(NULL);
-  return 0;
+  int valid=requested && nx2_launch_request_read(&game,&detailed) && game.is_nup!=2;
+  /* One-shot: a failed preparation/reboot never silently relaunches a title. */
+  remove(NX2_REQUEST_PATH);
+  if(requested&&!valid)snprintf(outcome,sizeof(outcome),
+      "Launch request incompatible or unreadable. Rebuild and copy both GUI and runtime NROs.");
+  if(valid && game.is_nup!=2){
+    nx2_minimal_logging=!detailed;
+    FILE *flag=detailed?fopen("sdmc:/kaihen/nx2-monitor.flag","rb"):NULL;
+    if(flag){monitor_enabled=1;fclose(flag);monitor_emit(0,0,0,0,1);}
+    run_native(&game,0,1);
+  }
+  if(report){screen("Reading system error reports...");nx2_system_error_read(outcome,sizeof(outcome));}
+  if(valid || report || requested){
+    if(!consoleGetDefault()->consoleInitialised)consoleInit(NULL);
+    consoleClear();printf("%s\n%s\n\nA / B: return to library\n",report?"System report export":"Launch preparation stopped.",outcome);consoleUpdate(NULL);
+    while(appletMainLoop()){
+      padUpdate(&pad);if(padGetButtonsDown(&pad)&(HidNpadButton_A|HidNpadButton_B))break;
+      svcSleepThread(16666667);
+    }
+  }
+  if(envHasNextLoad())envSetNextLoad(NX2_GUI_PATH,NX2_GUI_PATH);
+  consoleExit(NULL);return 0;
 }

@@ -47,6 +47,8 @@ echo "[BUILD] Native Switch 2 NRO with libounce..."
 rm -f probes/game-launch/BackupLoaderMKW.nro
 make -C probes/game-launch -j2
 test -s probes/game-launch/BackupLoaderMKW.nro
+make -C probes/library-ui -j2
+test -s probes/library-ui/BackupLoaderMKW-UI.nro
 echo "[VERIFY/PACKAGE] Switch 2 header validation and JPEG ASET embedding..."
 python3 scripts/package-current-test.py --root "$ROOT"
 echo

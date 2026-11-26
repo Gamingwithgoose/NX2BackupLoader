@@ -3,6 +3,8 @@
  *    test_resolve_capacity.c ../source/resolve.c -o test_resolve_capacity
  * Portable synthetic SVC wrappers, no Switch 2 hardware or game data. */
 #include "resolve.h"
+#include "native_compat.h"
+uint32_t nx2_native_compat;
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

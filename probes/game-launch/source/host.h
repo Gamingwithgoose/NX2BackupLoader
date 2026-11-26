@@ -10,6 +10,7 @@ typedef struct {
 } Nx2HostFile;
 /* Virtual guest object capacity is intentionally larger than lightweight SDK needs. */
 #define NX2_HOST_HANDLE_LIMIT 512U
+#define NX2_ROM_OPEN_LIMIT 64U
 typedef struct {
   FsFileSystem *sd;
   FILE *report;
@@ -19,7 +20,9 @@ typedef struct {
     FsFile file;
     uint64_t used;
     uint32_t index, open, logged;
-  } cache[16];
+  } cache[NX2_ROM_OPEN_LIMIT];
+  Nx2UserId selected_user; /* real hbloader UID storage, or explicit SDK UID */
+  uint32_t selected_user_source;
   uint64_t guest_program_id; /* provenance for guest-only cache metadata */
   uint64_t calls, bytes, save_bytes, lines;
   uint64_t nup_large_reads;

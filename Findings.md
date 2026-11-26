@@ -1417,3 +1417,500 @@ Changed generic/profile mount completion to enqueue an owned RPC_SAVE_MOUNT diag
 New save_notice_enqueued/served/dropped counters and SAVE_NOTICE_STATE log rows distinguish guest queue acceptance from host processing. Existing phase3 now means notice enqueue returned, NOT mount-RPC reply receipt; phase4 remains bridge-ready-to-return, not proof the game resumed. New text SAVE_PROFILE_MOUNT_NOTICE_QUEUED / SAVE_MOUNT_NOTICE_QUEUED logs actual registration result in a and queue acceptance in b. Marker SAVE_BOUNDARY_TRACE_BUILD version2 mount_notice=nonblocking actual_fs_registration=synchronous. Old version1 logs must retain their old phase3 interpretation.
 
 Updated diagnostic queue test SOURCE for typed text records, preserving a failed real mount result0x202 and caller/profile/name ownership, and bounded full-queue notice drops. Did NOT compile or execute the fixture or any other binary, build/package an NRO, or change prior release artifacts, honoring user preference. Static review and git diff --check pass; compile/runtime validation pending user's build.bat/console test. No claim this resolves OOT, but it removes the logging handshake from the path rather than merely repeating the old sample. Findings/handoff appended; no push/commit. Test normal A with existing GPU flag and send gameplay/crash/host-end logs, confirm boundary version2.
+
+
+## 2026-11-25 - OOT GPU timeline correction, resolver coverage, and menu-only ERPT recovery (SOURCE ONLY)
+
+Reviewed the complete latest normal-A/imported-save run: BackupLoaderMKW-gameplay(20261125-203820).log (451 lines), BackupLoaderMKW-crash(20261125-203820).log (4548 lines), and BackupLoaderMKW-host-end(3).log (512-byte header only). Marker SAVE_BOUNDARY_TRACE_BUILD version2 confirms the nonblocking save-notice experiment was tested. No captured CPU fault, SDK break, terminal host event, or frame presentation. Absence of these observations does not establish GPU failure or deliberate exit.
+
+Corrected chronology: shared GPU tick records place successful texture acquisition near 2.18 seconds and submit/finish returns near 2.73 seconds after launch began. Resource/asset activity continues to save_mounted around 37.981 seconds. Thus the final observed submit/finish are early startup operations, not proof of a hang immediately before presentation. There is no outstanding traced GPU call demonstrated at the last checkpoint. Device init 0/0 means unobserved, not failed. Screenshot suspicion rankings are hypotheses, not measured likelihoods.
+
+Boundary-v2 gameplay text last shows profile phase10 and notice counters0, but the later forced save_mounted resource checkpoint requires late_trace_active. Both writers of this flag are reached only following a successful real SDK registration / successful-save notice. This supports completed registration, while it does not prove guest control returned or SaveDataMgr executed. Earlier phase/counter rows may be stale: resource sampling occurred before the normal phase rows, and rapid termination can cut off subsequent writes. Current source now flushes SAVE_REGISTER_SUCCESS_CHECKPOINT to both reports before those resource queries, with independently sampled phase/result/caller/notice counters and explicit guest_return_not_proven. No guest wait added.
+
+Latest resource evidence: remote GetInfo31=201326592 (192MiB), GetInfo32=25559040 (24.375MiB), selected declaration96MiB; final management free65888256 bytes and free_threads245. These checkpoints do not indicate exhausted host remote/management/thread quotas. They cannot rule out an individual failed allocation, game subheap problem, or GPU-specific constraint between checkpoints. The previous blanket general-memory likelihood ranking was too confident.
+
+Source changes in bridge.c: shared observe_nvn_proc policy now applies to direct bootstrap results as well as GetProcAddress results. Direct bootstrap resolution previously bypassed device-init and other selected wrappers. Normal A without the explicit GPU flag still observes only PresentTexture; A with flag and ZR+A retain their selected stages; L+A still returns native pointers. Each of27 wrapper installations plus GetProcAddress now checks for its own wrapper before replacing the stored native target, preventing self-recursive originals on repeated/cached resolution. Initialization/getproc target loads use acquire atomics consistently with release stores. All original arguments, results and call ordering preserved; no forced finish/present, fake initialization or resource changes. This fixes instrumentation coverage and a potential recursion hazard; neither hazard is proven to have caused OOT failure. Marker NVN_LOOKUP_COVERAGE version2.
+
+New system_error.c/.h: Y from launcher menu reads erpt:r, outside all guest/GPU/storage workers. A pre-execution marker SD:/BackupLoaderMKW-last-launch.txt stores actual host/guest IDs and user-clock time; failure to create marker is logged. Recovery requires a valid marker, exact host ProgramId, and report time from start-5 through start+600 seconds (also not in the future). No report ordering assumed. A matching report is explicitly labelled HOST_TIME_CANDIDATE, attribution=host_process_only, not proof of guest/root cause. A new source-built run is needed first; old runs without markers cannot be attributed by this reader. Press Y after reopening launcher BEFORE starting another game, which overwrites the marker.
+
+ERPT adapter only creates report/manager interfaces, lists, opens, reads, queries size, and closes. Never sets flags, deletes/cleans reports, pops error notifications, or changes system configuration. Uses the known50-entry/0x70 ReportInfo wire layout and 20-byte IDs; incompatible data is rejected. Bounded1MiB report reads in16KiB chunks; complete flat MessagePack map parser with input/token/depth/container/array bounds, exact program ID parsing and duplicate selected-field rejection. Export only error code, host/guest IDs, time, abort type, mapped address, selected GPU fault fields and bounded CPU-register/exception/backtrace arrays to SD:/BackupLoaderMKW-system-error.log. Unknown fields including serial/account/network context are skipped, not exported. No raw report export. Read/parse/service failures remain explicit and no-match does not prove no fault. ERPT permissions and Switch2 format are hardware-unvalidated; the known public protocol may differ on this firmware.
+
+Primary protocol references reviewed: Atmosphere-NX/Atmosphere libraries/libstratosphere/include/stratosphere/erpt/erpt_types.hpp, sf/erpt_sf_i_manager.hpp, sf/erpt_sf_i_report.hpp, erpt_ids.autogen.hpp, and source/erpt/srv/erpt_srv_formatter.hpp / erpt_srv_report.cpp. nx2-relink runtime/erpt.c prompted recovery direction; its timestamp-only raw byte search is not used. Implementation is independent and stays within existing project GPL-2.0-only source.
+
+Validation: source/diff review and git diff --check only. Added test_system_error_parser.c fixtures for valid maps/arrays, every truncated prefix, duplicate/malformed IDs, trailing bytes, negative scalar, oversized/deep inputs, and unknown private fields. Per user instruction NO compilation, fixture execution, build, NRO conversion or packaging performed; compile/hardware validation pending. No binaries changed, no commit/push. User runs build.bat; test same normal A/GPU flag, then reopen launcher and press Y after failure. Collect gameplay/crash/host-end plus new system-error log. Changes do not establish an OOT launch fix.
+
+
+## 2026-11-25 - Latest OOT run: ERPT host/time match2168-0002; bootstrap device init confirmed (SOURCE ONLY)
+
+Read all five latest uploaded files: gameplay(8)436 lines, crash(8)4494 lines (all five pages), host-end(2)512-byte header, last-launch marker61 bytes, system-error630 bytes/10 lines. SYSTEM_ERROR_RUN_MARKER written1 and NVN_LOOKUP_COVERAGE version2 confirm new source-built run. Same guest0400486024dec000 under host0400c3f00006e000, normal A/mode1 with GPU flag. GPU device initialization now1/1 result1 (native success), queue7/7 result1, window1/1 result1; earlier device0/0 was indeed bootstrap observation gap, not evidence of failed initialization. Submit/finish/acquire1/1, no presentation. Fixing observation did not make OOT launch.
+
+New ERPT readback WORKS on hardware: erpt:r, manager and list all return0. Marker start1795656120, read1795656167, matching report timestamp1795656156 (36 seconds after marker). Reports8263 and18500 bytes both read completely. First failed old strict parser; second parsed fully and matched host ProgramId and startup window, ErrorCode2168-0002. No whitelisted CPU/register/backtrace/mapped-address/GPU fault fields were present in that matching parsed report. This is a concrete matched host fault candidate, stronger than previous blank termination trace, but not proof of OOT instruction/component responsible. 2168-0002 is module168 description2/DataAbort in public Atmosphere libraries/libvapours/include/vapours/results/creport_results.hpp; creport_crash_report.cpp maps svc DebugException_DataAbort to that result. Invalid CPU data access is the reported fault class, not a diagnosed allocator/GPU/save root cause. Do not interpret it as undefined syscall (2168-0008), out-of-memory, or a confirmed GPU synchronization deadlock.
+
+Latest gameplay ends near35-second heartbeat, rpc666, rom127465821, no frames, profile operation43 success and pending read. Persisted save-gate remains0, no successful-register checkpoint or save_mounted resource observation in THIS run. Unlike prior203820 logs, successful filesystem registration cannot be inferred here. Last full host snapshot elapsed33307ms (runtime clock), no native CPU handler event, host-end still header only. Final resource observation elapsed35332ms uses launch-start clock: management free65945600/free_threads254; remote total192MiB/used24.375MiB, guest declaration96MiB. No observed quota shortage at these samples; failure after them remains possible. Never present old successful save_mounted inference as a current-run observation.
+
+Source-only recovery update SYSTEM_ERROR_READ version2: for fully parsed, exact-host/time matched reports, log at most128 sanitized root-field identifiers, MessagePack type tags and encoded byte lengths; UNKNOWN VALUES NEVER EXPORTED. Also log plain_cpu_fields bitmask (registers/exception/backtrace) and parser rejection's known field/type/offset. Can distinguish missing, renamed or encrypted-context field shapes without guessing schema or exporting serial/account/network strings. Unknown report schema still rejected for attribution; no raw report dump/decryption or expanded services. Parser fixture source adds rejection metadata and schema-value redaction assertions. No compiled fixture executed and no build/NRO/package/binary writes performed; diff/source review only.
+
+NEXT: user builds with build.bat, replaces NRO, reopens launcher and presses Y BEFORE another game launch. Existing last-launch marker and retained system reports can be reused, even if more than600 seconds elapse before reading: window bounds report time relative to original marker, not read delay. No new OOT crash is requested at this step. Do not delete/overwrite marker; launching another game overwrites it. Send updated system-error.log. Results may show encrypted/absent details; do not promise a recoverable fault address. Findings/handoff/game notes appended only, no commit/push.
+
+
+## 2026-11-25 - ERPT v2 upload received: attached dump flag and report-reader limits (SOURCE ONLY v3)
+
+Read BackupLoaderMKW-system-error(2).log completely:11944 bytes/146 lines, SYSTEM_ERROR_READ version2, same original marker1795656120 and matching host report1795656156/error2168-0002. Upload is new and correct. Read at1795656558; original report remains accessible without reproducing OOT. Main report464 root fields; v2 prints first128, omits336. Plain CPU fields0 across the full parsed map, not just printed prefix. CrashReportFlag, AbortFlag, ApplicationAbortFlag and NxdmpIsAttached are MessagePack true(c3); GpuCrashDumpIsAttached is false(c2). This marks a separate crash dump as attached, but does not show that it is readable, unencrypted, or that any specific dump format/address is recoverable. EncryptionKeyGeneration/EncryptionKeyV1 metadata present; it does not by itself prove the missing CPU context is encrypted. No CPU fault address/root cause established.
+
+Four other time-window reports (three9941 bytes, one8263) finish near an unknown binary value. Previous parser diagnostic conflated structurally complete reports missing required ErrorCode/ProgramId with malformed/unsupported reports. Until v3 is tested do not assert which reason applies. Source v3 records structural completion separately: complete maps lacking crash identity are REPORT_IGNORED/missing_identity, never attributed; malformed/truncated data still rejected. Does not loosen exact-host/time gating.
+
+Source-only Y reader v3 now scans technical keys throughout the map even past128 ordinary keys (max32 additional allowlisted keys), and exports only explicit technical numeric/boolean values: abort/attachment flags, SystemPhysicalMemory/Thread/Event/TransferMemory/Session limits and peaks, encryption generation. Encryption and unknown string/binary values remain omitted. This can compare crash-time resource peaks with limits without guessing from the final living sample. It is not an allocator or graphics behavior change.
+
+For fully parsed host/time matches only, v3 uses erpt:r manager cmd6 GetAttachmentList (firmware20+ separate out_count, array of max5 0x58-byte AttachmentInfo), validates owner ReportId, opens each listed attachment via session cmd2/attachment cmd0, queries actual size cmd5 and closes cmd4. Reports bounded attachment classification/listed/actual size/results; names and attachment BODY ARE NOT EXPORTED OR READ. No flags/deletions/cleanup/pop/submission/config changes. Public Atmosphere interfaces/types/manager implementation reviewed, Switch2 compatibility still hardware-unverified. Useful next result is whether NXDMP attachment exists/readable and which quota peaks occur; it does not yet decode its private/unknown dump format.
+
+Parser fixture source extended for valid maps without crash identities versus truncation, allowlisted boolean/quota output and prior redaction checks. Source review/git diff --check only; no compile/fixture binary execution/build/package/commit/push. Same existing marker/report can be reused: user build.bat, copy NRO, reopen menu and press Y before launching another game. New output starts SYSTEM_ERROR_READ version3. No new OOT crash requested. Handoff/game notes appended only.
+
+
+## 2026-11-25 - ERPT v3 new launch matched; attachment query reports capacity error (SOURCE ONLY v4)
+
+Read newest Pasted text(2).txt libfile_fac82b956b18819187666da5f9901d19 completely:156 lines, SYSTEM_ERROR_READ version3. This is the system report user already sent; earlier response lagged attachment availability, not a request to resend old gameplay. Current marker1795656952, read1795656997, matched host report1795656989 (37sec after marker), ErrorCode2168-0002, plain_cpu_fields0. Main17898 bytes read/parsed successfully. CrashReportFlag/AbortFlag/ApplicationAbortFlag/NxdmpIsAttached/SyslogIsAttached true; GPU dump attachment flagfalse. These flags are not proof of a particular root cause or dump readability.
+
+Recorded SYSTEM resource peaks/limits: physical memory1237569536/1454374912 bytes (1180.23828125/1387MiB), threads867/1076, events1179/1600, transfer memory49/136, sessions1194/1527. All recorded peaks below respective limits. These are named System fields and are not established guest/process budgets; do not turn them into evidence that every allocation must succeed or override actual kernel limits. Lack of GPU dump does not exclude CPU memory access in graphics code.
+
+ATTACHMENT_LIST result00006693 count0: decoded module147 description51. Primary Atmosphere libraries/libvapours/include/vapours/results/erpt_results.hpp defines TooManyOutAttachments=51, separate from OutOfMemory5/InvalidArgument7/NotFound8. This is a reader buffer capacity rejection, not proof of absent attachments, inaccessible service, or the cause of OOT's DataAbort. The old public max5 is insufficient for the actual response or its current record layout. Actual attachment count/layout remains unvalidated.
+
+Source-only reader v4 replaces fixed5-entry list with bounded8/16/32/64 adaptive capacity, retrying ONLY exact native0x6693. Each native attempt/result/capacity retained in log. Other native errors not retried/translated. Keeps provisional public0x58 record size; validates returned count and ALL owner IDs before opening any attachment. Changed stride/unknown layout yields explicit layout_unconfirmed and no opens; never guess IDs. Same metadata-only Open/GetSize/Close, no body reads/mutations. This fixes a concrete limitation in the diagnostic reader; not an OOT execution fix. No new guest/game behavior changes.
+
+Validation: source review/git diff --check only; no compiler/fixture execution/NRO/build/package/commit/push. User runs build.bat/copies current NRO and presses Y with current SD last-launch marker retained; no new OOT crash needed if marker remains available. Output version4. Handoff/game notes appended only. Fault PC/address and root cause remain unavailable.
+
+
+## 2026-11-25 - Actual v4 report: two attachments, old owner check fails; source-only UUID correction v5
+
+Newest Pasted text(4).txt libfile_b9513c2a9a888191b015d5f55a9ad21e read completely157 lines. Actual version4 adaptive marker, fresh marker1795657989, report1795658025 (+36sec), same host0400c3f00006e000/error2168-0002 and System resource limits/peaks as preceding report, no plain CPU fields. ATTACHMENT_LIST succeeds0/count2/capacity8/record_bytes88. ATTACHMENT_LAYOUT owner_mismatch_index0 prevents opening any attachment. Previous Pasted text(3) was a fresh read produced by v3; do not blame user for resending files or claim current v4 absent. Build/package source paths inspected read-only; no proven build failure found.
+
+Important correction: previous0x6693 did NOT establish more thanfive actual attachments. Native successful list now says2. Additional primary source review of Atmosphere erpt_srv_journal_for_attachments.cpp shows firmware20+ minimum output capacity10 records independent of actual count. TooManyOutAttachments can therefore be a minimum-capacity check. Why native v4 succeeded with704bytes/public-eight88-byte slots is not established; actual Switch2 layout/count semantics remain provisional. No invented0x40/0x138/new ID layouts adopted.
+
+Primary erpt_types.hpp ReportId/AttachmentId equality uses memcmp over sizeof(uuid)=16 bytes, while wire IDs occupy20 bytes. Our20-byte owner check could incorrectly compare reserved tail data. This is a confirmed reader/protocol inconsistency, not proof that reserved bytes explain this exact hardware mismatch.
+
+Source reader v5: starts capacity16 (covers public minimum10), still grows only exact native0x6693 to bounded64. Owner identity compares16-byte UUID while preserving full20-byte returned IDs for Open. Selects only an unambiguous, fully validated public88-byte record array or documented legacy8-byte count/reserved-prefixed array. Every owner UUID, nonzero attachment UUID, record extent and nonnegative size must validate before ANY Open. No arbitrary offset/stride/ownerless-ID guessing. Unknown format logs capped offsets of already-known owner UUID (not raw IDs/names/body) and stops without opens. This distinguishes a stricter-than-protocol owner check from genuinely different wire structure without loosening attribution. Metadata Open/GetSize/Close only, no attachment body or private values exported.
+
+Source fixtures added for owner wire-tail differences, one wrong owner, direct/prefixed arrays, truncation and bad prefix. No compilation/fixture execution/build/package performed per source-only preference. Static diff/source review only. User rebuild/copy then Y can reuse retained latest marker/report, output version5. No new OOT launch required when marker remains on SD. Console validation and fault address/root cause still pending. Docs append-only, no commit/push.
+
+
+## 2026-11-25 - Confirmed newest v5 report; no owner UUID in native buffer (SOURCE ONLY experimental v6)
+
+Resolved latest upload through current list rather than stale prior text: /NX2BackupLoader/Pasted text(5).txt libfile_79e905347e0c819190cd5d6d5e630cd6,12604 bytes/158 lines, fully read. Actual SYSTEM_ERROR_READ version5. New marker1795658459, host report1795658495 (+36sec), same2168-0002, plain CPU fields0 and unchanged reported System quotas/peaks. Attachment list succeeds/count2/capacity16, legacy layout unconfirmed, known-owner UUID scan0 over1408 bytes. Sixteen-byte UUID correction did not recover attachments; reserved-byte comparison is not established explanation for this hardware mismatch. No attachment opened/body read; fault address remains unknown.
+
+Reviewed current public Atmosphere ERPT interfaces/types/journal, upstream nx2-relink erpt runtime, Switchbrew documentation and code search for newer implementations. Public legacy88-byte owner-bearing records do not explain the observed ownerless buffer; no authoritative Switch2 compact response definition found. Do not claim a modern ABI was verified. Possible buffer/record differences remain hypotheses; owner absence alone does not prove any particular layout. The first broad code-search query returned unrelated results and was narrowed; no unrelated code adopted.
+
+Source-only reader v6 adds experimental read-only validation of ONE compact64-byte candidate: wire ID20 at0, flags at20, signed size at24, bounded filename at32. This is inferred, not documented. Enabled only when no known report UUID appears anywhere and all records pass bounds, nonzero distinct UUIDs, flags<=3, positive sizes and nonempty bounded ASCII filename-token checks. Candidate IDs originate solely from the native list request scoped to exact matched report. Native Open/GetSize/Close results and exact listed/actual-size comparison are logged for EVERY candidate; all-record success is reported explicitly, failures remain failures. No native success synthesized, no attachment body reads or raw ID/name/private payload export. Legacy owner-bearing layouts remain supported and require all owner checks. If compact structural checks fail, no IDs opened; logs include only buffer nonzero extent/count and candidate rejection. This diagnostic experiment is not proof of compact format or OOT fix.
+
+Parser/source fixtures extended for compact candidate acceptance, truncation, duplicate IDs, invalid flags/name/negative size. No compilation/test execution/build/NRO/package performed; static review and git diff --check only. Findings/handoff/game notes appended, no commit/push. User builds/copies and uses menuY with retained marker/report for version6; no new game test requested. Further attachment decoding may still require an established format or unavailable encrypted context; no promise of recoverable CPU PC.
+
+
+## 2026-11-25 - Actual v6: compact64 rejected, wire metadata needed (SOURCE ONLY v7)
+
+Newest current list resolved Pasted text(6).txt libfile_a61f515db274819182939c3aeff7795c,12930 bytes/162 lines, fully read. Headerversion6 verified. Same retained marker1795658459/report1795658495/error2168-0002, read1795658801, no new game launch needed for this observation. Attachment list0/count2, no known owner UUID; buffer1408 has60 nonzero bytes with final nonzero end96. Compact64 structural_match0, no IDs opened/body read. This rejects the implemented compact64 candidate, not proof of another specific stride (e.g.48). No CPU address/root cause recovered. Reported System quotas unchanged.
+
+Source v7 captures bounded attachment-list WIRE METADATA on unknown layouts: first ceil(nonzero_end/16)*16 bytes capped256 (minimum16, never beyond offered buffer),16-byte hex rows plus native count. This scoped list metadata can contain opaque attachment IDs/technical filenames/sizes; it is deliberately distinct from a raw report or crash/syslog body. No attachment Read command is issued, no dump/log payload exported, no service flags/cleanup/deletion or guest behavior changes. Header now says report_and_attachment_bodies=omitted and attachment_wire_metadata_max=256 rather than ambiguous raw_payloads wording. Purpose is to determine the actual response layout directly, not add another guessed stride. Experimental compact64 remains labelled/rejected unless strict checks pass; no success fabricated.
+
+Source/diff review only; no compilation/test execution/build/package/commit/push. User builds/copies then menuY with retained current marker, outputversion7, no new OOT run requested. Existing v6 results remain valid; cannot claim attachments opened or OOT fixed. Handoff/game notes appended only.
+
+
+## 2026-11-25 - V7 wire bytes identify60-byte attachment records; source-only v8 diagnostic export
+
+Newest /NX2BackupLoader/Pasted text(7).txt libfile_d4991cd641e08191a3f37b3267b1ff98,13341 bytes/167 lines, fully read; headerversion7 verified. New marker1795659132/report1795659168 (+36sec),same hostDataAbort2168-0002, no plain CPU fields. Native list2,60 nonzero bytes ending96. Exact wire bytes now resolve a consistent60-byte record: AttachmentId20 at0, flagsU32 at20, sizeU32 at24, filename32 at28. First flags2/size0x6713=26387/name syslog.bin.lz4. Second record begins offset60, flags2/size0x3985=14725/name nxdmp.gz at88. Owner ReportId absent. This explains why legacy88 and hypothetical64 profiles failed. Captured bytes end at96 due trailing filename zeros, not a48-byte stride. Layout is console-observed, not yet validated by native attachment Open/GetSize. Do not claim bodies read or actual dump fields recovered yet.
+
+Source reader v8 adds strict observed-wire60 recognition (bounds/count/nonzero-distinct UUIDs/flags/positiveU32 size/filename-token checks). Report-scoped IDs are opened using native service; exact native GetSize must match listed size before reading. Legacy owner-bearing records remain supported; experimental64 remains METADATA ONLY. No fabricated native success or ignored size mismatch. Selects newest fully parsed exact-host/time matched report FIRST and captures attachments only for that selected report, preventing old matches overwriting newer exports.
+
+After real ID/size validation, v8 exports ONLY exact nxdmp.gz and syslog.bin.lz4 names verbatim, max1MiB each,16KiB reads, every result/short read/write/close checked. Files staged in .part then rename published; no complete-success claim on I/O/rename failure. SD root output BackupLoaderMKW-crash-dump-<report_timestamp>.gz and BackupLoaderMKW-syslog-<report_timestamp>.lz4; exact paths/native results/byte counts/complete flags in system-error.log. Timestamp disambiguates runs. Other attachment types and raw main report not exported; system ERPT flags/deletions/cleanup/config untouched. This intentionally advances from metadata-only to the two user-owned diagnostic bodies needed for investigation. Decompression/offline CPU/dump decoding still pending and may find encrypted/unsupported context. Does not fix OOT execution itself.
+
+Fixture SOURCE adds actual observed sizes/names/stride with synthetic UUIDs, plus truncation/duplicates/flags/zero-size and wrong64-profile checks. Source review/git diff --check passes; no compilation/test binary execution/build/package/commit/push. User runs build.bat/copies NRO and menuY with retained marker; no new OOT launch required if marker remains. Collect version8 system-error plus both timestamped compressed diagnostic exports (or failure log if exports fail). Docs append-only.
+
+
+## 2026-11-25 - V8 hardware validates wire60, retrieves both matching diagnostic bodies
+
+Current list resolved BackupLoaderMKW-system-error(3).log libfile_70331fb9296c8191a0e450870998f44a,14203 bytes, complete text read. Headerversion8. Retained marker1795659132/report1795659168, same host/time2168-0002. Native Attachment Open/GetSize succeeds for both observed60-byte records: syslog26387/native26387, nxdmp14725/native14725. Full Read results0, exact byte counts, write/close success and published complete1 for both timestamped SD files. ATTACHMENT_NATIVE_VALIDATION stride60 native_size_matches2 failures0 all_records_validated1 diagnostic_exports2. This confirms actual console wire60 and successful collection, not an OOT launch fix or decoded fault PC.
+
+User supplied both exact-sized attachments: BackupLoaderMKW-crash-dump-1795659168.gz libfile_e838c126e7808191a5de53fdff37cb7b (14725 bytes), BackupLoaderMKW-syslog-1795659168.lz4 libfile_dc9bcddcd11081918093e0eee7e61690 (26387 bytes). Binary text read has no readable contents as expected. No decompression or address discovery yet: available download helper fails DNS before transfer (also tools/list discovery DNS), lower-level transfer attempt likewise DNS; alternative Node runtime reports unusable CODEX_CLI_PATH. Both uploaded originals remain available, but no binary bytes successfully materialized locally. Requested local Windows folder path so same files can be read directly without another console launch/build/upload. Do not infer corrupt exports from this analysis-side connectivity failure.
+
+No source/game changes, compilation/test execution/build/package/commit/push in this step. No further console testing requested. Need obtain local gz/lz4 bytes, bounded decompression then map captured fault PC/LR/backtrace to known host/guest modules; do not request another logger build before analyzing actual bodies. Docs appended only.
+
+
+## 2026-11-25 - V8 bodies analyzed locally; early raw exception-entry source experiment
+
+User supplied local folder release/switch after binary transfer failed DNS. Both exact source files read directly without modification. nxdmp14725 bytes SHA25699543c396b93c7bfcd0a2f60defe5535026ec5e45a5cb27fcf0ced383bd1a694; syslog26387 bytes SHA25645459505def483bcf250a929df6d0e784604b37907e29ffae51dc0a3c2ac0e48. Earlier transfer blocker is resolved by local access; do not request another upload or attachment-reader build.
+
+Syslog is a valid LZ4 frame: decoded71893 bytes. Bounded independent Python MessagePack decoder consumed the entire result into1597 variable-length event arrays,8425 integer/616 string/476 float fields. Event identifiers are opaque numeric values; strings include audio/thread/display labels. Host ProgramId appears in lifecycle records, but no explicit1192/0x4a8 scalar or recovered fault PC/GPR set was found. Checked values in known guest/NRO code range, including39-bit address stripping; no valid mapped code-address candidate recovered. This does not prove syslog lacks every indirect clue; format/message-identifier dictionary remains unavailable. Analysis intermediate/script under ignored .work/v8-crash-analysis.
+
+nxdmp.gz starts a5141e84 rather than gzip1f8b; no gzip/LZ4/minidump/NXDMP magic found, no printable16-byte strings, entropy7.9872bits/byte. Standard gzip rejects; bounded zlib/raw-deflate/gzip variants at selected wrapper offsets yielded no complete decoded stream. Report carries EncryptionKeyGeneration1/EncryptionKeyV1. Encryption is consistent with this evidence but NOT proven, and no decryption key/private format recovered. Do not call it a corrupt export, a decoded crash, or claim an instruction address. Public ERPT cipher/attachment sources reviewed; their older field encryption is not proof of exact Switch2 crash-body scheme.
+
+Local release/switch gameplay log additionally contains SAVE_REGISTER_SUCCESS_CHECKPOINT phase4/result0/enqueued1/served0, but neighboring last-launch file is1795657989, whereas attached postmortem report is1795659168. Treat this as an earlier/unpaired local run; do not silently attach its checkpoint to the newer dump. Neither proves game resumed after bridge return. Universal root cause remains unresolved; no GPU/resource/save-success probability invented.
+
+Concrete capture gap found in primary ouncebrew/libounce nx/source/runtime/exception.s: it pushes registers on incoming SP and calls svcGetInfo BEFORE switching to private exception stack/returning to invoke custom C handler. Our C fault observer therefore cannot cover failures before that point. This ordering is confirmed source behavior; no proof it explains OOT's missing handler event. nx2-relink runtime/fault_entry.s independently reports similar capture difficulty but its unsafe frame walk/stdio in entry was not copied.
+
+SOURCE ONLY experiment: new raw_fault.h/raw_fault_entry.S, raw RAM record in fault.c, linker --wrap=__libnx_exception_entry, host reporter in main.c. Leaf assembly captures original kernel120-byte context plus x9..x29/entrySP/LR/tick into one preallocated336-byte record BEFORE stack/SVC/library/TLS use; first-writer-only atomics. Kernel-provided x1 assumed valid per documented ABI after obvious NULL/alignment/canonical/overflow checks; no stack walk or arbitrary guest-pointer chase. No writes to HBL forwarding variable or kernel context. x0/x1 and x9..x30 preserved; scratchx2..x8 original values come from kernel context as in normal libounce decoder. All original exception handling is tail-forwarded.
+
+Fault-only grace waits for host persistence acknowledgement or at most100ms (3125000 Switch2 ticks), using bounded counter/yield loop, no blocking SVC/WFE. Healthy host loop writes RAW_EXCEPTION_CAPTURED PC/LR/SP/FP/ESR/FAR and module/text offsets to normal/crash reports, flushes core line, then acknowledges; secondary GPR rows follow. Original libounce C handler remains intact. This cannot guarantee capture if loader never forwards, kernel context ABI differs, host itself faults, or host cannot persist within grace. It is a diagnostic experiment, not a proven OOT/gameplay fix.
+
+Static checks only:336-byte shared offsets agreed via ctypes and production _Static_assert declarations, no SP dereference/BL/SVC/preserved-register destination in observer source, original tail branch retained,100ms tick math, Makefile source discovery/link flag and git diff --check reviewed. NO assembler/compiler/test executable/build/NRO/package/commit/push invoked per user preference. Native compilation/linkage/hardware still unvalidated. Next user build.bat and NEW normal-A OOT launch (GPU flag as before), then gameplay/crash/host-end logs. Look for RAW_EXCEPTION_ENTRY_BUILD version1 and RAW_EXCEPTION_CAPTURED. Existing Y reader remainsversion8; no extra postmortem-only rebuild requested. Docs append-only.
+
+
+## 2026-11-25 - New local raw-entry1 run still uncaptured; source-only private-stack native sidecar v2
+
+User supplied refreshed release/switch folder. All current gameplay446/crash4475/system-error174 lines, last-launch and host-end read. Marker1795660854, matching host report1795660890 (+36sec),2168-0002/no plain CPU fields. RAW_EXCEPTION_ENTRY_BUILD version1 present in both game logs; no RAW_EXCEPTION_CAPTURED/NATIVE_CPU_FAULT/terminal host event. Current host-end512-byte header only. This does not prove exception entry never ran: RAM snapshot publication and host-loop persistence were not separately observable after process death.
+
+READ-ONLY disassembly of user-built ELF verifies _start+0x8c branches to __wrap___libnx_exception_entry at0x357e0; original weak entry0x4b33c and raw recordBSS0xb5820 linked. This was binary inspection, not compilation/rebuild. Confirms produced executable routing, without claiming every runtime HBL/kernel path reaches it.
+
+New captured diagnostics export successfully: syslog1795660890 compressed281 bytes SHA256b54d05b108ac9bab8c546b3fa91d5364bca1e7229aac96a4f3b4a7374bd07fb1 ->326 bytes/7 complete MessagePack records, all audio-related labels/parameters, no resolved fault PC/registers. Dump14680 bytes SHA25611741388413b3311212de55e0915478d5a554cf8eab340e2df32a5986b7aa287 starts4ef01f19 and remains non-gzip; no successful dump decoding claimed. Same reported System quota peaks below limits; not verified guest/process allocation quotas.
+
+Concrete limitation in raw-entry1: only main/watchdog could persist captured RAM within100ms. Busy/blocked host loop, rapid kill, concurrent faults or missing entry could still erase evidence. Source raw-entry2 adds an owned native IFile sidecar opened/truncated/preallocated/flushed before guest execution: SD:/BackupLoaderMKW-raw-exception.bin. Prelaunch result logged as RAW_FAULT_TRACE_OPEN.512-byte prepared record NX2RAW02/version2/captured0/host/guest/record336/checksum0/footerRAW2END!. On captured DataAbort only (ESR class24/25), wrapper immediately switches to separate32KiB stack and calls one fixed512-byte native FsFileWrite Flush before original libounce handling. No stdio/malloc/open/guest RPC in fault callback; exact native result retained in RAM and logged by healthy host if possible. Saves/restores all SIMD vectors, FPCR/FPSR and incoming GPR9..29/LR, kind/context/SP around C callback. Initial raw copy still has no original-stack access/SVC/library calls. Original kernel context and HBL pointer unmodified.
+
+Captured binary flag1 contains exact336-byte raw record and FNV1a checksum. Failed/rejected/native writes are not claimed successful. Callback/native Flush may itself fail, fault or block; kernel may not deliver the exception here at all. Not an OOT execution fix, not a guarantee of capture, and100ms bound applies only to RAM-observer grace (native IPC has no imposed timeout). Original handler forwards when callback returns. Main-path capture still writes core line/acknowledges; non-DataAbort faults retain RAM/native-handler path without experimental writer. The preopened512-byte header distinguishes merely prepared sidecar from persisted capture.
+
+Added scripts/read-raw-exception.py: validates exact size/magic/version/footer/record size, captured flag, published state and FNV checksum before interpreting PC/LR/SP/ESR/FAR/registers. Header-only explicitly says no persisted exception. Offline Python fixtures pass prepared/valid record, truncation and checksum corruption; static observer check confirms no original-SP access before initial snapshot, single writer call and paired SIMD saves/restores. git diff --check passes. No assembler/compiler/native test executable/build/NRO/package/commit/push run. User source-only preference retained; userbuild.bat required. Next new normal-A OOT launch, preserve new bin plus gameplay/crash/host-end. Look for RAW_EXCEPTION_ENTRY_BUILD version2 and RAW_FAULT_TRACE_OPEN result0. Y reader stillversion8; no further postmortem-only iteration needed. Docs appended only.
+
+
+## 2026-11-25 - Raw-entry2 local result and save-interface ABI review
+
+Reviewed current release/switch files directly. Last-launch marker1795661618, host0400c3f00006e000, guest0400486024dec000. Gameplay457 lines and crash4458 lines both identify RAW_EXCEPTION_ENTRY_BUILD version2 and RAW_FAULT_TRACE_OPEN result0. The512-byte sidecar passes scripts/read-raw-exception.py header validation but captured=false: preparation header only, no persisted fault snapshot. Neither log contains RAW_EXCEPTION_CAPTURED, RAW_FAULT_TRACE_WRITE, NATIVE_CPU_FAULT or SAVE_REGISTER_SUCCESS_CHECKPOINT. Host-end is initialization header only. Current folder contains no system-error.log or timestamped crash/syslog attachments; do not pair the older1795660890 report with this new launch. This negative capture does not distinguish entry bypass from native writer failure/blocking or other termination paths.
+
+Latest save evidence: SAVE_PROFILE_ROUTE operation43 result0 primary1; last sampled SAVE_GATE_PROGRESS phase10 caller0xbe70c14, main return offset0x3b4fc14. This confirms successful profile-route host operation, not SDK registration completion or a fault at that exact instruction. Missing checkpoint remains an observation rather than a demonstrated save-mount cause.
+
+Read-only static review of user's original OOT SDK NSO: standard LZ4 segments, dynamic symbols enumerated via GNU hash (no DT_HASH). Register(unique_ptr<IFileSystem>&&) at0xc6cd0 passes ownership to FileSystemAccessor constructor0xc4500; bridge name plus address-of-owned-pointer calling convention matches inspected implementation, including ownership clearing. SDK virtual call offsets for free-space0x58, total-space0x60, OpenFile0x68, filesystem-attribute0xa8 match bridge vptr/table ordering. SDK attribute copy is192 bytes. Host RPC_SAVE_ATTRIBUTE forwards native fsFsGetFileSystemAttribute to caller buffer; object pool initializes vtable/handle/mode/profile state before return. No concrete ABI mismatch established by these checks; no speculative vtable/ownership patch made. Decoded intermediates remain under ignored .work/latest-raw2-analysis.
+
+No new gameplay fix established, no repeat unchanged test requested. Appended records only in this step; no native compilation/assembly/build/package/test executable/commit/push. Existing raw-entry2 experiment remains unproven; absence of a record is not evidence that resource exhaustion, GPU synchronization or save handling has been ruled in/out.
+
+
+## 2026-11-25 - Civ7 chain and upstream kaiHEN crash-reporter feasibility review
+
+User identified C:/Users/maver/OneDrive/Desktop/New Civ7. Read-only inspection: CivSwitchFS-kaiHEN JS acquisition/bootstrap chain, not native resident HEN source. README targets kaiHEN20261117.1; src/kaihen/state.mjs expects external SD bootstrap27948/ro23854/hen78765/game63424-byte binaries. These are expectations, not proof of currently installed SD binary version. src/kaihen/pm.mjs obtains pm:shell/pm:dmnt for startup/process lookup; no DebugActiveProcess/GetDebugEvent/GetDebugThreadContext/ReadDebugProcessMemory or creport/erpt implementation found in scanned source/tools/examples. No jailbreak file changed or chain/build/install executed.
+
+Separately inspected public ouncebrew/kaihen DEFAULT BRANCH (not verified identical to user's installed version): libkaihen/include/kaihen/plugin.h and PLUGINS.md support separate-process NSO plugins with FS/SM sessions; hen/README.md, kaihen.h and server.cpp expose homebrew filesystem/settings/caller process-handle/SM/loader/plugin commands, no debugger/crash-subscription command in reviewed interface. bootstrap/source/main.cpp reads the migration program's signed policy, packages HEN, and passes that same policy into plugin launch. common/policy_package.cpp copies main.npdm into package; no arbitrary debug permission grant established. Plugin is a possible out-of-process container, not proof of debugger authority. Some upstream plugin startup comments differ; use actual installed revision before implementation.
+
+Atmosphere-level collection would additionally require verified cross-process debug access, target debug eligibility and lifecycle coordination to collect context before termination; ordinary process handles and pm:dmnt lookup do not establish this. Next feasibility gate is actual installed HEN/plugin signed policy and debug access path. Do not prescribe a replacement jailbreak or another monitor installation until that gate is resolved. No game root cause/fix established. Sources: https://github.com/ouncebrew/kaihen/blob/main/libkaihen/include/kaihen/plugin.h ; https://github.com/ouncebrew/kaihen/blob/main/hen/source/server.cpp ; https://github.com/ouncebrew/kaihen/blob/main/bootstrap/source/main.cpp ; https://github.com/ouncebrew/kaihen/blob/main/common/policy_package.cpp .
+
+
+## 2026-11-25 - User SD staging copy inspected: actual binaries, policies absent
+
+Read-only C:/Users/maver/OneDrive/Desktop/Civ7Switch/autoloader-sd inventory: hbmenu11790974; kaihen/bootstrap.bin27948; hen-options.txt143; plugins/ftpd.nso79724; bin/game/main62943; bin/hen/main117805; bin/ro/main27175. Only ftpd plugin present in supplied copy; no crash monitor. Compared chain expectations game63424/hen78765/ro23854: different sizes, so chain README20261117.1 is not a reliable installed-version identification. Do not claim exact release from size alone.
+
+Binaries decoded read-only with standard LZ4 NSO segments. Build IDs: HEN546808ac3eab9421600820d9ed473f2f7f9348e2; RO0e4079e337d3798b49307b4da04a95e92ccea0e0; game dc32fd2194893703d3ac75fc06d670280319dd99; ftpd88230911f1198d04038ed4577c38195bd4c4392c. HEN SHA2567220bbc935cb364aeb1f7381d442ea4e22c6bf767e18e4eb5dd8a6bb44a9265a. HEN strings confirm hen-options.txt/log-sd/hen-log.txt and generated game/main.npdm path. Options file currently comments out log-sd. This is HEN activity logging, not proof of fault-register capture. RO ro:dmnt string alone is not proof of live debugger support.
+
+No NPDM, generated exefs.nsp, plugin package, runtime hen log/status or policies present in supplied directory. Executable NSO header/build ID alone cannot establish process kernel debug capabilities. Next read-only evidence is generated /kaihen/bin/game/main.npdm and /kaihen/bin/hen/exefs.nsp, plus plugin-packages/ftpd.nsp if retained on actual SD. Parse signed process policies before deciding whether plugin debug reporting is permitted; successful policy analysis still does not prove live attach works. No source or options changes, build, installation, console connection, or native execution.
+
+
+## 2026-11-25 - Actual SD process policies: direct debugger SVCs absent
+
+User supplied C:/Users/maver/OneDrive/Desktop/New Civ7/From Switch. Actual SD copy differs from earlier autoloader-sd staging: game/main63424, hen/main78765, ro/main23854, bootstrap27948. Sizes match Civ7 chain expectations, but no exact release inferred. Game buildIDb570d6d3f6e2c34fcf5c2a1548dbe07d4b05535e; HEN7efed0959b1bd6d1ddfef70851b2e8303e67fb0f; RO434d757cb4bed491704d7927b56e90e93f60f1af. Treat this actual-SD copy as authoritative over prior staging copy. nro-cleanup.txt reports hbmenu clean0threads/0bytes/0changedblocks, not an OOT crash report.
+
+Read-only bounded PFS0 extraction and capability decode: game/main.npdm1828 bytes SHA256e3eff180c8680aed549ed4ff5d87c48b323c08c1df7032bbcb19808f0dab059b; hen/exefs.nsp80443 SHA2569e80ba5b241e5bb15b28ba2ee6cb57c1a3dd487d9cf96734661628c8c57b8242 contains migration main.npdm1580bytes. Both packaged main executables match adjacent standalone main; game packaged policy matches standalone. Game ACI0 at0x560 KACrel0x1a0 size0x24, ACID block0x80 magic0x380 KACrel0x4b0 size0x24. HEN ACI0 at0x4e0 KACrel0x130 size0x1c; ACIDblock0x80 magic0x380 KACrel0x440 size0x1c. Switch2 ACID magic is block+0x300, so do NOT use old hactool fixed+0x200 placement; field offsets located from actual magic and verified against block bounds.
+
+All four requested/signed KAC lists decoded: none permit any SVC0x60..0x6f. In particular DebugActiveProcess0x60/GetDebugEvent0x63/GetDebugThreadContext0x67/ReadDebugProcessMemory0x6a are absent from both game and HEN ACI0 AND ACID. Kernel descriptors parsed by trailing-one type4 payload mask24bits/group upper3bits, using hactool source algorithm; syscall numbers cross-checked primary switchbrew/libnx svc.h. Game DebugFlags raw0x2ffff payload1 in both sections; HEN has no DebugFlags descriptor. Do not interpret old ForceDebug labels as debugger authority; post19 semantics differ, and SVC absence independently blocks direct calls in unmodified processes. No signature verification performed.
+
+This is concrete evidence ordinary NRO direct-debug collector cannot work under supplied game policy, and HEN direct-debug collector cannot work under supplied migration policy. Upstream plugins using same migration policy share that direct-call limitation, but no plugin-generated package supplied to verify exact installed plugin policy. It does NOT prove there is no privileged broker/alternate service or that kernel/loader behavior has no modifications; no runtime debug call attempted. Need an already-authorized debugger broker/appropriate signed-policy process plus target eligibility/lifecycle integration, or more extensive environment changes; recompiling NRO/plugin/HEN alone does not supply missing signed debugger privileges. No replacement jailbreak recommended or modified. Source refs: https://github.com/SciresM/hactool/blob/master/npdm.h ; https://github.com/SciresM/hactool/blob/master/npdm.c ; https://github.com/switchbrew/libnx/blob/master/nx/include/switch/kernel/svc.h . No build/install/native tests or SD file changes.
+
+
+## 2026-11-25 - Same-marker Star Fox working control compared with OOT
+
+User supplied refreshed release/switch containing Star Fox logs. Fully read3841 gameplay/4219 crash lines plus10-line Y reader report, marker, host-end and raw header. Marker1795665020 host0400c3f00006e000 guest0400e88025b1a000. Raw-entry2, NVN lookup2, save-boundary2 and resource3 build markers agree with OOT diagnostics; these markers do not independently verify byte-identical executable. Preserved all BackupLoaderMKW-* files under ignored .work/starfox-1795665020 before further console tests can overwrite them. Gameplay SHA256f95221c8ade539ae6b6cf7210384e9a29d2a98fccb273a91175c9954a9b354b6; crash3d3460cb0916605f7de462551c047cd30cd0b2d506f1b53ae2aab0e11ae6f496. Crash filename denotes routine diagnostic snapshots, not proof this working launch crashed.
+
+Working progression: save-profile-create operation45 then bind43 result0 primary1. Same profile mount bridge path as OOT. SAVE_REGISTER_SUCCESS_CHECKPOINT phase_sample4 result0 enqueued1 served1 dropped0 confirms SDK registration. Continued NVN queue/window work and successful present counts; final heartbeat62sec frames2773, present2773/2773, submit2778/2778, finish10/10, window acquire2775/2775. Device1/1 result1, queue1/1 result1, window2/2 result1. Last crash snapshot resource elapsed65387ms, fs reads4061/4061 lastresult0. No captured native/raw exception.
+
+Important counterexample to overinterpreting save phase: Star Fox gameplay lines354-359 show phase10/result0 while independent save_notice_enqueued is already1. Later lines394/408 show actual successful registration and phase4. Phase and counters are independently sampled and printed amid asynchronous work. Therefore phase10 alone is not a location of fault/hang or evidence SDK Register never returned. Latest OOT1795661618 had bind43success but enqueued0 and no successful-register checkpoint; this is a useful difference in observed coverage, not proof of save-related root cause. Earlier OOT unpaired phase4 runs remain separate.
+
+Y report version8 matches Star Fox marker: service/manager/list results0, two9941-byte reports ignored for missing crash identity, host_time_matches0 unreadable0 missing_identity2. No matched crash attachment to decode. This is expected for working control, but absence does not prove no possible fault. Header-only host-end/raw file likewise expected without observed fault.
+
+Source followup reviewed nx2_rpc slot acquisition, publication and completion, profile bind, object allocation, SDK registration and host poll. Request inputs published state2 with release, host consumes acquire, result/answer published state3 release and guest consumes acquire; completion does not depend on SEV delivery because guest uses bounded raw sleep/poll. No concrete new synchronization/ownership bug established. Star Fox confirms same path can work, not that all interleavings or SDK versions are compatible. Baseline supports existing diagnostics tracing real successful presentation/save registration; it does not establish GPU causation for OOT or prove failing allocation absent. No speculative gameplay patch or new test/build requested. Docs append-only, no build/native tests/commit/push.
+
+
+## 2026-11-26 - nx2-flow source comparison: concrete compatibility differences, OOT claim unverified
+
+User supplied https://github.com/Olmectron/nx2-flow . Reviewed main treef0861ffbeda36d73df6d59dcbac4b95281eea526, README, loader README, main.c/loader.c/game.c/svc.c/rom.c/ro.c/whole.c, build_loader.py and release notes. Current releasev0.2.1 contains loader0.1.1. Public README/release notes reviewed do not explicitly name OOT or give its build, host or a log; only generic anonymous game-success claims (four games tested, one seven-module/dynamic-module title reaches gameplay). Issue list at review has only cover download request. Do not assert OOT verified playable or infer its host/setup from source comments. README explicitly states host still matters and safest host is same title; tested kaiHEN20261117.1. This is nx2-relink runtime adapted to NUP loading, not an independent process launcher escaping host restrictions.
+
+1. Memory: flow main.c __libnx_initheap uses128MiB base plus384MiB loader room by default (room option128..2048MiB). Program reduces kernel heap and returns tail; real SetHeapSize/MapPhysicalMemory remain kernel operations. Our code already returns unused heap via vm_release.c too, so this is not a newly discovered missing release. Our heap_plan.h fixes1024MiB host prefix and384MiB physical floor; src/heap_plan.c+svc_hooks.c bound guest21/22 report by live physical headroom and guest span. Flow game.c heaps_read (977-1030) inspects System/HeapSize/*.HeapDef.byml, prefers Ounce/Product, decompresses Zstd with SARC dictionaries from Pack/ZsDic.pack.zs, extracts Heaps/VirtualAddressMemory/Size. If positive plausible value, sets address-space allowance and reported game budget8992MiB with64MiB slack. svc.c reports synthetic128MiB program charge plus heap budget for queries6/7/21/22 and real allocation failures remain failures. Distinguishing virtual reservations from committed physical budget is a concrete lead, but flow's8992MiB figure is a compatibility heuristic, not actual physical memory evidence. No blanket lowering host reservation or spoofing8992 applied; our larger backing/large-folder indexing needs must be measured.
+
+2. Startup: flow loader.c reimplements rtld linking/ModuleObject state, resolves symbols (first module definition), calls nn::init::Start when exported, or explicit legacy SDK startup/initializers. main.c finishes on original main thread and calls nx2_start(envGetMainThreadHandle()). loader.c zeros user TLR0x120..0x1ff while preserving kernel0x100..0x11f. Our bridge.c nx2_game_worker is entered on libounce threadCreate worker, clears0x180..0x1ff and TPIDR_EL0, then invokes ORIGINAL game rtld with worker handle. This is a verified architectural/TLS-clearing difference, not evidence rtld incorrect or TLS cause. Original rtld may perform further initialization; audit before patching.
+
+3. Saves: flow rom.c intercepts SDK filesystem IPC, lends host SD filesystem domain objects, rewrites paths into private save subtree, and forwards file/directory operations on host session. It leaves SDK C++ save registration machinery in place. Our bridge intercepts mount exports, creates own IFileSystem vtable objects and calls SDK fsa::Register, with synchronous operations via storage-worker RPC. Our existing direct-FSP VFS path exists as well: do not claim no IPC redirection code. Different layer of interception may avoid C++ ABI/ownership/lifetime assumptions; current ABI checks and Star Fox success still stand, root cause unproven.
+
+4. Modules: flow whole.c loads whole NSO-derived images via kaiHEN loader, enforces total eight images including launcher, and merge.c can combine suitable non-main/non-SDK/non-TLS modules to leave dynamic load slots. ro.c reuses initialized ldr:ro, handles registration/list commands locally, forwards load/unload to it. Release reports fixing one anonymous title that needed dynamic modules. No evidence OOT latest trace reached dynamic-load capacity rejection; not assigned as its cause.
+
+Flow also substitutes optional network/online/amiibo service responses, unlike user's requested preference for real requests; copying whole runtime would change compatibility semantics. Diagnostic code comments acknowledge missing Switch2 fault delivery too; presence of crash.txt does not establish Atmosphere-level external reporting. Recommended source investigation order: data-driven heap layout/physical accounting, SDK handoff/TLS, save IPC versus fsa interception. No runtime/source fix applied on these unverified leads, no build/install/test request, no native execution/commit/push.
+
+Primary sources pinned: https://github.com/Olmectron/nx2-flow/blob/f0861ffbeda36d73df6d59dcbac4b95281eea526/loader/runtime/main.c ; loader/runtime/game.c ; loader/runtime/loader.c ; loader/runtime/svc.c ; loader/runtime/rom.c ; loader/README.md .
+
+
+## 2026-11-26 - Native main-thread / SDK save IPC / HeapDef compatibility source experiment
+
+User confirms a Discord video of Ocarina of Time Remake running through nx2-flow with MKW host and explicitly requests incorporating startup, TLS, save mounting and memory budgeting into BackupLoaderMKW. Accept as user-provided working-setup evidence, not independently reproduced by this agent. SOURCE ONLY request remains: no compiler/assembler/build/NRO/native test binary/console install invoked. Changes below are implemented source attempts, not a proven OOT fix. No title IDs or per-title offsets introduced.
+
+Default launch now run_native(): original main thread waits while a separate libounce host thread executes existing preparation/storage setup/diagnostic loop. On actual guest handoff, main retains original kernel handle, receives chosen kernel-permitted priority/core, switches one-way to an allocated NPDM-sized aligned stack via guest_start.S, and invokes original guest rtld. Host thread inherits actual main priority before launch, rather than assuming one host title's priority. Storage worker remains independent. New NATIVE_COMPAT_BUILD version1 and SDK_MAIN_THREAD_HANDOFF identify path. Original rtld retained for relocations, constructors and SDK init; nx2-flow's replacement ModuleObject linker was NOT imported. This adopts original-main-thread SDK context rather than duplicating linker logic.
+
+Guest TLR user cleanup expands from0x180..0x1ff to0x120..0x1ff in native path; kernel-owned0x100..0x11f (including handle0x110) retained. TPIDR_EL0 cleared as previous guest startup. Host/observer keep independent libounce TLS; no host frames return after stack switch. One-way lifetime and changed host-thread preparation need hardware validation; C grammar/static checks cannot establish scheduler/SDK correctness.
+
+Native path resolver leaves all API-name-matched Mount*SaveData* exports intact. SDK constructs/registers its own filesystem objects; intercepted native domain FSP commands51/52/53 and22/23 still route through existing private SD VFS/storage backend. Added RPC_SAVE_PROFILE_ROOT maps account/device user-space attributes to exact existing save root and profile binding. Primary relative root empty is accepted only for a VFS filesystem marked with internal UINT64_MAX token; secondary root remains profiles/<uid> as before. Application provenance checked against selected guest or implicit0, and account UID must be nonzero. BCAT/cache/system namespaces separate. Read-only native open remains read-only. Host root never exposed as a native save and real errors retained. No save movement/deletion/migration. This adapts the native SDK IPC strategy, not nx2-flow's exact host-session lending implementation.
+
+Native successful FSP open is counted only after reply serialization in sdk_save_open_count. SDK_SAVE_IPC_OPEN / SDK_SAVE_IPC_OPEN_CHECKPOINT explicitly do NOT assert SDK Register completion; old SAVE_REGISTER_SUCCESS_CHECKPOINT belongs to C++ bridge path and is not required in new mode. Existing late IPC/resource trace is armed for either C++ registration or native-open evidence, without conflating them. Resource phase sdk_save_open vs save_mounted is explicit.
+
+New heap_config.c and portable heapdef.c discover best Ounce/Product System/HeapSize/*.HeapDef.byml from selected union view for folders and NUPs. Reads bounded64MiB; handles raw BYML, Zstd frames, optional Pack/ZsDic.pack.zs SARC dictionaries (bounded256 records). Checked BYML key tables/map entries/endian forms/signed and unsigned32/64-bit scalar bounds. Extracts Heaps/VirtualAddressMemory/Size KiB, rejects >16GiB. Malformed/missing/unreadable metadata logs and falls back to prior bounded physical policy. No game-specific memory number.
+
+For a verified positive virtual reservation, logical guest budget=min(real kernel non-system entitlement, guest address span+virtual reserve); initial program charge measured from real used minus host prefix. Queries6/7/21/22 use a consistent logical total/guest-used story. Distinguishes uncommitted virtual reservation from real available pages. Real heap allocations stay bounded by owned span/current commit and invoke svcSetHeapSize; alias maps stay native. Physical growth headroom64MiB for parsed reserve case, otherwise previous384MiB. Zero-size aligned native heap shrinks now allowed. No artificial8992MiB entitlement or synthetic allocation success. The1GiB host allocator prefix is RETAINED: cannot safely trim mimalloc's managed range after module backing allocation, and earlier512MiB failed module preparation. Thus this is metadata/budget adoption, not full nx2-flow allocator parity; later actual logs must determine further host reservation work.
+
+Rollback without rebuilding: empty SD:/switch/BackupLoaderMKW/legacy-launch.flag selects previous worker/TLS/C++ mount/bounded-memory path. Remove flag to re-enable native experiment. Valid zero-size heap shrink correction applies universally. Normal A/L+A/ZR+A NVN selection preserved; use normal A for initial OOT comparison. No new jailbreak/plugin or backup extraction needed.
+
+Validation: Python pycparser grammar checks (includes replaced by platform-type stubs, no compiler) pass new heapdef/config/native-compat files and parser fixture, handoff/worker functions and resource checkpoint branch. Whole guest_fsp_vfs and resolver grammar reviewed; svc_hooks grammar passes after stripping existing GNU attributes/asm. Static checks confirm menu wiring, acquire/release handoff, kernel TLR preservation, original rtld, native save read-only/private-root restrictions, serialized success evidence, actual selected physical floor in growth guard and retained real kernel allocator. C grammar review caught/fixed helper names u32/u64 colliding with libounce typedefs. git diff --check passes. Native code NOT compiled or linked and C parser fixtures NOT executed. Added test_heapdef.c covers valid LE/BE, truncated prefixes, malformed offsets/counts, negative/oversized sizes, missing keys and64-bit values for future native test use. Updated resolver test stubs for compatibility global; no native tests run.
+
+Attribution: strategy informed by Olmectron/nx2-flow loader runtime main.c/game.c/loader.c/rom.c at f0861ffbeda36d73df6d59dcbac4b95281eea526 (MIT); full license preserved vendor/nx2-flow-LICENSE.txt. No optional-service stubs imported. Findings/handoff/game notes appended only. No commit/push. Next user build.bat then normal-A OOT: new profile markers, HEAP_CONFIG parse/budget, SDK_SAVE_IPC_OPEN and normal gameplay/crash logs establish outcome. Existing Star Fox snapshot under .work/starfox-1795665020 remains control; new mode may regress it and is not console-validated.
+
+
+## 2026-11-26 - First OOT gameplay run: slow/skipping audio-video, render stall; light-reporting source attempt
+
+User reports OOT playable, then very slow audio/video skipping and freeze. Read actual C:/Users/maver/OneDrive/Desktop/Loader Logs: gameplay1905 lines237311 bytes, crash15220 lines2823779 bytes, marker1795679052 host0400c3f00006e000 guest0400486024dec000; raw/header and host-end512bytes each, no persisted exception/terminal event. User explicitly confirms NO FileZilla/other SD transfers during test. Do not attribute this run to concurrent FTP.
+
+Confirmed new startup/profile on hardware: HEAP_CONFIG pathSystem/HeapSize/Product.Nin_Ounce_NVN2.HeapDef.byml.zs parsed1 virtual reserve2802MiB, logicalbudget8960MiB, measured program70418432bytes, physicalfloor64MiB; SDK_MAIN_THREAD_HANDOFF main handle81ff priority44 core0 stack1MiB result0; native save namespace primary1 and SDK_SAVE_IPC_OPEN plus open-checkpoint. This establishes successful configuration decoding/main handoff/private native save open, not which individual change enabled play.
+
+First presentation visible by heartbeat48sec,4324 returned presents by~120sec, no further presents through final132sec heartbeat. Last submit25951/25951, flush34600/34600, finish2/2, window acquire4325/4325; not proof GPU completed all asynchronous work. Device1/1,queues7/7,window2/2. Native CPU/raw fault absent. Resource snapshots through136.591sec: physicalfree354.410MiB, host allocatorfree791.25MiB, system bookkeeping~61MiB free, remote graphics35913728 of201326592bytes, free threads204. Memory observations6948success/0recordedfailures. No exhaustion established, does not rule out unobserved allocation limits.
+
+Concrete delayed operation: WARNING_ROM_READ_STAGE reasonpublished_rpc_timeout phase8(Open) file173007 pathTex/Rock_FairyFountain_Wall_D_Nrm.bntx.zs offset0 bytes193125, workerpollage6400ms and two queued reads6392/6399ms old. Max observed active I/O7113ms. Worker not terminated; storage continued after rendering stopped, final3085hostcalls442238890bytes and2903completed requests. Thus rendering stall with continuing asset work, not captured process crash/permanent storage-worker death. Long native IPC wait was already78..80sec old at warning and began before gameplay; not assigned as freeze cause. Variable heartbeat intervals/present deltas are NOT rigorous FPS.
+
+Source=folder with186587files,30562844-byte index,26251386880-byte virtual image. nx2-flow comparison is NUP-backed, so directory lookup/loose-file latency remains a concrete performance difference. No NUP corruption or need to extract established; no repack/large transfer demanded in this step. Diagnostic workload also nontrivial: GPU timeline648630events (~150 perpresent), IPC trace187397produced +109294overwritten events; crash file2.8MiB. The6.4sec open stage could include FS contention/lookup/device wait; cannot prove diagnostic flushing caused it.
+
+Preserved working run under ignored .work/oot-playable-1795679052: all5logs/marker/bin, complete source and Makefile, user-built NRO and ELF. NRO SHA256cf77a1fbfd7b6cf518f9838eaf0a90141a4212bd18f75ec56c1eedaf4061f760, ELF71b9889e333615b2ea1edec383f66582d0b5d944e76a26c39ec2e9b83dd5a799. Existing built files remain byte-identical after source edits. Backup/source checkpoint is not an agent build.
+
+Performance source attempt: new native normal-A/L+A default light diagnostics, PERFORMANCE_PROFILE version1. Heavy GPU marker alone no longer enables27wrappers; normal A retains native driver pointers except present counter. Existing gameplay-gpu-trace.flag takes effect when detailed mode explicitly requested via deep-gameplay-trace.flag, full-ipc-trace.flag or ZR+A; legacy-launch retains detailed path. IPC ring omits routine successful/begin events in light mode but preserves true error/rejection metadata; service ownership, routing, validation and native calls unchanged. IPC_CAPTURE accurately labels errors_and_rejections/request_reply0; missing GPU init/stage counters in light mode are intentionally UNOBSERVED. No service stubs imported.
+
+Light primary report uses64KiB stdio buffer, routine row/logline writes batch, heartbeat/reportflush every10sec, crash snapshots5sec beforeframes/10sec afterframes vs prior250ms/2sec. Quarter-second late IPC dumps deep-only. Explicit native CPU/raw fault and stop paths retain flushes; abrupt termination can lose more buffered routine tail (up to nextflush), acknowledged tradeoff for gameplay. Host logline still immediately flushes FAILED/REFUSED formats. Crucially nx2_host_poll completes/publishes ready filesystem RPCs BEFORE optional diagnostic text and drains at most1text record on idle poll (deep4); queued text no longer precedes ready reads. Retains actual storage serialization/errors/cache/saves. No changes to successful startup/TLS/save/memory accounting or CPU affinity in this performance step. Freeze root cause unresolved.
+
+Validation: Python C grammar checks (platform type stubs and existing GNU asm/attribute stripping, NOT compiler/type/link verification) pass wholehost.c/svc_hooks.c/native_compat.c and modified row/handoff paths. Static assertions confirm native request-loop before diagnostic dequeue, idle-only bounded drain, light GPU selection, success-event suppression and real routing untouched. git diff --check passes; playable NRO hash verified unchanged. No compilation/assembly/build/native test executable/NRO packaging/install/commit/push. Next user build.bat + normal A same folder first; compare source marker/profile, audio-video behavior and last file-open/stall state. Deep marker can restore instrumentation if needed, full previous binary/source preserved.
+
+
+## 2026-11-26 - Native library GUI and minimal diagnostics (source only)
+
+Implemented probes/library-ui as a separate libounce frontend: 1280x720,
+five columns / three visible rows / vertical scroll, rounded artwork tiles,
+folder or game-card badge, two-line UTF-8 captions, real header library count,
+SD free/total, connection status and battery. A is the sole game-launch control.
+X filters Folder/NUP; Y sorts A-Z/Z-A/Folder First/NUP First; Minus Options
+provides nine contrasting themes, Minimal/Verbose diagnostics, library refresh
+and manual last-system-crash export; B closes menus/returns to hbmenu.
+Settings persist in ui.cfg. Native original-main-thread startup, TLS, private
+save routing, heap budgeting and working normal-A graphics path are retained.
+
+Names and artwork are read from folder control files or NUP metadata; NUP raw
+and Zstandard control file records provide an artwork fallback. The actual
+local NUP samples lack ICON metadata, so no artwork is promised when a backup
+omits control data. System font uses pl:u shared memory, libounce built-in
+font fallback if denied. No proprietary font/artwork bundled or downloaded.
+Display title is separate from Nx2Game.name, preserving save namespace.
+Frontend also scans SD:/nups separately from SD:/games.
+
+A writes a bounded/checksummed/one-shot launch-request.bin and requests
+runtime/BackupLoaderMKW-core.nro through envSetNextLoad. All UI cache allocations,
+framebuffer/VI2 layer, pl font mapping, psm/nifm sessions and catalog are released
+before frontend main returns; hbloader replaces the frontend NRO. The GUI does
+not intentionally retain its code/heap alongside the guest. The runtime still
+needs the proven host reservation (not removed) and releases its own progress
+console before guest entry. Both build paths/package scripts now stage both
+NROs; copy the full release/switch tree, not only the public NRO. Handoff is
+new/untested on hardware and must not be called a proven compatibility fix.
+
+Minimal is now default and supersedes previous normal-A logging profiles:
+small selected-title/host/preparation/failure log, fatal exception capture and
+raw sidecar retained; no routine IPC event publication, ordinary guest log
+queue/wakeup, GPU gameplay trace, periodic crash.log snapshots or heartbeat
+text. Prior verbose crash.log is removed at minimal launch to avoid stale
+report confusion. Verbose re-enables the detailed investigation path. Old
+trace flags do not override GUI diagnostics. Legacy-launch.flag remains an
+explicit source-era rollback override; no alternate GUI launch hotkeys remain.
+Manual system report export is retained in Options rather than former Y.
+No game-result faking, filesystem routing or permission behavior was removed.
+
+Validation: Python C-grammar parsing of UI/media/request and modified runtime
+entry/logging/handoff functions, source resource-release/5x3 geometry/wiring
+checks, packaging-script syntax and whitespace checks. These do not constitute
+SDK type/link validation. No compiler, assembler, native tests, NRO packaging,
+console installation, commit or push executed. User runs build.bat. The preserved
+playable OOT baseline in .work/oot-playable-1795679052 remains available; no
+new OOT run or evidence resolving its slow/freeze behavior was provided here.
+
+
+Final GUI source review: all nine primary text palettes exceed 4.5:1 contrast
+against their background/panel/card colors (observed minimum 11.2:1); checked
+local NUP package/file-table field bounds and metadata types. Preserved playable
+OOT NRO SHA256 remains cf77a1fbfd7b6cf518f9838eaf0a90141a4212bd18f75ec56c1eedaf4061f760.
+UI startup failure now writes a small BackupLoaderMKW-ui.log and offers a
+return screen; these failure records remain even in Minimal mode. C grammar,
+PowerShell/Python packager syntax and git whitespace checks pass. Bash syntax
+checking was attempted with -n only, but MSYS startup was denied by this host
+(NtCreateDirectoryObject 0xC0000022); no build script was executed. Neither SDK
+compilation/linking nor hbloader/display handoff behavior is yet validated.
+
+
+## 2026-11-26 - Reported GUI/art/title failures, large NUP rejection, resource gate
+
+User reports unattractive blocky symbols, missing artwork, some NUPs named
+META, NUP file-count rejection, a resource-refusal message (possibly OOT,
+identity unconfirmed), ongoing Yoshi gameplay freezes and DK load freezes.
+No new SD logs are available; desktop Loader Logs are still run1795679052.
+Do not claim these gameplay failures are resolved by the following source work.
+
+UI revision: Nintendo Extended font mapped through pl:u, actual filled/outline
+A/B/X/Y/Minus glyphs selected when present, correctly centered bitmap bounds,
+analytic antialias coverage for rounded geometry/logo/WiFi, less intrusive
+missing-art placeholders. Expanded control-image filenames and read-only
+nsGetApplicationControlData(CacheOnly) fallback. NS session closes with UI
+resources; no NS download request, network probe, proprietary font/art asset
+bundling or game-service stubbing. Backups without art and console cache may
+still show placeholders. Current local NUPs have TLVs0/4/6/7, no ICON records;
+local extracted Pokopia root also lacks a control directory.
+
+META diagnosis: old title parser accepted the short META string at the start
+of an NPDM as a valid NACP/title. New parser requires a complete language-table
+span, rejects META/NPDM magic and generic labels, retains the filename when
+metadata isn't a meaningful title. Actual affected SD archive not identified,
+so the specific bad metadata tag is unconfirmed. Current local NUP title TLV4
+values are KirbyAirRiders_GlobalTestRide and Pokopia, not META.
+
+Large archives: removed fixed262144 caps in nup.c discovery/mounting and
+rom_view.c; folder tree capacity now derives from 128MiB/sizeof(Entry), and
+partial-cache record count derives from its actual byte span. Shared pure
+nup_layout.h checks package/table bounds, checked multiply/add spans, child-ID
+range, child alignment and pool extents before computing pointers. Existing
+TOC SHA256, file extents, safe names, codecs and metadata budget remain. UI
+embedded-art scan now follows the runtime128MiB TOC bound. No repack required.
+Added test_nup_layout.c with legitimate300000-file and malformed/overflow
+fixtures; it has not been natively compiled. A Python AST interpreter executed
+the actual pure C helper and C fixture: all10 arithmetic boundary assertions
+passed, without compiler/linker/native code. This is not full archive testing.
+
+Resource comparison: preserved playable OOT run shows host67108864 bytes,
+guest50331648 bytes. This same prelaunch check already existed before GUI.
+Current Olmectron/nx2-flow loader/runtime/main.c logs the declared-system-pool
+comparison but does not stop there. Our native path now treats a smaller
+NONZERO configured pool as advisory, allows real SDK/kernel requests, and
+passes existence1byte to the later VM release sanity check rather than
+repeating a declared-full-reservation veto. Zero required pool and query
+failure still refuse, legacy path keeps old gate. Real alias ownership,
+physical-budget/kernel allocation/mapping checks are unchanged. No physical
+memory or system-resource quota is invented. This may only remove a premature
+startup veto, not fix a true exhausted pool or prove OOT restored.
+
+Minimal logs keep RESOURCE_CHECK values/query result, explicit distinction
+between failed query and small/absent pool, original SDK handoff, FIRST_PRESENT,
+and up to4 compact event-triggered suspected-render-stall capsules (IPC tail,
+active storage operation/path, no constant verbose stream). A pause alone is
+not a proven deadlock. Launch request v2 additionally checksums frontend host,
+pool/query result and PID, enabling a before/after comparison across hbloader.
+An incompatible request now shows a clear copy-both-NROs message rather than
+silently reopening the GUI. Catalog game identity/save paths remain unchanged.
+
+Validation: C grammar checks for revised GUI/media/request/runtime entry,
+logging, main handoff, complete gameplay loop, NUP reader/layout helper and
+RomFS reader; resource cleanup/wiring and whitespace checks. The large-file
+arithmetic helper was interpreted as above. No SDK compiler, assembler,
+linker, native tests, packaging, console test, commit or push. The preserved
+playable OOT baseline remains untouched. Further Yoshi/DK/startup root causes
+need fresh run evidence; do not advertise every title fixed or source parity
+with the other launcher's full loader/allocator implementation.
+
+
+## 2026-11-26 - Read-only three-repository architecture comparison
+
+Completed an initial source-only architectural comparison against pinned
+nx2-flow9ad10e2bebb0cf02082c413c06b0dcae25926014 and nx2-relink
+b3e0fc4540784d45cd40dd9a97b1f4a5d0bacaad. Report:
+docs/runtime-architecture-review-2026-11-26.md; hashed input manifest alongside.
+87 local source files frozen under .work/architecture-review-20261126/
+local-before-followup;58 upstream text sources retained with license files.
+No runtime source edited during the comparison itself. No build/packaging/
+installation/native tests/commit/push/new dependency installation performed.
+
+Confirmed differences: original rtld versus custom ModuleObjects/SDK start;
+fixed allocator prefix versus separately owned large arena/tail trimming;
+our single NUP RomFS root versus reference ordered base/update overlay;
+newest-plus-base folder handling versus all update layers; RO session rollover
+versus TLS-aware module merge planning; explicit MKW-only gate contradicts
+host-agnostic intent; legacy NUP TLV namespace handling; root-mtime cache
+freshness blind spot; GUI dropped explicit index rebuild action; minimal host
+logging loses SDK_BREAK/SDK_ABORT. Last four small corrections can proceed
+without replacing startup architecture. Larger items require isolated changes,
+fixtures, measured ownership and hardware baselines, not a universal-fix claim.
+
+Flow establishes on-console NUP preparation with a generic loader and no
+per-game PC build, but documents remaining module/TLS limits. Relink currently
+uses PC per-title preparation; applicable runtime strategies can inform a
+console implementation without adopting that workflow. Full reference parity
+is not established: references include optional-service success stand-ins,
+visible-memory constants and protection suppression that must not be imported
+blindly under the user's real-error/standards requirements. Applet/HID ownership
+handoff is a specific review concern, not yet a proven game freeze cause.
+
+User's requested regression matrix and rollback points are in the report.
+Only preserved old OOT log is available:64MiB host pool/48MiB declaration,
+4324presents before stop. Recent resource-refused title remains unconfirmed;
+no fresh GUI/game logs yet. Star Fox/Fast Fusion working baselines retained;
+Yoshi/DK/Drag x Drive freezes and Kirby/Minecraft startup problems remain open.
+
+
+## 2026-11-26 - Small corrections after the frozen architecture review
+
+Implemented source-only: remove hardcoded MKW host-ID eligibility while keeping
+real capability checks; preserve and flush BREAK/ABORT/FAULT/STOP diagnostics
+even in Minimal and after routine-log quota; normalize known0/1-based NUP fact
+namespaces using a validated NPDM/ACI0 anchor (UI and NPDM fallback); reject
+nonimage bytes before they block valid artwork fallback. A valid name beginning
+METAL is not a binary META header. Added nup_meta.h and adversarial C fixture
+source, not natively compiled. No service stubs or fake kernel success added.
+
+Restored on-console selected folder-index rebuild in Options: only generated
+.idx and selected .part checkpoints removed through checked cache functions;
+errors shown, no immediate game launch, next normal A rebuilds using existing
+resumable scanner. NUP tables and all saves/game files preserved. Shared index
+code linked into frontend from existing project units, no new dependencies.
+
+These follow the read-only input snapshot/report; updated report labels the
+larger update-union, module-merge/linker and separate-arena work UNIMPLEMENTED.
+No applet/HID ownership behavior, original-rtld sequence, thread/TLS behavior or
+save migration was changed here. No title's freeze/startup problem is declared
+fixed. No compile/assembler/linker/native test/NRO packaging/hardware install/
+commit/push was performed. C grammar/source wiring/cleanup/whitespace checks
+and prior10 interpreted bounds assertions are limited source validation only.
+The retained OOT binary remains the rollback point, not proof for new source.
+
+
+## 2026-11-26 — Follow-up 1795712522: actual resource gates, profile consistency, storage stall
+
+Source-only follow-up documented in [docs/runtime-followup-1795712522.md](docs/runtime-followup-1795712522.md). The current release/switch logs were preserved before changes in `.work/runtime-followup-1795712522/`, with a source-before rollback snapshot and change manifest. Available reports are Star Fox folder reaching first present and OOT NUP reaching 1704 frames before an 8-second pause with a ROM read still active and zero completed storage requests since progress. This does not prove a GPU deadlock. Raw record has captured=false; ERPT matched zero reports. No fresh failing Yoshi/DK/Xenoblade/ZA/Mario Tennis logs remain in this bundle.
+
+Native NPDM system-resource declaration checks are advisory, including zero host pools, in both preparation gates. Actual kernel totals/used/free-known are reported, and real heap/mapping failures still propagate; this cannot increase Pokopia's actual kernel quota. Generic allocator/range/headroom policies remain and are explicitly enumerated in the detailed follow-up. Minimal diagnostics now retain sampled local refusal and real allocation-failure labels rather than silently losing them.
+
+UID-less device mounts and archive ensure/create helpers now share the real HBL selected UID (or first explicit SDK UID) profile route. Existing roots/primary bindings/save metadata remain in place, with no Yoshi-specific exception or migration. Missing UID falls back to the existing legacy behavior and is reported; validate on actual HBL. Nonexistent secondary-profile archive is an absent existence result; genuine FS errors propagate. This is not yet a verified Yoshi fix.
+
+Folder LRU 16->64; optional validated NUP directory binary search plus exact-path lookup cache; bounded raw read ceiling 64 KiB->1 MiB. Native handoff releases the menu HID session. Freeze capsules now resolve ROM indexes and include read/decode progress. Previous root reports are archived during preparation into 16 bounded previous-* slots (8 MiB/file); full/failing archive reports -1 and never blocks launch. Snapshot files may identify different runs. No per-read successful disk logging was added.
+
+Grammar/source-wiring and whitespace checks only; no compiler, assembler, linker, build, packaging or native test executable was used. User must build and test Star Fox/Fast Fusion regression first, then Yoshi/OOT/Mario Tennis; folder/NUP independently. User-reported Xenoblade/DK hard crashes, ZA/Mario startup failures and Yoshi/OOT freezes remain unresolved hardware outcomes, not fixed-title claims. Source revision label: 20261126_storage_profile_pool_1.
+
+
+## 2026-11-26 — PLZA run 1795713343: SDK driver-service connection assertion identified
+
+Read-only diagnosis: [docs/plza-driver-startup-1795713343.md](docs/plza-driver-startup-1795713343.md). The PLZA-host report has 16 MiB actual and declared bookkeeping pools, successful module mappings/SDK handoff and 8434581504 bytes available after preparation. It aborts before first present. The user's PC NUP was read at `D:/Roms/Switch 2/Pokemon Legends Z-A.nup`; archive entry hashes were checked, SDK disassembled read-only, and the exact eight reported break-site instructions matched.
+
+Confirmed assertion: CreateNvDrvByHipc, `result.IsSuccess()`, nvos_drv_DriverImplByHipc.cpp line 48. Its failing operation is SDK ConnectToHipcService for `nvdrv`. The numeric failed Result was not retained; the zero generic SDK-break payload is not that Result. NUP base/update NPDMs are 0100f43008c44000 with an older SDK; host is 0400f43008c44001. No alternate native ExeFS exists in its content-only package. PLZA SDK has no GSV exports; working Star Fox SDK has 61 GSV-related function exports. Libounce's actual Switch 2 NV initialization goes through GSV, not the old SM/transfer-memory initialization sequence. nx2-flow's older-NVN backend explicitly addresses this architecture gap, with limited API/shader coverage. Do not assume a same-product host resolves a different-platform graphics backend or that a blind service-handle swap is compatible.
+
+Universal diagnostics added, not a playability fix: optional symbol/ABI-based SDK service connection observer forwards the real Result; fatal SDK break drains pending failure diagnostics and prints 32 existing IPC breadcrumbs. No title-specific ID/offset/hash patches, aliases, fake responses, extra dependencies or GPU backend substitution. Revision is now 20261126_storage_profile_pool_2. Supplied PLZA log predates the prior and current follow-ups. Source-before snapshots and change hashes are in `.work/plza-1795713343/`.
+
+Exact failure Result, workable legacy graphics compatibility and PLZA playability remain unresolved. No common root cause for other games is claimed. Grammar/source-wiring and whitespace checks only; no build, link, packaging or native test executable was run. No hardware success claimed. Keep the earlier source-only fixes and build/copy workflow; inspect SDK_SERVICE_CONNECT_FAILED / SDK_BREAK_PENDING / SDK_BREAK_IPC in the next applicable run.
+
+
+## 2026-11-26 — Six-title batch reviewed; compatibility integration still incomplete
+
+Reviewed all 24 supplied files in `release/switch/Logs`; all six primary reports are revision 20261126_storage_profile_pool_2. See [docs/compatibility-batch-20261126.md](docs/compatibility-batch-20261126.md) and its input hash manifest. Yoshi aborts on our own 0x2f5e02 from virtual FSP command 51; this confirms a loader save-bridge rejection, without identifying the exact validation branch. PLZA's nvdrv connection returns 0x1015. OOT (650 presents) and Bananza (5100 presents, first frame 63.549 s) have storage_slot=0 at the captured eight-second freezes; do not reuse older active-storage-stall conclusions for these runs. Xenoblade records a real 1 MiB MapPhysicalMemory failure 0x10801 but subsequently presents. Mario Tennis has no captured terminal cause. All raw records have captured=false.
+
+No runtime code changes, new diagnostics, builds, installs or pushes in this review. Prior partial ports are not full runtime parity: ordered update unions, memory-arena ownership and merge/linker/initialization integration remain incomplete. No fundamental blocker to component reuse identified; original-rtld vs custom-linker ownership, private-save/profile adaptation and separate legacy graphics backend are concrete integration work. Using the working reference for immediate gameplay is reasonable; no claim that changing models/subscriptions guarantees a technical solution. Further development should focus on coherent runtime integration rather than accumulating more tracing. No game-specific validation bypass or hardware success claimed.
+
+
+## 2026-11-26 — Functional adaptation: ordered NUP assets, private-save identity, theme input
+
+Implemented source attempts, revision 20261126_ordered_nup_save_3; detailed evidence/limits: [docs/ordered-nup-profile-adapter-20261126.md](docs/ordered-nup-profile-adapter-20261126.md). Reference flow uses a shared per-game save directory or explicitly configured named slot, not automatic account-UID namespaces; reviewed relink uses its per-port save directory. Retained our existing real-UID primary binding/secondary profile paths and metadata. No migration/deletion.
+
+NUP now separates newest program selection from ordered base/update asset layers, excludes unrelated apps/DLC, accepts a program whose assets are inherited, and resolves/enumerates winning paths consistently with directory merges/file barriers. This adapts the reference's preparation behavior without replacing folder support or the execution runtime. Existing direct read/checksum/codec bounds and reusable caches remain. Temporary union metadata is freed; no complete game data is copied.
+
+Native account/device save requests can now carry the real host application identity and still route exclusively to the selected guest's private SD namespace. Zero/current and explicit guest remain accepted, foreign IDs rejected, real UID routing retained. Yoshi's known 0x2f5e02 command-51 abort motivates this attempt, but the exact rejected input was not captured and no Yoshi success is claimed. A on Options Theme is ignored; only left/right changes color.
+
+Production C AST interpretation passed 12 selection + 5 save identity assertions. Grammar/wiring/whitespace checks passed, including added overlay fixture and updated 1 MiB native-read/profile fixtures; no native fixture execution, SDK compilation, link, build or packaging. Actual archive model: PLZA two layers restores one path; Mario Tennis two layers and Yoshi one layer add zero paths. Therefore do not attribute their startup/save failures to missing asset paths on this evidence. Full reference linker/arena/service/graphics integration and freezes remain unresolved. No extra diagnostic layer or title-specific runtime patch added. Rollback snapshot/hash manifest: `.work/compat-integration-20261126/`.
