@@ -337,6 +337,11 @@ static int launch(UI *u){
  if(g->is_nup==2){snprintf(u->notice,sizeof(u->notice),"NUP unavailable: %.95s",g->nup_status);return 0;}
  if(!envHasNextLoad()){snprintf(u->notice,sizeof(u->notice),"This homebrew menu does not support loading the runtime.");return 0;}
  FILE *f=fopen(NX2_CORE_PATH,"rb");if(!f){snprintf(u->notice,sizeof(u->notice),"Runtime missing. Copy the entire release/switch folder to the SD card.");return 0;}fclose(f);
+ AccountUid *selected=envGetUserIdStorage();
+ unsigned char uid[sizeof(AccountUid)]={0};
+ if(selected)memcpy(uid,selected,sizeof(uid));
+ int have_uid=0;for(size_t k=0;k<sizeof(uid);k++)if(uid[k])have_uid=1;
+ if(!have_uid){snprintf(u->notice,sizeof(u->notice),"No host profile available. Reopen homebrew from a selected user.");return 0;}
  if(!nx2_launch_request_write(g,(int)u->settings.detailed)){snprintf(u->notice,sizeof(u->notice),"Could not save launch request. Check free space and SD access.");return 0;}
  Result rc=envSetNextLoad(NX2_CORE_PATH,NX2_CORE_PATH " --ui-launch");
  if(R_FAILED(rc)){remove(NX2_REQUEST_PATH);snprintf(u->notice,sizeof(u->notice),"Runtime handoff failed: %08x",rc);return 0;}
