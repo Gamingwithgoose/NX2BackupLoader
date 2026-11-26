@@ -18,6 +18,8 @@
 #include <switch.h>
 #endif
 
+#define NUP_CACHE_SLOTS 64U
+#define NUP_CACHE_BUDGET (64U * 1024U * 1024U)
 static uint32_t rd32(const unsigned char *p) {
   return (uint32_t)p[0] | (uint32_t)p[1]<<8 |
          (uint32_t)p[2]<<16 | (uint32_t)p[3]<<24;
@@ -216,12 +218,13 @@ typedef struct {
   uint64_t meta_offset, meta_size;
   const unsigned char *dirs, *files, *children, *pool;
   uint64_t child_count, pool_size;
-  /* Two-entry LRU avoids repeatedly decompressing alternating Zstd assets.
-   * Bounded at 32 MiB: the existing single entry could already reach 16 MiB. */
-  uint32_t cached_file[2];
-  unsigned char *cached_bytes[2];
-  size_t cached_size[2];
-  uint64_t cached_stamp[2],cache_clock;
+  /* Byte-budgeted LRU, inspired by nx2-flow's unpacked asset cache.
+   * Keep a conservative 64 MiB limit until device measurements exist. */
+  uint32_t cached_file[NUP_CACHE_SLOTS];
+  unsigned char *cached_bytes[NUP_CACHE_SLOTS];
+  size_t cached_size[NUP_CACHE_SLOTS];
+  uint64_t cached_stamp[NUP_CACHE_SLOTS],cache_clock;
+  size_t cache_total;
 } NupMount;
 static NupMount mounted;
 /* Single storage worker owns this cache, as it owns the decoder cursors. */
@@ -354,10 +357,8 @@ void nx2_nup_close(void) {
   free(mounted.ordered);
   free(mounted.toc);
   memset(path_cache,0,sizeof(path_cache));
-  for(unsigned j=0;j<2;j++){
-    free(mounted.cached_bytes[j]);
-    large_discard(&large_stream[j]);
-  }
+  for(unsigned j=0;j<NUP_CACHE_SLOTS;j++)free(mounted.cached_bytes[j]);
+  for(unsigned j=0;j<2;j++)large_discard(&large_stream[j]);
   large_clock=0;
   memset(&mounted,0,sizeof(mounted));
 }
@@ -438,7 +439,7 @@ int nx2_nup_open(const char *path) {
   m.children=toc+children_start;m.pool=toc+pool_off;
   m.child_count=(pool_off-children_start)/4;m.pool_size=pool_len;
   m.exefs_dir=m.romfs_dir=UINT32_MAX;
-  for(unsigned j=0;j<2;j++)m.cached_file[j]=UINT32_MAX;
+  for(unsigned j=0;j<NUP_CACHE_SLOTS;j++)m.cached_file[j]=UINT32_MAX;
   for(unsigned j=0;j<2;j++)large_stream[j].file=UINT32_MAX;
   uint32_t selected=UINT32_MAX;
   int selected_update=0;
@@ -775,21 +776,27 @@ static int read_compressed(const unsigned char *e,uint32_t file,
   uint64_t total=rd64(e+8),at=rd64(e+16),packed=rd64(e+24);
   if(total<=16*1024*1024 && packed<=32*1024*1024) {
     read_error="Zstandard small-entry allocation/read failure";
-    unsigned slot=2;
-    for(unsigned k=0;k<2;k++)
+    unsigned slot=NUP_CACHE_SLOTS;
+    for(unsigned k=0;k<NUP_CACHE_SLOTS;k++)
       if(mounted.cached_file[k]==file && mounted.cached_bytes[k]){
         slot=k;break;
       }
-    if(slot==2) {
-      /* Empty slot first, then oldest. This code runs on the single
-       * Nx2Host service thread, not the concurrent guest worker threads. */
-      slot=mounted.cached_file[0]==UINT32_MAX?0:
-           mounted.cached_file[1]==UINT32_MAX?1:
-           mounted.cached_stamp[0]<=mounted.cached_stamp[1]?0:1;
-      free(mounted.cached_bytes[slot]);
-      mounted.cached_bytes[slot]=NULL;
-      mounted.cached_file[slot]=UINT32_MAX;
-      mounted.cached_size[slot]=0;
+    if(slot==NUP_CACHE_SLOTS) {
+      /* Evict only as much as needed to fit the new decoded output. */
+      for(;;){
+        unsigned empty=NUP_CACHE_SLOTS,oldest=NUP_CACHE_SLOTS;
+        for(unsigned k=0;k<NUP_CACHE_SLOTS;k++){
+          if(!mounted.cached_bytes[k]){empty=k;continue;}
+          if(oldest==NUP_CACHE_SLOTS || mounted.cached_stamp[k]<mounted.cached_stamp[oldest])oldest=k;
+        }
+        if(empty<NUP_CACHE_SLOTS && total<=NUP_CACHE_BUDGET-mounted.cache_total){slot=empty;break;}
+        if(oldest==NUP_CACHE_SLOTS)return 0;
+        mounted.cache_total-=mounted.cached_size[oldest];
+        free(mounted.cached_bytes[oldest]);
+        mounted.cached_bytes[oldest]=NULL;
+        mounted.cached_file[oldest]=UINT32_MAX;
+        mounted.cached_size[oldest]=0;
+      }
       unsigned char *raw=malloc((size_t)packed),*out=malloc((size_t)total);
       if(!raw||!out||!read_archive(at,raw,(size_t)packed)) {
         free(raw);free(out);return 0;
@@ -823,6 +830,7 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       }
       mounted.cached_bytes[slot]=out;
       mounted.cached_size[slot]=(size_t)total;
+      mounted.cache_total+=(size_t)total;
       mounted.cached_file[slot]=file;
     }
     mounted.cached_stamp[slot]=++mounted.cache_clock;
