@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "host.h"
+#include "native_compat.h"
 #include "cache_catalog.h"
 #include "nup.h"
 #include "path_guard.h"
 #include "rom_prefetch.h"
 #include "file_range_policy.h"
+#include "diagnostic_queue.h"
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,13 +15,17 @@ _Static_assert(sizeof(FsRangeInfo) == 0x40, "SDK range-info ABI mismatch");
 _Static_assert(sizeof(FsTimeStampRaw) == 0x20, "SDK timestamp ABI mismatch");
 _Static_assert(sizeof(FsFileSystemAttribute) == 0xC0, "SDK filesystem attribute ABI mismatch");
 static void logline(Nx2Host *h, const char *fmt, ...) {
-  if (__atomic_fetch_add(&h->lines, 1, __ATOMIC_RELAXED) > 10000)
+  int fatal=strstr(fmt,"BREAK")||strstr(fmt,"ABORT")||strstr(fmt,"FAULT")||strstr(fmt,"STOP");
+  if(nx2_minimal_logging && !strstr(fmt,"FAILED") && !strstr(fmt,"REFUSED") &&
+     !strstr(fmt,"ERROR")&&!strstr(fmt,"SAVE_PROFILE_CONTEXT")&&!strstr(fmt,"SAVE_NAMESPACE")&&!strstr(fmt,"SDK_SAVE_IPC_NAMESPACE")&&!fatal)return;
+  if (__atomic_fetch_add(&h->lines, 1, __ATOMIC_RELAXED) > 10000&&!fatal)
     return;
   va_list a;
   va_start(a, fmt);
   vfprintf(h->report, fmt, a);
   va_end(a);
-  fflush(h->report);
+  if(!nx2_native_compat || nx2_detailed_trace ||
+     strstr(fmt,"FAILED") || strstr(fmt,"REFUSED")||strstr(fmt,"ERROR")||fatal)fflush(h->report);
 }
 static Result mkdir_one(FsFileSystem *sd, const char *path) {
   Result rc = fsFsCreateDirectory(sd, path);
@@ -40,32 +46,21 @@ static int archive_marker_for_root(const char *root,char *out,size_t cap){
                 (unsigned long long)hash);
  return n>0&&(size_t)n<cap;
 }
-/* Preserve a legacy save if it has a marker or ANY directory contents.
- * A pre-created empty mount directory does not pin a title to its old
- * display name. Ambiguous/unreadable legacy data is preserved. */
-static int legacy_archive_present(FsFileSystem *sd,const char *root){
- FsDirEntryType type=0;
- if(R_FAILED(fsFsGetEntryType(sd,root,&type))||
-    type!=FsDirEntryType_Dir)return 0;
- char marker[120];
- if(!archive_marker_for_root(root,marker,sizeof(marker)))return 1;
- if(R_SUCCEEDED(fsFsGetEntryType(sd,marker,&type))&&
-    type==FsDirEntryType_File)return 1;
- FsDir dir;
- if(R_FAILED(fsFsOpenDirectory(sd,root,
-              FsDirOpenMode_ReadFiles|FsDirOpenMode_ReadDirs,&dir)))
-  return 1;
- FsDirectoryEntry entry;
- s64 count=0;
- Result rc=fsDirRead(&dir,&count,1,&entry);
- fsDirClose(&dir);
- return R_FAILED(rc)||count>0;
-}
 int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
                   const char *save_key,uint64_t guest_id) {
   memset(h, 0, sizeof(*h));
   h->guest_program_id = guest_id;
   h->report = report;
+  /* Read hbloader's existing selection without consuming applet launch
+   * parameters or opening another account service/session. Never guess a UID. */
+  AccountUid *selected=envGetUserIdStorage();
+  if(nx2_native_compat&&selected){
+    _Static_assert(sizeof(*selected)==sizeof(h->selected_user),"selected UID ABI");
+    memcpy(&h->selected_user,selected,sizeof(h->selected_user));
+    if(nx2_profile_has_uid(h->selected_user))h->selected_user_source=1;
+  }
+  logline(h,"SAVE_PROFILE_CONTEXT selected_uid_available=%u source=%u missing_selection=legacy_or_explicit_sdk_uid\n",
+          nx2_profile_has_uid(h->selected_user),h->selected_user_source);
   h->sd = fsdevGetDeviceFileSystem("sdmc");
   if (!h->sd || strncmp(rom, "sdmc:", 5))
     return 0;
@@ -76,22 +71,21 @@ int nx2_host_init(Nx2Host *h, FILE *report, const char *rom,
       !strcmp(save_key, "..") || strchr(save_key, '/') ||
       strchr(save_key, '\\') || strchr(save_key, ':'))
     return 0;
-  char old_root[512];
-  int n=snprintf(old_root,sizeof(old_root),
-                 "/switch/BackupLoaderMKW/%s",save_key);
-  if(n<0||n>=(int)sizeof(old_root))return 0;
-  int legacy=(!guest_id)||legacy_archive_present(h->sd,old_root);
-  if(legacy)
-    n=snprintf(h->save_root,sizeof(h->save_root),"%s",old_root);
+  /* New archives use a dedicated SD directory. Legacy archives are left
+   * untouched; their path-derived metadata is not migrated implicitly. */
+  int n;
+  if(guest_id)
+    n=snprintf(h->save_root,sizeof(h->save_root),
+               "/switch/BackupLoaderMKW/saves/%s [%016llx]",
+               save_key,(unsigned long long)guest_id);
   else
     n=snprintf(h->save_root,sizeof(h->save_root),
-               "/switch/BackupLoaderMKW/title-%016llx",
-               (unsigned long long)guest_id);
+               "/switch/BackupLoaderMKW/saves/%s",save_key);
   if(n<0||n>=(int)sizeof(h->save_root))return 0;
-  logline(h,"SAVE_NAMESPACE strategy=%s guest=%016llx root=%s\n",
-          legacy?"existing_legacy":"canonical_program_id",
+  logline(h,"SAVE_NAMESPACE strategy=isolated_sd guest=%016llx root=%s\n",
           (unsigned long long)guest_id,h->save_root);
-  const char *paths[] = {"/switch/BackupLoaderMKW", h->save_root};
+  const char *paths[] = {"/switch/BackupLoaderMKW",
+                         "/switch/BackupLoaderMKW/saves", h->save_root};
   for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
     Result rc = mkdir_one(h->sd, paths[i]);
     logline(h, "PRIVATE_SAVE_DIRECTORY path=%s result=%08x\n", paths[i], rc);
@@ -185,11 +179,15 @@ static Result archive_exists_at(Nx2Host *h,const char *root,uint64_t *exists){
     *exists=1;
     return 0;
   }
+  if(rc!=NX2_NOT_FOUND)return rc;
   /* Legacy saves predate the archive marker. Check for real game content
    * instead of treating the automatically created mount root as a save. */
   FsDir dir;
   rc=fsFsOpenDirectory(h->sd,root,
                         FsDirOpenMode_ReadFiles|FsDirOpenMode_ReadDirs,&dir);
+  /* An unprovisioned secondary profile is a real absent archive. Exists
+   * returns false; permission, media and other filesystem failures propagate. */
+  if(rc==NX2_NOT_FOUND)return 0;
   if(R_FAILED(rc))return rc;
   FsDirectoryEntry entry;
   s64 n=0;
@@ -227,6 +225,10 @@ static Result archive_provision_at(Nx2Host *h,const char *root){
 static Result profile_scope(Nx2Host *h,Nx2UserId uid,int create,
                             char root[620],int *primary){
  if(!h||!primary||!root||!nx2_profile_has_uid(uid))return NX2_INVALID;
+ if(nx2_native_compat&&!nx2_profile_has_uid(h->selected_user)){
+   h->selected_user=uid;h->selected_user_source=2;
+   logline(h,"SAVE_PROFILE_CONTEXT selected_uid_available=1 source=2 explicit_sdk_user=1\n");
+ }
  uint64_t hash=UINT64_C(14695981039346656037);
  for(const unsigned char *p=(const unsigned char*)h->save_root;*p;p++){
   hash^=*p;hash*=UINT64_C(1099511628211);
@@ -274,6 +276,12 @@ static uint64_t token(Nx2Host *h, unsigned i) {
   if (!++h->handles[i].generation)
     h->handles[i].generation++;
   return ((uint64_t)h->handles[i].generation << 32) | (i + 1);
+}
+static Result device_scope(Nx2Host *h,int create,char root[620]){
+ if(nx2_native_compat&&nx2_profile_has_uid(h->selected_user)){
+  int primary=0;return profile_scope(h,h->selected_user,create,root,&primary);
+ }
+ int n=snprintf(root,620,"%s",h->save_root);return n>0&&n<620?0:NX2_INVALID;
 }
 static Nx2HostFile *lookup(Nx2Host *h, uint64_t id, uint32_t kind) {
   unsigned i = (uint32_t)id;
@@ -324,17 +332,19 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
                 relative,(unsigned long long)r->b,(unsigned long long)r->c);
       return 0;
     }
-    if (!nx2_save_path(p, sizeof(p), h->rom_root, relative))
+    uint32_t source=nx2_rom_source(&l->rom,i);
+    if(source>1 || (source==1 && !h->rom_base_root[0]))return NX2_INVALID;
+    if (!nx2_save_path(p, sizeof(p), source?h->rom_base_root:h->rom_root, relative))
       return NX2_INVALID;
-    unsigned slot = 16;
-    for (unsigned n = 0; n < 16; n++)
+    unsigned slot = NX2_ROM_OPEN_LIMIT;
+    for (unsigned n = 0; n < NX2_ROM_OPEN_LIMIT; n++)
       if (h->cache[n].open && h->cache[n].index == i) {
         slot = n;
         break;
       }
-    if (slot == 16) {
+    if (slot == NX2_ROM_OPEN_LIMIT) {
       slot = 0;
-      for (unsigned n = 0; n < 16; n++) {
+      for (unsigned n = 0; n < NX2_ROM_OPEN_LIMIT; n++) {
         if (!h->cache[n].open) {
           slot = n;
           break;
@@ -391,16 +401,43 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   switch (r->op) {
   case RPC_SAVE_ARCHIVE_EXISTS: {
     uint64_t exists=0;
-    rc=archive_exists_at(h,h->save_root,&exists);
+    char root[620];rc=device_scope(h,0,root);
+    if(!rc)rc=archive_exists_at(h,root,&exists);
     if(R_SUCCEEDED(rc))r->answer=exists;
     logline(h,"GUEST_SAVE_ARCHIVE_EXISTS result=%08x exists=%llu root=%s\n",
             rc,(unsigned long long)exists,h->save_root);
     break;
   }
   case RPC_SAVE_ARCHIVE_CREATE: {
-    rc=archive_provision_at(h,h->save_root);
+    char root[620];rc=device_scope(h,1,root);
+    if(!rc)rc=archive_provision_at(h,root);
     logline(h,"GUEST_SAVE_ARCHIVE_CREATE result=%08x root=%s\n",
             rc,h->save_root);
+    break;
+  }
+  case RPC_SAVE_PROFILE_ROOT: {
+    /* Native SDK mounts share the C++ bridge's existing save namespace.
+     * Return only a bounded relative path, never the host SD root. */
+    if(!r->buffer || r->c<1 || r->c>128)return NX2_INVALID;
+    Nx2UserId uid={r->a,r->b};char root[620];int primary=1;
+    if(nx2_native_compat&&!nx2_profile_has_uid(uid))uid=h->selected_user;
+    if(nx2_profile_has_uid(uid)){
+      rc=profile_scope(h,uid,1,root,&primary);
+      if(R_FAILED(rc))break;
+    }else{
+      int n=snprintf(root,sizeof(root),"%s",h->save_root);
+      if(n<0||n>=(int)sizeof(root))return NX2_INVALID;
+    }
+    size_t prefix=strlen(h->save_root);
+    if(strncmp(root,h->save_root,prefix) ||
+       (root[prefix] && root[prefix]!='/'))return NX2_INVALID;
+    const char *relative=root+prefix;
+    if(*relative=='/')relative++;
+    size_t bytes=strlen(relative)+1;
+    if(bytes>r->c)return NX2_INVALID;
+    memcpy(r->buffer,relative,bytes);
+    r->answer=(uint64_t)primary;
+    logline(h,"SDK_SAVE_IPC_NAMESPACE result=00000000 primary=%d existing_paths_preserved=1\n",primary);
     break;
   }
   case RPC_SAVE_PROFILE_BIND:
@@ -768,6 +805,12 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
       }
     break;
   case RPC_LOG:
+    if(nx2_minimal_logging){
+      logline(h,"GUEST_ERROR event=%s a=%016llx b=%016llx c=%016llx d=%016llx detail=%s\n",
+          r->path,(unsigned long long)r->a,(unsigned long long)r->b,
+          (unsigned long long)r->c,(unsigned long long)r->d,r->path2);
+      break;
+    }
     logline(h, "NATIVE_LOG a=%016llx b=%016llx c=%016llx d=%016llx text=%s detail=%s\n",
             (unsigned long long)r->a, (unsigned long long)r->b,
             (unsigned long long)r->c, (unsigned long long)r->d,
@@ -788,8 +831,8 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
             (unsigned)r->a, (unsigned long long)r->b);
     break;
   case RPC_SAVE_MOUNT:
-    logline(h, "PRIVATE_SAVE_MOUNT name=%s result=%08x root=%s\n", r->path,
-            (unsigned)r->a, h->save_root);
+    logline(h, "PRIVATE_SAVE_MOUNT name=%s result=%08x root=%s caller=%016llx profile_route=%u\n", r->path,
+            (unsigned)r->a, h->save_root,(unsigned long long)r->b,(unsigned)r->c);
     if(r->a==0){
       __atomic_store_n(&l->late_trace_active,1,__ATOMIC_RELEASE);
       logline(h,"LATE_STARTUP_TRACE_ARMED after_successful_save_mount=1\n");
@@ -798,11 +841,45 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
   case RPC_PHYSICAL_MEMORY:
     logline(h,
             "NATIVE_PHYSICAL_MEMORY operation=%s phase=%s address=%016llx "
-            "bytes=%llu result=%08x\n",
-            r->d ? "unmap" : "map", r->c == UINT32_MAX ? "begin" : "end",
-            (unsigned long long)r->a, (unsigned long long)r->b, (unsigned)r->c);
+            "bytes=%llu result=%08x id=%llu thread_tls=%016llx tick=%llu "
+            "gpu_submit=%u/%u gpu_finish=%u/%u gpu_present=%u/%u\n",
+            (r->d&1) ? "unmap" : "map", r->c == UINT32_MAX ? "begin" : "end",
+            (unsigned long long)r->a, (unsigned long long)r->b, (unsigned)r->c,
+            (unsigned long long)(r->d>>1),
+            (unsigned long long)r->diagnostic_owner_tls,
+            (unsigned long long)r->diagnostic_published_tick,
+            __atomic_load_n(&l->nvn_stage_entered[0],__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_stage_returned[0],__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_stage_entered[2],__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_stage_returned[2],__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_present_entered,__ATOMIC_ACQUIRE),
+            __atomic_load_n(&l->nvn_present_returned,__ATOMIC_ACQUIRE));
     break;
   case RPC_BREAK: {
+    /* A fatal request can overtake the idle-only diagnostic queue. Drain
+     * bounded pending records here so the real preceding failure survives. */
+    Nx2Request pending={0};
+    for(unsigned n=0;n<NX2_LOG_SLOTS&&nx2_log_dequeue(l,&pending);n++){
+      if(pending.op==RPC_LOG)
+        logline(h,"SDK_BREAK_PENDING event=%s a=%016llx b=%016llx c=%016llx d=%016llx detail=%s\n",
+            pending.path,(unsigned long long)pending.a,(unsigned long long)pending.b,
+            (unsigned long long)pending.c,(unsigned long long)pending.d,pending.path2);
+      else if(pending.op==RPC_SAVE_MOUNT){
+        serve(h,l,&pending);
+        __atomic_fetch_add(&l->save_notice_served,1,__ATOMIC_RELEASE);
+      }
+    }
+    u32 ipc_next=__atomic_load_n(&l->ipc_trace_next,__ATOMIC_ACQUIRE);
+    for(u32 back=ipc_next<NX2_IPC_TRACE_SLOTS?ipc_next:NX2_IPC_TRACE_SLOTS;back;back--){
+      Nx2IpcBreadcrumb *e=&l->ipc_breadcrumbs[(ipc_next-back)%NX2_IPC_TRACE_SLOTS];
+      u32 phase=__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE);if(!phase)continue;
+      Nx2IpcBreadcrumb snap=*e;
+      if(__atomic_load_n(&e->phase,__ATOMIC_ACQUIRE)!=phase)continue;
+      snap.service[8]=0;
+      logline(h,"SDK_BREAK_IPC best_effort=1 phase=%u service=%s type=%u command=%u kernel=%08x cmif=%08x caller=%016llx\n",
+          phase,snap.service,snap.request_type,snap.command,snap.result,
+          snap.service_result,(unsigned long long)snap.caller);
+    }
     /* Report native SDK breaks uniformly for every guest title. */
     logline(h, "SDK_BREAK reason=%llx address=%016llx bytes=%llu caller=%016llx\n",
             (unsigned long long)r->a, (unsigned long long)r->b,
@@ -938,7 +1015,7 @@ static Result serve(Nx2Host *h, Nx2Launch *l, Nx2Request *r) {
     const char *visible=r->path;
     if(!strncmp(visible,"vsave-",6)||
         !strncmp(visible,"profiles/",9))visible="[account-scoped]";
-    logline(h, "PRIVATE_SAVE op=%u result=%08x path=%s\n", r->op, rc, visible);
+    logline(h, rc?"PRIVATE_SAVE_ERROR op=%u result=%08x path=%s\n":"PRIVATE_SAVE op=%u result=%08x path=%s\n", r->op, rc, visible);
   }
   return rc;
 }
@@ -1112,6 +1189,8 @@ static uint32_t serve_rom_cached(Nx2Host *h,Nx2Launch *l,Nx2Request *r){
 }
 int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
   int served = 0;
+  /* Bounded diagnostic work per poll; ready storage requests still run
+   * every poll even if guest threads produce text continuously. */
   for (unsigned i = 0; i < NX2_RPC_SLOTS; i++) {
     Nx2Request *r = &l->requests[i];
     if (__atomic_load_n(&r->state, __ATOMIC_ACQUIRE) == 2) {
@@ -1130,6 +1209,18 @@ int nx2_host_poll(Nx2Host *h, Nx2Launch *l) {
       __atomic_store_n(&h->rpc_active_slot,0,__ATOMIC_RELEASE);
       __atomic_store_n(&h->rpc_rom_phase,0,__ATOMIC_RELEASE);
       __asm__ volatile("sev" ::: "memory");
+      served++;
+    }
+  }
+  /* Never put a diagnostic SD flush in front of a ready file request.
+   * Only drain during an idle poll, bounded to one record in light mode. */
+  if(!served){
+    Nx2Request diagnostic={0};
+    unsigned limit=nx2_detailed_trace?4:1;
+    for(unsigned n=0;n<limit && nx2_log_dequeue(l,&diagnostic);n++){
+      serve(h,l,&diagnostic);
+      if(diagnostic.op==RPC_SAVE_MOUNT)
+        __atomic_fetch_add(&l->save_notice_served,1,__ATOMIC_RELEASE);
       served++;
     }
   }
@@ -1153,7 +1244,7 @@ void nx2_host_close(Nx2Host *h) {
       fsDirClose(&h->handles[i].dir);
     h->handles[i].kind = 0;
   }
-  for (unsigned i = 0; i < 16; i++)
+  for (unsigned i = 0; i < NX2_ROM_OPEN_LIMIT; i++)
     if (h->cache[i].open) {
       fsFileClose(&h->cache[i].file);
       h->cache[i].open = 0;

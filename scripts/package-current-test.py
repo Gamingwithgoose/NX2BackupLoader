@@ -56,19 +56,28 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, required=True)
     root = ap.parse_args().root.resolve()
-    source = root / "probes/game-launch/BackupLoaderMKW.nro"
+    source = root / "probes/library-ui/BackupLoaderMKW-UI.nro"
+    core_source = root / "probes/game-launch/BackupLoaderMKW.nro"
     icon = root / "assets/BackupLoaderMKW.jpg"
     release = root / "release"
     target = release / "switch/BackupLoaderMKW/BackupLoaderMKW.nro"
     stage = target.with_name(target.name + ".tmp")
+    core_target = target.parent / "runtime/BackupLoaderMKW-core.nro"
+    core_stage = core_target.with_name(core_target.name + ".tmp")
     data = source.read_bytes()
     image_size = verify(data)
+    core_data = core_source.read_bytes()
+    verify(core_data)
     jpg = icon.read_bytes()
     if not (16 <= len(jpg) <= 131072 and
             jpg.startswith(b"\xff\xd8") and jpg.endswith(b"\xff\xd9")):
         raise ValueError("Homebrew icon must be JPEG-formatted and at most 128 KiB")
     target.parent.mkdir(parents=True, exist_ok=True)
+    core_target.parent.mkdir(parents=True, exist_ok=True)
     try:
+        shutil.copyfile(core_source, core_stage)
+        if hashlib.sha256(core_stage.read_bytes()).digest() != hashlib.sha256(core_data).digest():
+            raise ValueError("Staged runtime checksum mismatch")
         shutil.copyfile(source, stage)
         if hashlib.sha256(stage.read_bytes()).digest() != hashlib.sha256(data).digest():
             raise ValueError("Staged NRO checksum mismatch")
@@ -87,9 +96,15 @@ def main() -> None:
         if (header[:4] != b"ASET" or
                 struct.unpack_from("<Q", header, 16)[0] != len(jpg)):
             raise ValueError("ASET icon verification failed")
+        os.replace(core_stage, core_target)
         os.replace(stage, target)
+    except Exception:
+        target.unlink(missing_ok=True)
+        core_target.unlink(missing_ok=True)
+        raise
     finally:
         stage.unlink(missing_ok=True)
+        core_stage.unlink(missing_ok=True)
     shutil.copy2(root / "README.md", release / "README.md")
     for old in (release / "switch/nx2-folder-exec",
                 release / "nx2backuploader.nro", release / "nx2-sdprobe.nro"):
@@ -101,6 +116,7 @@ def main() -> None:
             old.unlink()
     print(f"[OK] Embedded Homebrew Menu icon ({len(jpg)} bytes)")
     print(f"[OK] Created {target}")
+    print(f"[OK] Created {core_target}")
     print("[NOTE] Format validation does not prove hardware/gameplay compatibility")
 
 if __name__ == "__main__":

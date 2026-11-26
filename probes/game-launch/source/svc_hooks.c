@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "launch.h"
+#include "native_compat.h"
 #include "ipc_policy.h"
 #include "guest_fsp_vfs.h"
 #include "raw_svc.h"
@@ -43,7 +44,24 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
       * live kernel values. The real guest SetHeapSize path is unchanged
       * and still enforces all address, ownership, physical and SVC
       * checks. Never invent extra free pages or accept a fake heap. */
-     if(!rc && (type==21 || type==22) && l &&
+     if(!rc && l->guest_virtual_reserve &&
+        (type==6||type==7||type==21||type==22)){
+       uint64_t real_used=0;
+       Result query=nx2_raw_info(&real_used,22,handle,sub);
+       if(R_FAILED(query))return query;
+       uint64_t guest_used=real_used>nx2_process_heap.host_bytes?
+                            real_used-nx2_process_heap.host_bytes:0;
+       if(guest_used<l->guest_program_bytes)guest_used=l->guest_program_bytes;
+       if(l->guest_logical_budget>UINT64_MAX-l->guest_program_bytes)return 0xd001;
+       uint64_t logical_total=l->guest_program_bytes+l->guest_logical_budget;
+       if(guest_used>logical_total)return 0xd001;
+       *out=(type==6||type==21)?logical_total:guest_used;
+       static uint32_t layout_queries;
+       uint32_t ordinal=__atomic_fetch_add(&layout_queries,1,__ATOMIC_RELAXED);
+       if(ordinal<32 || !(ordinal&(ordinal-1)))
+         nx2_rpc(RPC_LOG,*out,type,l->guest_virtual_reserve,real_used,0,
+                 "GUEST_LAYOUT_MEMORY_INFO",0,0);
+     }else if(!rc && (type==21 || type==22) && l &&
         nx2_process_heap_status==NX2_HEAP_READY){
        uint64_t kernel_total=0,kernel_used=0,physical_total=0,physical_used=0;
        Result a=0,b=0,c=0,d=0;
@@ -92,16 +110,17 @@ uint32_t nx2_virtual_info(uint64_t *out,uint32_t type,uint32_t handle,uint64_t s
  * fake arena pointer. Preserve the host allocator's committed prefix,
  * stay in the game's original reserved heap span, and keep physical
  * headroom for native physical-memory maps. */
-/* The 512-MiB host partition gives previously reserved pages back to
- * the kernel. Retain a real 384-MiB minimum of uncommitted physical
- * headroom for GPU, host and other native allocations. Recheck actual
+/* The guest tail of the startup heap is returned to the kernel while
+ * the host partition stays committed. Retain a real 384-MiB minimum of
+ * uncommitted physical headroom for GPU, host and other native allocations. Recheck actual
  * kernel accounting on every growth; do NOT grant or fake an over-budget
  * request. This is a universal experimental policy, not a title exception.
  * Unchanged/shrinking requests still charge zero additional bytes. */
 #define NX2_NATIVE_PHYSICAL_FLOOR NX2_NATIVE_PHYSICAL_FLOOR_BYTES
 uint32_t nx2_virtual_heap(void **out,uint64_t size){
  Nx2Launch *l=nx2_launch;
- if(!out || !size || (size & (NX2_GAME_ALIGNMENT-1)))return 0xd001;
+ uint64_t physical_floor=l&&l->physical_floor?l->physical_floor:NX2_NATIVE_PHYSICAL_FLOOR;
+ if(!out || (size & (NX2_GAME_ALIGNMENT-1)))return 0xd001;
  if(!__atomic_load_n(&nx2_native_vm_active,__ATOMIC_ACQUIRE)){
    if(size>l->heap_capacity)return 0xd001;
    __atomic_store_n(&l->heap_size,size,__ATOMIC_RELEASE);
@@ -158,11 +177,11 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
    return 0xd001;
  }
  const uint64_t kernel_size=retain+size;
- nx2_rpc(RPC_LOG,previous_guest,size,kernel_size,NX2_NATIVE_PHYSICAL_FLOOR,0,
+ nx2_rpc(RPC_LOG,previous_guest,size,kernel_size,physical_floor,0,
          "GUEST_HEAP_RESIZE_GUARD",0,0);
  if(!nx2_heap_growth_allowed(previous_guest,size,available,
-                             NX2_NATIVE_PHYSICAL_FLOOR)) {
-   nx2_rpc(RPC_LOG,size,kernel_size,available,NX2_NATIVE_PHYSICAL_FLOOR,0,
+                             physical_floor)) {
+   nx2_rpc(RPC_LOG,size,kernel_size,available,physical_floor,0,
            "GUEST_HEAP_BUDGET_REFUSED",0,0);
    return 0xd001;
  }
@@ -172,7 +191,10 @@ uint32_t nx2_virtual_heap(void **out,uint64_t size){
  rc=svcSetHeapSize(&returned,kernel_size);
  nx2_rpc(RPC_LOG,size,kernel_size,available,rc,0,
          "GUEST_HEAP_SET_RESULT",0,0);
- if(R_FAILED(rc))return rc;
+ if(R_FAILED(rc)){
+   nx2_rpc(RPC_LOG,size,kernel_size,available,rc,0,"KERNEL_SET_HEAP_FAILED",0,0);
+   return rc;
+ }
  if((uintptr_t)returned!=base) {
    nx2_rpc(RPC_ABORT,(uintptr_t)returned,base,size,0,0,
            "Native heap base changed unexpectedly",0,0);
@@ -239,7 +261,8 @@ static unsigned domain_cap_clone_handle(uint32_t source,uint32_t clone){
  unsigned copied=0;
  trace_lock();
  for(unsigned i=0;i<512;i++){
-  if(domain_caps[i].handle!=source||domain_caps[i].kind!=3)continue;
+  if(domain_caps[i].handle!=source||
+     (domain_caps[i].kind!=3&&domain_caps[i].kind!=4))continue;
   uint32_t object=domain_caps[i].object;
   unsigned free_slot=512,already=0;
   for(unsigned j=0;j<512;j++){
@@ -248,7 +271,7 @@ static unsigned domain_cap_clone_handle(uint32_t source,uint32_t clone){
    if(free_slot==512&&!domain_caps[j].handle)free_slot=j;
   }
   if(!already&&free_slot<512){
-   domain_caps[free_slot]=(Nx2DomainCapability){clone,object,3};
+   domain_caps[free_slot]=(Nx2DomainCapability){clone,object,domain_caps[i].kind};
    copied++;
   }
  }
@@ -328,7 +351,8 @@ static void trace_reply_handles(const unsigned char *p,uint64_t n,
    trace_owner(child,owner,root);
    /* Handle ownership remains tracked after save mount, but successful
     * child acquisition needn't block its caller on a diagnostic RPC. */
-   if(!__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE))
+   if(!__atomic_load_n(&nx2_launch->late_trace_active,__ATOMIC_ACQUIRE) &&
+      !__atomic_load_n(&nx2_launch->sdk_save_open_count,__ATOMIC_ACQUIRE))
      nx2_rpc(RPC_LOG,child,parent,i>=copies,sh,0,
              "IPC_RETURNED_HANDLE",owner,0);
  }
@@ -354,6 +378,11 @@ static void ipc_event_emit(uint32_t call_id,uint32_t phase,uint32_t h,
                            uint32_t kernel,uint32_t cmif,
                            uintptr_t caller,const char *name){
  Nx2Launch *l=nx2_launch;
+ /* Keep true failures/local rejections without two records for each
+  * successful audio/HID/graphics poll. Routing and native calls unchanged. */
+ if(nx2_minimal_logging)return;
+ if(nx2_native_compat && !nx2_detailed_trace &&
+    (phase==1 || (kernel==0 && (cmif==0||cmif==UINT32_MAX))))return;
  uint32_t seq=__atomic_fetch_add(&l->ipc_event_next,1,__ATOMIC_RELAXED);
  Nx2IpcEvent *e=&l->ipc_events[seq%NX2_IPC_EVENT_SLOTS];
  __atomic_store_n(&e->sequence,0,__ATOMIC_RELAXED);
@@ -367,6 +396,10 @@ static void ipc_event_emit(uint32_t call_id,uint32_t phase,uint32_t h,
  if(name)for(;j<8&&name[j];j++)e->service[j]=name[j];
  for(;j<9;j++)e->service[j]=0;
  __atomic_store_n(&e->sequence,seq+1,__ATOMIC_RELEASE);
+}
+static void shared_event(uint32_t,uint32_t,uint32_t,uint32_t,uint64_t,uint64_t,uint32_t,uint32_t,uintptr_t,const char *);
+static int is_ro_service(const char *s){
+ return s[0]=='l'&&s[1]=='d'&&s[2]=='r'&&s[3]==':'&&s[4]=='r'&&s[5]=='o'&&!s[6];
 }
 static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uintptr_t caller){
  unsigned char *p=buffer;uint32_t kind=tag(h);
@@ -403,10 +436,17 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  /* Apply service permissions to the target domain object, not just the
   * underlying session handle. Do not grant command 0 globally to FSP. */
  int reader_domain=(kind==2 && d.domain && domain_kind==3);
+ int data_storage_domain=(kind==2 && d.domain && domain_kind==4);
+ /* OpenDataStorageByDataId (202) creates a read-only IStorage.
+  * Forward only this root method; never mutate host saves. */
+ int data_storage_open=(kind==2 && (!d.domain || domain_kind==0) &&
+                        !d.control && d.command==202);
+ int data_storage_allowed=(d.valid && !d.control &&
+                           (d.command==0 || d.command==4));
  int closing=d.valid && d.close_kind!=0;
  /* Route native FS-domain interfaces to this title's private SD backend.
   * No guest save objects are ever sent to the host title's fsp-srv. */
- if(kind==2 && !reader_domain &&
+ if(kind==2 && !reader_domain && !data_storage_domain &&
     nx2_guest_fsp_route(p,n,h,kind,d)){
    uint32_t guest_rc=UINT32_MAX;
    (void)nx2_ipc_reply_result(p,n,request_type,&guest_rc);
@@ -422,7 +462,8 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            "FSP_IPC_CLOSE_FORWARDED",owner,0);
  if(kind==2 && !closing &&
     !(reader_domain?nx2_ipc_save_reader_allowed(d):
-                    nx2_ipc_fsp_allowed(d))){
+       data_storage_domain?data_storage_allowed:
+       data_storage_open?1:nx2_ipc_fsp_allowed(d))){
    nx2_rpc(RPC_LOG,((uint64_t)hdr0<<32)|hdr1,
            ((uint64_t)special<<32)|request_type,
            ((uint64_t)d.domain<<32)|d.object_id,caller,0,
@@ -449,7 +490,8 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
                   special,fail,UINT32_MAX,caller,trace_label);
    return fail;
  }
- if(kind==3&&!closing&&!nx2_ipc_save_reader_allowed(d)){
+ if((kind==3||kind==4)&&!closing&&
+     !(kind==3?nx2_ipc_save_reader_allowed(d):data_storage_allowed)){
    if(nx2_guest_fsp_unsupported(p,n,d)){
      ipc_event_emit(call_id,4,h,kind,d,request_type,flags,hdr0,hdr1,
                     special,0,NX2_FS_UNSUPPORTED,caller,trace_label);
@@ -464,11 +506,12 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  }
  /* HIPC Control 1 exports a domain object as a standalone handle.
   * Preserve its verified reader kind before native IPC overwrites TLS. */
- uint32_t copied_reader=0;
+ uint32_t copied_reader=0,copied_storage=0;
  if(kind==2&&control&&cmd==1){
   uint32_t copied_object=0;
   if(nx2_ipc_control_copy_domain_object(p,n,&copied_object))
-   copied_reader=domain_cap_kind(h,copied_object)==3;
+   {uint32_t cap=domain_cap_kind(h,copied_object);
+    copied_reader=cap==3;copied_storage=cap==4;}
  }
  /* Avoid two synchronous host RPCs around every game IPC SVC.
   * Record the pre/post state in shared memory instead, including the
@@ -544,6 +587,11 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  }else{
    __atomic_fetch_add(&nx2_launch->sync_flight_collisions,1,__ATOMIC_RELAXED);
  }
+ uint32_t ro_id=0;
+ if(is_ro_service(trace_label)){
+   ro_id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+   shared_event(ro_id,15,1,h,cmd,request_type,0,UINT32_MAX,caller,"ldr:ro");
+ }
  uint32_t rc=external?nx2_raw_buffer(buffer,n,h):nx2_raw_sync(h);
  if(flight_owned){
    flight->result=rc;
@@ -574,6 +622,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
  }
  uint32_t service_result=0;
  int reply_decoded=!rc&&nx2_ipc_reply_result(p,n,request_type,&service_result);
+ if(ro_id)shared_event(ro_id,15,2,h,cmd,request_type,reply_decoded?service_result:UINT32_MAX,rc,caller,"ldr:ro");
  ipc_event_emit(call_id,2,h,kind,d,request_type,flags,hdr0,hdr1,
                 special,rc,reply_decoded?service_result:UINT32_MAX,
                 caller,trace_label);
@@ -593,7 +642,7 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
     * Never classify a returned handle from that failed service request. */
    if(want_fsp && reply_decoded && !service_result)
      response_tags(p,scan,2);
-   else if(kind==2 && !control && cmd==62 &&
+   else if(kind==2 && !control && (cmd==62||cmd==202) &&
            reply_decoded && !service_result) {
      /* On a domain session the output object ID is NOT a new kernel
       * handle. The previous allowlist missed this and rejected a read
@@ -601,12 +650,13 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
      uint32_t child=0;
      if(d.domain &&
         nx2_ipc_domain_response_first_object(p,n,&child)){
-       domain_cap_set(h,child,3);
+       domain_cap_set(h,child,cmd==202?4:3);
        nx2_rpc(RPC_LOG,h,child,cmd,d.object_id,0,
-               "FSP_DOMAIN_READER_CAPABILITY_REGISTERED",owner,0);
+               cmd==202?"FSP_DATA_STORAGE_CAPABILITY_REGISTERED":
+                          "FSP_DOMAIN_READER_CAPABILITY_REGISTERED",owner,0);
      }else{
        /* Non-domain output objects are moved handles. */
-       response_tags(p,scan,3);
+       response_tags(p,scan,cmd==202?4:3);
        nx2_rpc(RPC_LOG,h,cmd,d.domain,d.object_id,0,
                "FSP_READER_NON_DOMAIN_OR_UNVERIFIED_RESPONSE",owner,0);
      }
@@ -615,13 +665,13 @@ static uint32_t filter_sync(void *buffer,uint64_t n,uint32_t h,int external,uint
            reply_decoded&&!service_result){
      /* CopyFromCurrentDomain produces ONE moved reader handle.
       * Never retag unrelated copied handles as reader sessions. */
-     if(kind==2&&cmd==1&&copied_reader){
+     if(kind==2&&cmd==1&&(copied_reader||copied_storage)){
        /* A malformed/failed reader export must never be promoted to
         * a general-purpose fsp-srv session as a fallback. */
        if(reply_decoded&&!service_result){
          uint32_t reader=0;
          if(nx2_ipc_reply_first_moved_handle(p,scan,&reader))
-           set_tag(reader,3);
+           set_tag(reader,copied_storage?4:3);
        }
      }else response_tags(p,scan,kind);
      /* Session clones inherit only previously validated reader objects. */
@@ -667,6 +717,113 @@ uint32_t nx2_sync(uint32_t h){
 uint32_t nx2_sync_buffer(void *p,uint64_t n,uint32_t h){
  return filter_sync(p,n,h,1,(uintptr_t)__builtin_return_address(0));
 }
+/* Diagnostic-only ring: no guest payload or mapped memory is read.
+ * Owner is packed as eight ASCII bytes. Sequence is published last. */
+static void shared_event(uint32_t id,uint32_t op,uint32_t phase,uint32_t h,
+                         uint64_t address,uint64_t bytes,uint32_t perm,
+                         uint32_t rc,uintptr_t caller,const char *owner){
+ Nx2Launch *l=nx2_launch;
+ uint64_t tls=0,packed=0;
+ __asm__ volatile("mrs %0,tpidrro_el0":"=r"(tls));
+ for(unsigned i=0;i<8 && owner[i];i++)packed|=(uint64_t)(unsigned char)owner[i]<<(8*i);
+ uint32_t ticket=__atomic_fetch_add(&l->shared_trace_next,1,__ATOMIC_RELAXED);
+ Nx2SharedEvent *e=&l->shared_trace[ticket%NX2_SHARED_TRACE_SLOTS];
+ __atomic_store_n(&e->sequence,0,__ATOMIC_RELEASE);
+#define SHARED_FIELD(f,v) __atomic_store_n(&e->f,(v),__ATOMIC_RELAXED)
+ SHARED_FIELD(id,id);SHARED_FIELD(operation,op);SHARED_FIELD(phase,phase);
+ SHARED_FIELD(handle,h);SHARED_FIELD(address,address);SHARED_FIELD(bytes,bytes);
+ SHARED_FIELD(permission,perm);SHARED_FIELD(result,rc);SHARED_FIELD(caller,caller);
+ SHARED_FIELD(tls,tls);SHARED_FIELD(tick,armGetSystemTick());SHARED_FIELD(owner,packed);
+#undef SHARED_FIELD
+ __atomic_store_n(&e->sequence,ticket+1,__ATOMIC_RELEASE);
+}
+uint32_t nx2_create_thread(uint32_t *out,uintptr_t entry,uintptr_t arg,uintptr_t stack,int32_t priority,int32_t core){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,6,1,0,entry,stack,(uint32_t)priority,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_create_thread(out,entry,arg,stack,priority,core);
+ shared_event(id,6,2,rc||!out?0:*out,entry,stack,(uint32_t)priority,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_start_thread(uint32_t h){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,7,1,h,0,0,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_start_thread(h);
+ shared_event(id,7,2,h,0,0,0,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_wait_sync(int32_t *out,const uint32_t *handles,int32_t count,int64_t timeout){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,9,1,(uint32_t)count,(uintptr_t)handles,(uint64_t)timeout,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_wait_sync(out,handles,count,timeout);
+ shared_event(id,9,2,(uint32_t)count,(uintptr_t)handles,(uint64_t)timeout,rc||!out?UINT32_MAX:(uint32_t)*out,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_arbitrate_lock(uint32_t owner,uintptr_t address,uint32_t requester){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,10,1,owner,address,requester,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_arbitrate_lock(owner,address,requester);
+ shared_event(id,10,2,owner,address,requester,0,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_arbitrate_unlock(uintptr_t address){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,11,1,0,address,0,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_arbitrate_unlock(address);
+ shared_event(id,11,2,0,address,0,0,rc,caller,"thread");
+ return rc;
+}
+uint32_t nx2_wait_key(uintptr_t address,uintptr_t key,uint32_t h,int64_t timeout){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,12,1,h,address,key,0,UINT32_MAX,caller,"thread");
+ uint32_t rc=nx2_raw_wait_key(address,key,h,timeout);
+ shared_event(id,12,2,h,address,key,0,rc,caller,"thread");
+ return rc;
+}
+void nx2_signal_key(uintptr_t key,int32_t count){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,13,1,0,key,0,(uint32_t)count,UINT32_MAX,caller,"thread");
+ nx2_raw_signal_key(key,count);
+ shared_event(id,13,2,0,key,0,(uint32_t)count,0,caller,"thread");
+ 
+}
+uint32_t nx2_set_memory_permission(uintptr_t address,uint64_t bytes,uint32_t perm){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,14,1,0,address,bytes,perm,UINT32_MAX,caller,"memperm");
+ uint32_t rc=nx2_raw_set_memory_permission(address,bytes,perm);
+ shared_event(id,14,2,0,address,bytes,perm,rc,caller,"memperm");
+ return rc;
+}
+void nx2_exit_thread_trace(void){
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ shared_event(id,8,1,0,0,0,0,UINT32_MAX,(uintptr_t)__builtin_return_address(0),"thread");
+ nx2_raw_exit_thread();
+}
+uint32_t nx2_map_shared(uint32_t h,uint64_t address,uint64_t bytes,uint32_t perm){
+ char owner[9]={0};trace_name(h,owner);
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,1,1,h,address,bytes,perm,UINT32_MAX,caller,owner);
+ uint32_t rc=nx2_raw_map_shared(h,address,bytes,perm);
+ shared_event(id,1,2,h,address,bytes,perm,rc,caller,owner);
+ return rc;
+}
+uint32_t nx2_unmap_shared(uint32_t h,uint64_t address,uint64_t bytes){
+ char owner[9]={0};trace_name(h,owner);
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,2,1,h,address,bytes,0,UINT32_MAX,caller,owner);
+ uint32_t rc=nx2_raw_unmap_shared(h,address,bytes);
+ shared_event(id,2,2,h,address,bytes,0,rc,caller,owner);
+ return rc;
+}
 uint32_t nx2_close_handle(uint32_t h){
  uint32_t kind=tag(h);
  Nx2IpcDecision empty={0};
@@ -675,7 +832,13 @@ uint32_t nx2_close_handle(uint32_t h){
  uintptr_t caller=(uintptr_t)__builtin_return_address(0);
  ipc_event_emit(call_id,1,h,kind,empty,2,0x80U,0,0,0,
                 UINT32_MAX,UINT32_MAX,caller,owner);
+ uint32_t shared_id=0;
+ if(owner[0]){
+   shared_id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+   shared_event(shared_id,3,1,h,0,0,0,UINT32_MAX,caller,owner);
+ }
  uint32_t rc=nx2_raw_close(h);
+ if(shared_id)shared_event(shared_id,3,2,h,0,0,0,rc,caller,owner);
  ipc_event_emit(call_id,2,h,kind,empty,2,0x80U,0,0,0,
                 rc,UINT32_MAX,caller,owner);
  if(!rc){set_tag(h,0);trace_forget(h);domain_cap_forget_handle(h);}
@@ -769,9 +932,17 @@ static uint32_t physical(uint64_t address,uint64_t bytes,int unmap){
  }
  uint64_t *counter=unmap?&nx2_native_unmap_calls:&nx2_native_map_calls;
  uint64_t count=__atomic_add_fetch(counter,1,__ATOMIC_RELAXED);
- if(count<=16||!(count&255))nx2_rpc(RPC_PHYSICAL_MEMORY,address,bytes,UINT32_MAX,unmap,0,0,0,0);
+ /* Encode the per-operation-kind ID in the existing diagnostic-only field.
+  * The low bit still identifies map/unmap; native calls are unchanged. */
+ uint64_t trace_id=(count<<1)|(uint64_t)unmap;
+ /* Every allowed native call is observed in RAM, without a blocking RPC. */
+ (void)trace_id;
+ uint32_t id=__atomic_add_fetch(&nx2_launch->shared_trace_id,1,__ATOMIC_RELAXED);
+ uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+ shared_event(id,unmap?5:4,1,0,address,bytes,0,UINT32_MAX,caller,"physical");
  uint32_t rc=unmap?nx2_raw_unmap_physical(address,bytes):nx2_raw_map_physical(address,bytes);
- if(rc||count<=16||!(count&255))nx2_rpc(RPC_PHYSICAL_MEMORY,address,bytes,rc,unmap,0,0,0,0);
+ shared_event(id,unmap?5:4,2,0,address,bytes,0,rc,caller,"physical");
+ if(rc)nx2_rpc(RPC_LOG,address,bytes,rc,unmap,0,"KERNEL_PHYSICAL_MAPPING_FAILED",0,0);
  return rc;
 }
 uint32_t nx2_map_physical(uint64_t address,uint64_t bytes){return physical(address,bytes,0);}

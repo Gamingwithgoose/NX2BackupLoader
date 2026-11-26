@@ -14,5 +14,9 @@ int main(void){
  fails+=test(!nx2_profile_relative(a,20,one),"truncation refused");
  fails+=test(!nx2_profile_relative(a,sizeof(a),(Nx2UserId){0,0}),"no fake identity");
  fails+=test(NX2_PROFILE_FS_MODE>65536,"cache modes disjoint");
+ fails+=test(nx2_profile_application_allowed(0,10,20),"current application sentinel");
+ fails+=test(nx2_profile_application_allowed(10,10,20),"explicit guest identity");
+ fails+=test(nx2_profile_application_allowed(20,10,20),"real host identity maps to guest private save");
+ fails+=test(!nx2_profile_application_allowed(30,10,20),"foreign application rejected");
  puts(fails?"Profile namespace: FAIL":"Profile namespace: PASS");return !!fails;
 }

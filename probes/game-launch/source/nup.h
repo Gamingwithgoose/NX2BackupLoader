@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
-/* NUP v1 base-package reader. Never extracts the entire archive. */
+/* NUP v1 base/update reader. Ordered virtual assets, no full extraction. */
 int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files);
 int nx2_nup_open(const char *path);
 void nx2_nup_close(void);
@@ -14,7 +14,7 @@ typedef int (*Nx2NupVisit)(void *context,const char *path,int is_directory,uint6
 int nx2_nup_romfs_walk(Nx2NupVisit visitor, void *context);
 const char *nx2_nup_probe_error(void);
 
-/* Extract NPDM TLV type 0 from selected package metadata, if present. */
+/* Extract a structurally valid NPDM from known zero/one-based metadata. */
 void *nx2_nup_package_npdm(size_t *length);
 
 /* Error produced by the last archive entry read or checksum verification. */
@@ -25,5 +25,7 @@ int nx2_nup_entry_detail(const char *path, uint64_t *stored, uint64_t *offset);
 typedef struct {
  uint32_t active,file,codec,phase;
  uint64_t requested,sd_bytes,decoded_bytes,delivered_bytes;
+ uint64_t chunk_offset;
+ uint32_t chunk_bytes,io_result,io_inflight,native_io;
 } Nx2NupReadProgress;
 void nx2_nup_get_progress(Nx2NupReadProgress *out);

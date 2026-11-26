@@ -11,3 +11,4 @@ typedef uint32_t (*Nx2RomReadFile)(void *,uint32_t,uint64_t,void *,uint64_t);
 int nx2_rom_view(const void *,size_t,Nx2RomView *);
 uint32_t nx2_rom_read(const Nx2RomView *,uint64_t,void *,uint64_t,Nx2RomReadFile,void *);
 const char *nx2_rom_path(const Nx2RomView *,uint32_t);
+uint32_t nx2_rom_source(const Nx2RomView *,uint32_t);

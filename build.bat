@@ -27,6 +27,7 @@ if errorlevel 1 goto build_error
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CD%\scripts\verify-nro.ps1" -Path "%OUT%"
 if errorlevel 1 goto build_error
 echo [SUCCESS] %OUT%
+echo [RUNTIME] release\switch\BackupLoaderMKW\runtime\BackupLoaderMKW-core.nro
 echo Copy the contents of release\switch to your SD card root.
 set "RESULT=0"
 goto finish

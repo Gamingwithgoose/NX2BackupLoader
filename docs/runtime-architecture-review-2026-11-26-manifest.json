@@ -1,0 +1,1103 @@
+{
+  "date": "2026-11-26",
+  "local_head": "227a89d975be3b4362714aa78c07884b3a185a1a",
+  "local_state": "dirty working source; not a built or hardware-verified revision",
+  "upstream_commits": {
+    "nx2-flow": "9ad10e2bebb0cf02082c413c06b0dcae25926014",
+    "nx2-relink": "b3e0fc4540784d45cd40dd9a97b1f4a5d0bacaad"
+  },
+  "local_source": [
+    {
+      "path": "probes/game-launch/source/bridge.c",
+      "sha256": "e36b904a79e98e1515e022bc9607f782efd7f8440a551a036aa58e4e0b0d8d55",
+      "bytes": 55718
+    },
+    {
+      "path": "probes/game-launch/source/cache_catalog.c",
+      "sha256": "242d533344b3a7cc1c7d17b9159f98020130ecc9c7935abee994d2204f7b9626",
+      "bytes": 2013
+    },
+    {
+      "path": "probes/game-launch/source/cache_catalog.h",
+      "sha256": "19de09ed10b15e7b3e7d5acd95683d6ab0353549a96886644a6a692949580519",
+      "bytes": 1191
+    },
+    {
+      "path": "probes/game-launch/source/cache_route.c",
+      "sha256": "57d1a15a04b71118fc287130c191161fb2cfa277e46b16eec0eb5cfc6e81b13c",
+      "bytes": 1020
+    },
+    {
+      "path": "probes/game-launch/source/cache_route.h",
+      "sha256": "445a592a8f38bea308e1c3d901d9f51c5a0e53250dfb31e55141da0429bc3de9",
+      "bytes": 508
+    },
+    {
+      "path": "probes/game-launch/source/diagnostic_queue.c",
+      "sha256": "e019763953d704bfe4dbba74215b77b88bb821d677a2a09ae379bb1555aaf35d",
+      "bytes": 2068
+    },
+    {
+      "path": "probes/game-launch/source/diagnostic_queue.h",
+      "sha256": "34592d142a78b102ac8404868be85389a5b165de9c50550fe1d7f98dc0a9f670",
+      "bytes": 665
+    },
+    {
+      "path": "probes/game-launch/source/exception_forwarder.c",
+      "sha256": "e5e10c9a9cf3030b02fea95080ba39cdc9128f2070bc7f64f908645d4c5b3211",
+      "bytes": 2959
+    },
+    {
+      "path": "probes/game-launch/source/exception_forwarder.h",
+      "sha256": "a2c1a5b00ac915200629d7887cf52e332193564474805537388bd3fd6fec7359",
+      "bytes": 164
+    },
+    {
+      "path": "probes/game-launch/source/fault.c",
+      "sha256": "56313c01ebbc7c734b51b6761c7dd01101613449872afb72f1e5855caaa7218f",
+      "bytes": 1328
+    },
+    {
+      "path": "probes/game-launch/source/fault.h",
+      "sha256": "a0e481e94b310559263d4cc2647baf61b4111e2730e836707791c4654e19dad1",
+      "bytes": 346
+    },
+    {
+      "path": "probes/game-launch/source/file_range_policy.c",
+      "sha256": "03167a03cdf9494d85faa4b834827d954c9c26e00a3be2d92168115e712372af",
+      "bytes": 1281
+    },
+    {
+      "path": "probes/game-launch/source/file_range_policy.h",
+      "sha256": "184ddabdfcd16f343f18229a7c0516540cfe3691d6050e4546153f9ba411a629",
+      "bytes": 987
+    },
+    {
+      "path": "probes/game-launch/source/folder.c",
+      "sha256": "ff59e72ef32c77b7fee059dacc98125401c719cfc281b10fbc6a20d9a476a02b",
+      "bytes": 29638
+    },
+    {
+      "path": "probes/game-launch/source/folder.h",
+      "sha256": "3b52d23e36839abddded5dbe3c0fe61cbaef8403c019ccd7576535c832aa3d43",
+      "bytes": 1566
+    },
+    {
+      "path": "probes/game-launch/source/guest_core_policy.c",
+      "sha256": "4381f9242a1625a6d0cf75b63ffad760698dd46805ed4f94b61384c217076028",
+      "bytes": 2051
+    },
+    {
+      "path": "probes/game-launch/source/guest_core_policy.h",
+      "sha256": "6e389eff330be8c607b16df289e34d07f43f4fb303cdaac951fb5f29385bdcdd",
+      "bytes": 1046
+    },
+    {
+      "path": "probes/game-launch/source/guest_fsp_vfs.c",
+      "sha256": "fcbfc143ebf88002a6c9c24a27873f5d255c74ed8f9a917ae21ea14376b81ee3",
+      "bytes": 27911
+    },
+    {
+      "path": "probes/game-launch/source/guest_fsp_vfs.h",
+      "sha256": "36d97eada915c776f728b200f1275f0fd8e24882443f3ce8eaaeecb05531829f",
+      "bytes": 705
+    },
+    {
+      "path": "probes/game-launch/source/guest_start.S",
+      "sha256": "6bc0e2bcace0729ac7da960f1ce2134026ed15e5165c15b5da03dfa8a6e086b6",
+      "bytes": 443
+    },
+    {
+      "path": "probes/game-launch/source/guest_thread_policy.c",
+      "sha256": "4bf759ea0f5351cd2e35957f5a144782d0bfd1239c073cca08e923213816e71d",
+      "bytes": 406
+    },
+    {
+      "path": "probes/game-launch/source/guest_thread_policy.h",
+      "sha256": "f4d135bfc00de39b07798c5445d34d3a597f0f44020f0ebe755ecbcacddfcaaa",
+      "bytes": 434
+    },
+    {
+      "path": "probes/game-launch/source/heapdef.c",
+      "sha256": "7aca8e4d0f7a319c4ef5e5a7c05662d760676554d3c3bce416f7a14466237c7c",
+      "bytes": 2698
+    },
+    {
+      "path": "probes/game-launch/source/heapdef.h",
+      "sha256": "2387fd8d4b45ce288e6759f60d0db47a263c34fc9558670034141355a33ed728",
+      "bytes": 301
+    },
+    {
+      "path": "probes/game-launch/source/heap_config.c",
+      "sha256": "8d749846b1b0a2ba143a095cc86885b1c781e30bf407dacb4b18164750876721",
+      "bytes": 6287
+    },
+    {
+      "path": "probes/game-launch/source/heap_config.h",
+      "sha256": "97a2a84f2885bd02ba954cfd15e6bc2d41f51f2470da81910ad1bbf1fdda39c1",
+      "bytes": 156
+    },
+    {
+      "path": "probes/game-launch/source/heap_plan.c",
+      "sha256": "0108cc6684e503ca87e408fe9dc9db6823d86593e49f76c4a2fcb3d6f8a54b1b",
+      "bytes": 2922
+    },
+    {
+      "path": "probes/game-launch/source/heap_plan.h",
+      "sha256": "a90aa91ef0704fef6070735a169482a65fc13edf5bd2ee5b7f0750c7a0edd462",
+      "bytes": 2266
+    },
+    {
+      "path": "probes/game-launch/source/host.c",
+      "sha256": "918440adb2a616f05cbd401a073561d1cb2eaa6b2045cdaed3a9af6be2528964",
+      "bytes": 50213
+    },
+    {
+      "path": "probes/game-launch/source/host.h",
+      "sha256": "988b041ec442775f2c217d71584b79a173bcba09058d67b141eb333407ff0b8c",
+      "bytes": 2171
+    },
+    {
+      "path": "probes/game-launch/source/images.c",
+      "sha256": "14c6c2401b8c08b33a4a677afb7de7649b929f4c4ced5eb06b24757a30e79334",
+      "bytes": 19175
+    },
+    {
+      "path": "probes/game-launch/source/images.h",
+      "sha256": "d2661e47e9657147384edb283938922f167b967f6a0f010fb8ed4b99d14b5724",
+      "bytes": 551
+    },
+    {
+      "path": "probes/game-launch/source/index_cache.c",
+      "sha256": "04d3b7c2e60af7eb219587f584dd7aecab6ea453855300057f81859387cee3f5",
+      "bytes": 4252
+    },
+    {
+      "path": "probes/game-launch/source/index_cache.h",
+      "sha256": "74af01f5967e70477b74ef3fe2c6252694ea3e839c5ca92da7a930c982195c3a",
+      "bytes": 350
+    },
+    {
+      "path": "probes/game-launch/source/ipc_policy.c",
+      "sha256": "7475f09ada75bf401f4e89d78d03e6bcb0652b34cc0e012118bc3abc3ce75769",
+      "bytes": 7273
+    },
+    {
+      "path": "probes/game-launch/source/ipc_policy.h",
+      "sha256": "6b0e2258f7d7c1e881bbc77fcb92a247c28b9b6a3351ff169f6369f6c90a51b4",
+      "bytes": 1047
+    },
+    {
+      "path": "probes/game-launch/source/launch.h",
+      "sha256": "acc0dad73d06e64d6c348b60c077510f9ac3cc35575d6e123669f3d121d08858",
+      "bytes": 14039
+    },
+    {
+      "path": "probes/game-launch/source/launch_request.c",
+      "sha256": "46d1a83412554c4b2f54882f348dbb821411468de139ded2228dd24d1466b3ea",
+      "bytes": 2982
+    },
+    {
+      "path": "probes/game-launch/source/launch_request.h",
+      "sha256": "8b5e6618b9eaade686ff9826a100d822a6c4a3ee6ebbba338400009322b281d3",
+      "bytes": 649
+    },
+    {
+      "path": "probes/game-launch/source/layout.c",
+      "sha256": "4fce00728a1674eac14faf55dbfcca65954ad072d038f30202da927b36832f67",
+      "bytes": 802
+    },
+    {
+      "path": "probes/game-launch/source/main.c",
+      "sha256": "36e55a293ce55a5d736ef905a85106c12f7aba7e76e1ccf4de3b9ccec61b08c0",
+      "bytes": 118265
+    },
+    {
+      "path": "probes/game-launch/source/module.c",
+      "sha256": "77ce00623fe7713a4f41112bb51c6815c5c0ef87027a490b9f0303fb549ea80d",
+      "bytes": 16248
+    },
+    {
+      "path": "probes/game-launch/source/module.h",
+      "sha256": "d87d082b8dabc78cc68139e29d57f1c5ede97009871db0305e309c5dc56a9b02",
+      "bytes": 1887
+    },
+    {
+      "path": "probes/game-launch/source/native_compat.c",
+      "sha256": "e76deb982714e2aa0aafdf91b40882205f09fb9796a6802f87b80704fddd6b5d",
+      "bytes": 169
+    },
+    {
+      "path": "probes/game-launch/source/native_compat.h",
+      "sha256": "0e58533e35691a9de56e561ffeb64de9c3e4e7f3921a3ee5cb5519b4040177cf",
+      "bytes": 339
+    },
+    {
+      "path": "probes/game-launch/source/nso.c",
+      "sha256": "a78cfc84b455ac194201283c0c51870c91554ceec96b1b484e9741a182e72546",
+      "bytes": 10224
+    },
+    {
+      "path": "probes/game-launch/source/nso.h",
+      "sha256": "4e43d81df7839a1e18d3794d5f727ee7e916871c5a10553b548846fc5de13114",
+      "bytes": 406
+    },
+    {
+      "path": "probes/game-launch/source/nup.c",
+      "sha256": "a18240819371986b74c83da1ec6a6bbe3c2b56675ed92e5264ebcd53795f62b2",
+      "bytes": 34138
+    },
+    {
+      "path": "probes/game-launch/source/nup.h",
+      "sha256": "78e67d383f3689a6767dc837cfdf293188b62d577baf066be641de99d426c77d",
+      "bytes": 1500
+    },
+    {
+      "path": "probes/game-launch/source/nup_layout.h",
+      "sha256": "66f2a04f89f718c09e683e6e539ffaac18960052d850b82bd04567156a2e853a",
+      "bytes": 799
+    },
+    {
+      "path": "probes/game-launch/source/patch.c",
+      "sha256": "658c4a929e396089c41fe234c46710aff76ad185851d4b1cb369faa8bfd7f009",
+      "bytes": 13620
+    },
+    {
+      "path": "probes/game-launch/source/patch.h",
+      "sha256": "9ee3581caf09a69e8ba5ee76db5e1ae22856f744e2b0c28d96e35ebd2cac8e1d",
+      "bytes": 999
+    },
+    {
+      "path": "probes/game-launch/source/patch_plan.c",
+      "sha256": "cc281c88bd2479cfc10b290c10a2672f01d33ddc081df38c7f0c69b0bf1a26d3",
+      "bytes": 10886
+    },
+    {
+      "path": "probes/game-launch/source/patch_plan.h",
+      "sha256": "5fbdcaa6de6d15f43664847f1282b69a8d0a8e23c1ee8175f4e52f8a573322b6",
+      "bytes": 303
+    },
+    {
+      "path": "probes/game-launch/source/path_guard.c",
+      "sha256": "da12ba226269a9efd70371b6d28ab6234d7e62611828d5f6a71db572b8db3b8f",
+      "bytes": 728
+    },
+    {
+      "path": "probes/game-launch/source/path_guard.h",
+      "sha256": "b1d21ade5650b3b2dce3b9e70940db7a7777b591065788c39c4ebb44334579b2",
+      "bytes": 137
+    },
+    {
+      "path": "probes/game-launch/source/profile_save.h",
+      "sha256": "414204d9f5b9d2ca2bd3f56ddf082c9613d47c51bf8b8cc62513bb34fdff8d7e",
+      "bytes": 751
+    },
+    {
+      "path": "probes/game-launch/source/raw_fault.h",
+      "sha256": "895221ec7d0a71a29659387b98c4680627a344011616cc455830ca4f6edc4fc0",
+      "bytes": 1550
+    },
+    {
+      "path": "probes/game-launch/source/raw_fault_entry.S",
+      "sha256": "7e4a4e8689aca0aab03b8732a1e29b7f9fd3574a18e41aae80dcf2771d74b8c8",
+      "bytes": 5881
+    },
+    {
+      "path": "probes/game-launch/source/raw_fault_trace.c",
+      "sha256": "8651ef648759e39c15c3d35c0907c3a268bf5c188b7cd4585f1e8262efc774e2",
+      "bytes": 2956
+    },
+    {
+      "path": "probes/game-launch/source/raw_svc.h",
+      "sha256": "f00cb194dbe5082722d0d272bba53c86b806096afd1f6f92fcbff8aa7f981187",
+      "bytes": 1232
+    },
+    {
+      "path": "probes/game-launch/source/raw_svc.S",
+      "sha256": "18cf6ee5e9fc511fa99e64c20a8e4ad5f86ce79190c57717e27972cd5a47e729",
+      "bytes": 1424
+    },
+    {
+      "path": "probes/game-launch/source/resolve.c",
+      "sha256": "2fdf9e44aa466def43bb736619d6741ddc04741e320b1089ac7124f9ec61cc1d",
+      "bytes": 7253
+    },
+    {
+      "path": "probes/game-launch/source/resolve.h",
+      "sha256": "8e3cf73cc85fc165d1c61403c0f922b88959f7dde8f6dfca86ae3019c1e8fcd9",
+      "bytes": 392
+    },
+    {
+      "path": "probes/game-launch/source/resource_diagnostic.c",
+      "sha256": "ad3c5cc0b1c31c956042802464d176b7b84d9be456c758717e6eb8dceaca1c6a",
+      "bytes": 5496
+    },
+    {
+      "path": "probes/game-launch/source/resource_diagnostic.h",
+      "sha256": "41bd72a99cbe8a67663ad531c7cc936270fe92381e4c0b1e93bd515b32899a36",
+      "bytes": 596
+    },
+    {
+      "path": "probes/game-launch/source/rom_prefetch.c",
+      "sha256": "abd8e98e8f529a18db07fb396ff8aefdbfad694dd3022a0bf36ed1663ffe5a89",
+      "bytes": 733
+    },
+    {
+      "path": "probes/game-launch/source/rom_prefetch.h",
+      "sha256": "b3e764dd1923310140f4d603c8b5f93ed7f321308d49e3d1e2c097fd551ed266",
+      "bytes": 369
+    },
+    {
+      "path": "probes/game-launch/source/rom_view.c",
+      "sha256": "17b1d67533dc4479332024f550551a6061bb46aeb3986fc309e3eeb14ebef798",
+      "bytes": 3712
+    },
+    {
+      "path": "probes/game-launch/source/rom_view.h",
+      "sha256": "f1ddfb9cd11956832861bf7b7dd0708ad41d4d4e0f01c6da84f7d52e31bd5dee",
+      "bytes": 585
+    },
+    {
+      "path": "probes/game-launch/source/startup_heap.c",
+      "sha256": "03a7de13a101b17b2b87cbe0b85131c8075ee89bbb292b6ad81a0c08e48dbed8",
+      "bytes": 1244
+    },
+    {
+      "path": "probes/game-launch/source/svc_hooks.c",
+      "sha256": "cd935fd66bb8a8d5a3b65a5c4ed717c6512c97838959c171e6ed6bdfdd7aa91d",
+      "bytes": 47640
+    },
+    {
+      "path": "probes/game-launch/source/system_error.c",
+      "sha256": "99315cc4a3314421084d5024adcc0ba7deaf347197f88726b676d1d77a341255",
+      "bytes": 26700
+    },
+    {
+      "path": "probes/game-launch/source/system_error.h",
+      "sha256": "afabc785f0b54981f08d5dd22fc9d85105fd1d3f339728d4f2342a8e94a1244e",
+      "bytes": 289
+    },
+    {
+      "path": "probes/game-launch/source/termination_trace.c",
+      "sha256": "f38fa0ef1b1b0f80460f7642787189f20dc1f9b700df8767b70ec6f130778c0b",
+      "bytes": 3868
+    },
+    {
+      "path": "probes/game-launch/source/termination_trace.h",
+      "sha256": "74f823834671b3044016d2418cfe5e7bb171f42ece27f4c825a04e72e6dc11b6",
+      "bytes": 184
+    },
+    {
+      "path": "probes/game-launch/source/vm_memory.c",
+      "sha256": "c47aa22983c65931d7705e2f4a36f34a5e7c333ae94d717e0e9f7fdf3bd25fa6",
+      "bytes": 210
+    },
+    {
+      "path": "probes/game-launch/source/vm_memory.h",
+      "sha256": "8d1b0a73fdf03ad073c8cff2bf825b8fac4edacee2d3a13558bc8c5514546331",
+      "bytes": 624
+    },
+    {
+      "path": "probes/game-launch/source/vm_plan.c",
+      "sha256": "8f48b9217cf09304eaa0aec8b32d032aeea0ed2c74bac2bfb2f4e3038d010304",
+      "bytes": 1680
+    },
+    {
+      "path": "probes/game-launch/source/vm_release.c",
+      "sha256": "025b9677544a2c60ad0590c5915a60981384d2c0a54c20f6c9b074282f0f8a90",
+      "bytes": 4246
+    },
+    {
+      "path": "probes/game-launch/source/vm_release.h",
+      "sha256": "8ad91a2e0704459807093388b7c9f76b5df5d5b36a52189ce43276c7d05bd711",
+      "bytes": 354
+    },
+    {
+      "path": "probes/game-launch/source/zbic.c",
+      "sha256": "fa09e8d536186c37aeddefc4c27df345f7e1ad8d7008cfcc6ecbac6c4c763a83",
+      "bytes": 844
+    },
+    {
+      "path": "probes/library-ui/source/main.c",
+      "sha256": "95e10fd15e004dd2ae3a377e0cabe77db2146e32d6de13ed027c7525de835e07",
+      "bytes": 1346
+    },
+    {
+      "path": "probes/library-ui/source/media.c",
+      "sha256": "e0d87c36e89d372fad79f015ed439fa430394f0a43e9f3f848c70bdafa5a0845",
+      "bytes": 10720
+    },
+    {
+      "path": "probes/library-ui/source/media.h",
+      "sha256": "7710669165c6fa46a8509b833cd67b287db3143191dfee9480120b8c4cc33e0a",
+      "bytes": 269
+    },
+    {
+      "path": "probes/library-ui/source/ui.c",
+      "sha256": "caa3f79ba86d98664f99cb47638b044c4148e29455c41093c794d93eca1d81c4",
+      "bytes": 25502
+    },
+    {
+      "path": "probes/library-ui/source/ui.h",
+      "sha256": "5b86dc9ff2500240d0053a9f9eaa33c339f371c48202a96241f9745de03d295e",
+      "bytes": 236
+    }
+  ],
+  "references": [
+    {
+      "repository": "nx2-flow",
+      "path": "README.md",
+      "sha256": "23026c10e167b67d2cc43489115b824b31916d95d7bb3d98d8a521a4c0b2f55d"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "docs/layout.md",
+      "sha256": "403085218c54145922a93d50d22bbe43923e070ddc157c7d4c13271b5d04afe7"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/LICENSE",
+      "sha256": "40f504c54e93ea646cccf9e66cd668158c51b510bbb40858c039112680b28b6f"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/README.md",
+      "sha256": "a36c9d1623c658636d148d457671bfeddb4b13f6510edfef4be98a8cf2c3cd43"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "menu/README.md",
+      "sha256": "ea12dd8bfd76843fd6fa56bca37ee4abea938baa5ca7b0b9c87b56e9e9fc31e1"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "menu/source/app.cpp",
+      "sha256": "89e50ae2ceb562fd7e03cc47a20ce26e2139b0fde79c930bb0f89025cf566fbe"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "menu/source/library.cpp",
+      "sha256": "30786a56019cd387abcff8e0d5e8b5db7b4bc280f05ce075a3c8995513b96d95"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "menu/source/main_switch.cpp",
+      "sha256": "6d0c8b932466b9830252cfbfbee5ce85e60ce074d5317aa885ea98654c6a4f79"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "menu/source/nup.cpp",
+      "sha256": "67a3b127547b6a91b6492070923c5c8dc5cb30a5651cfce1cf7d47d2828bf258"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/audio2.c",
+      "sha256": "f501a1037e003b8f5ce9b51065fee439987315d1338bd98e188a7547cfe2dfcd"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/control.c",
+      "sha256": "75c1f3cc8515f63e0d48f77242677cb5506aaaa02ca1afa40726f8d14110c4a1"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/erpt.c",
+      "sha256": "85b9707568559f7fc92c01a861bf1a441ebcd23e1a35c9a6b4ba0510df8b6e8b"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/fault_raw.c",
+      "sha256": "6a3b7e48003098952592acd6cdef0477f3737afe5eb75c9b4216f1bb84f29cde"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/game.c",
+      "sha256": "90dda709cd1f28b08baaadb73755af493aa4936296ccdf63dbbe87c32b044f41"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/gl2.c",
+      "sha256": "3478a556e353a2878bda801038c28d17b81ccde3acbedd7471e11b8a5e7467b3"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/hostend.c",
+      "sha256": "51c8d2a03718c484103d1d77335292285f50beb2709d6d3f014564739801fe07"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/loader.c",
+      "sha256": "465a1aba117319758e55bccb0665f2c551d6fdf122b0d9885a78009ba27e860a"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/log.c",
+      "sha256": "735691d02d7c68cc0017fa8f65bf9a0924026f9d7c75ecaf329d6baea8867bd9"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/main.c",
+      "sha256": "32ac82e74bd8f5274199c3ca00f08b5f6964117ad85b81b8e216a61db11d4ec1"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/merge.c",
+      "sha256": "0be003e424fefa9872973b3f2491e8008389ce7b2bbb8024f67b8ca4c8775883"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/nvn2.c",
+      "sha256": "20e4d4471174df0415a67c5bc04504ee00889e5b6576bf40d4536810f7bb1610"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/nvnwatch.c",
+      "sha256": "d9d11941baff34c251aadda82c6ba524f632f3cb5fb6246e510083f11f7f0a12"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/nx2.h",
+      "sha256": "83167e7ba63be3169db633c24d0e72b2295ccaef6f31a9dc0777d13ec272801b"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/ro.c",
+      "sha256": "0858f55fb36e12fa965440978b03803bcc3ea69b7c9763b9e6012cde9a793443"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/rom.c",
+      "sha256": "74e7cb274335d99f54eb75fd50d7fcb65d15d2b214b714a9dc5b24f05eb54e6c"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/svc.c",
+      "sha256": "da685c73f7eba1cef0aa787adad79e44a36527a14b24b1407adc050e30256e79"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/svc_entry.s",
+      "sha256": "7a55459b3dc3b1868369e9e26d6fedff9bb704fa08e15da42f621fc4c9dff2c6"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/whole.c",
+      "sha256": "a2949a054a5e7bbd374926089a20a50b5b19f8f00fd39fa9155f9bc08d2004b1"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/runtime/zbic.c",
+      "sha256": "d98494f348cdad85ed77ab14860ac1a959efac19d9a094e786a6827ffb4b69ab"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/tools/build.py",
+      "sha256": "56338202bf8db987ec4813adf5b64edde6c931f4e078305e4f144ececfe67e06"
+    },
+    {
+      "repository": "nx2-flow",
+      "path": "loader/tools/build_loader.py",
+      "sha256": "0caa1e47df8ef8c2efbb264ffd9f5e8f926719b601d4a759a1a877365d440d6b"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "LICENSE",
+      "sha256": "40f504c54e93ea646cccf9e66cd668158c51b510bbb40858c039112680b28b6f"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "nxrelink.py",
+      "sha256": "5acb82ab1b28b50061bd7f554fed03a6dfe2c6369a2393a1fbbc4714b0610119"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "README.md",
+      "sha256": "c7820d815fd544525e3e1dde731c930e1bd8f1b7a2b182cf7b7f17d510625487"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/audio2.c",
+      "sha256": "f501a1037e003b8f5ce9b51065fee439987315d1338bd98e188a7547cfe2dfcd"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/control.c",
+      "sha256": "75c1f3cc8515f63e0d48f77242677cb5506aaaa02ca1afa40726f8d14110c4a1"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/erpt.c",
+      "sha256": "85b9707568559f7fc92c01a861bf1a441ebcd23e1a35c9a6b4ba0510df8b6e8b"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/fault_raw.c",
+      "sha256": "6a3b7e48003098952592acd6cdef0477f3737afe5eb75c9b4216f1bb84f29cde"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/hostend.c",
+      "sha256": "51c8d2a03718c484103d1d77335292285f50beb2709d6d3f014564739801fe07"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/loader.c",
+      "sha256": "465a1aba117319758e55bccb0665f2c551d6fdf122b0d9885a78009ba27e860a"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/log.c",
+      "sha256": "694b340e03b4d8b148421117306397dc6db6f1c09bf5f0860f6cd97bc6d08727"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/main.c",
+      "sha256": "77e74a5b787ec21d06a0b01e216f885497196c6e3d7b1852cf01e408730007af"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/nvn2.c",
+      "sha256": "20e4d4471174df0415a67c5bc04504ee00889e5b6576bf40d4536810f7bb1610"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/nvnwatch.c",
+      "sha256": "d9d11941baff34c251aadda82c6ba524f632f3cb5fb6246e510083f11f7f0a12"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/nx2.h",
+      "sha256": "66244bea49fefffae2f33c1129255d479a3e2c02fe2d6e70e57c69f040e17791"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/ro.c",
+      "sha256": "0858f55fb36e12fa965440978b03803bcc3ea69b7c9763b9e6012cde9a793443"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/rom.c",
+      "sha256": "cf8a7f63217625434bbad676240ae68dc920af64b5555d07c780a2a462d4b31d"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/svc.c",
+      "sha256": "da685c73f7eba1cef0aa787adad79e44a36527a14b24b1407adc050e30256e79"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/svc_entry.s",
+      "sha256": "7a55459b3dc3b1868369e9e26d6fedff9bb704fa08e15da42f621fc4c9dff2c6"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "runtime/whole.c",
+      "sha256": "51eba12a59870bad683bd4d1ee1334878ba5dafa02b4b380948fc38ff5ae9126"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "tools/build.py",
+      "sha256": "56338202bf8db987ec4813adf5b64edde6c931f4e078305e4f144ececfe67e06"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "tools/control.py",
+      "sha256": "578e1c27a1e604a401d9559b686ee8a091e3a2076189607950ea78b762eb6630"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "tools/game2.py",
+      "sha256": "83c8560046162762f8084cd5e485d5ea65f2b5f763b97a896c73d5e808926882"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "tools/heapdef.py",
+      "sha256": "78ed24c21d38007240c12be389f3e2b16497ad083e0cbd49b03d3163ad9ff071"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "tools/nso.py",
+      "sha256": "353b2027b6356a4d6535d22497f539f184654e403e986b28d5b4964395551646"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "tools/nup.py",
+      "sha256": "b4ba3039e12c3fb3a7b617b412fbd944820b494480dfcc5db314d1dd0eb0aa11"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "tools/relink.py",
+      "sha256": "4b6bc0a4ec6bda1b68806ce4daf967751b09149c2678de9d4cd8d124f417ece1"
+    },
+    {
+      "repository": "nx2-relink",
+      "path": "tools/romfs.py",
+      "sha256": "97c61bdb9b3dac3c8571b73bfc4729512a341c0be4af3ca15dae47519b91a43b"
+    }
+  ],
+  "followup_source": [
+    {
+      "path": "probes/game-launch/source/bridge.c",
+      "sha256": "e36b904a79e98e1515e022bc9607f782efd7f8440a551a036aa58e4e0b0d8d55"
+    },
+    {
+      "path": "probes/game-launch/source/cache_catalog.c",
+      "sha256": "242d533344b3a7cc1c7d17b9159f98020130ecc9c7935abee994d2204f7b9626"
+    },
+    {
+      "path": "probes/game-launch/source/cache_catalog.h",
+      "sha256": "19de09ed10b15e7b3e7d5acd95683d6ab0353549a96886644a6a692949580519"
+    },
+    {
+      "path": "probes/game-launch/source/cache_route.c",
+      "sha256": "57d1a15a04b71118fc287130c191161fb2cfa277e46b16eec0eb5cfc6e81b13c"
+    },
+    {
+      "path": "probes/game-launch/source/cache_route.h",
+      "sha256": "445a592a8f38bea308e1c3d901d9f51c5a0e53250dfb31e55141da0429bc3de9"
+    },
+    {
+      "path": "probes/game-launch/source/diagnostic_queue.c",
+      "sha256": "e019763953d704bfe4dbba74215b77b88bb821d677a2a09ae379bb1555aaf35d"
+    },
+    {
+      "path": "probes/game-launch/source/diagnostic_queue.h",
+      "sha256": "34592d142a78b102ac8404868be85389a5b165de9c50550fe1d7f98dc0a9f670"
+    },
+    {
+      "path": "probes/game-launch/source/exception_forwarder.c",
+      "sha256": "e5e10c9a9cf3030b02fea95080ba39cdc9128f2070bc7f64f908645d4c5b3211"
+    },
+    {
+      "path": "probes/game-launch/source/exception_forwarder.h",
+      "sha256": "a2c1a5b00ac915200629d7887cf52e332193564474805537388bd3fd6fec7359"
+    },
+    {
+      "path": "probes/game-launch/source/fault.c",
+      "sha256": "56313c01ebbc7c734b51b6761c7dd01101613449872afb72f1e5855caaa7218f"
+    },
+    {
+      "path": "probes/game-launch/source/fault.h",
+      "sha256": "a0e481e94b310559263d4cc2647baf61b4111e2730e836707791c4654e19dad1"
+    },
+    {
+      "path": "probes/game-launch/source/file_range_policy.c",
+      "sha256": "03167a03cdf9494d85faa4b834827d954c9c26e00a3be2d92168115e712372af"
+    },
+    {
+      "path": "probes/game-launch/source/file_range_policy.h",
+      "sha256": "184ddabdfcd16f343f18229a7c0516540cfe3691d6050e4546153f9ba411a629"
+    },
+    {
+      "path": "probes/game-launch/source/folder.c",
+      "sha256": "6576f5424a154151c90e92f0ab60422ac61de09b5e06d44bd68b446e2b423c03"
+    },
+    {
+      "path": "probes/game-launch/source/folder.h",
+      "sha256": "2ede6055994185ca29993e7add2c719eebc174165b5caf119837a00570bd3309"
+    },
+    {
+      "path": "probes/game-launch/source/guest_core_policy.c",
+      "sha256": "4381f9242a1625a6d0cf75b63ffad760698dd46805ed4f94b61384c217076028"
+    },
+    {
+      "path": "probes/game-launch/source/guest_core_policy.h",
+      "sha256": "6e389eff330be8c607b16df289e34d07f43f4fb303cdaac951fb5f29385bdcdd"
+    },
+    {
+      "path": "probes/game-launch/source/guest_fsp_vfs.c",
+      "sha256": "fcbfc143ebf88002a6c9c24a27873f5d255c74ed8f9a917ae21ea14376b81ee3"
+    },
+    {
+      "path": "probes/game-launch/source/guest_fsp_vfs.h",
+      "sha256": "36d97eada915c776f728b200f1275f0fd8e24882443f3ce8eaaeecb05531829f"
+    },
+    {
+      "path": "probes/game-launch/source/guest_start.S",
+      "sha256": "6bc0e2bcace0729ac7da960f1ce2134026ed15e5165c15b5da03dfa8a6e086b6"
+    },
+    {
+      "path": "probes/game-launch/source/guest_thread_policy.c",
+      "sha256": "4bf759ea0f5351cd2e35957f5a144782d0bfd1239c073cca08e923213816e71d"
+    },
+    {
+      "path": "probes/game-launch/source/guest_thread_policy.h",
+      "sha256": "f4d135bfc00de39b07798c5445d34d3a597f0f44020f0ebe755ecbcacddfcaaa"
+    },
+    {
+      "path": "probes/game-launch/source/heap_config.c",
+      "sha256": "8d749846b1b0a2ba143a095cc86885b1c781e30bf407dacb4b18164750876721"
+    },
+    {
+      "path": "probes/game-launch/source/heap_config.h",
+      "sha256": "97a2a84f2885bd02ba954cfd15e6bc2d41f51f2470da81910ad1bbf1fdda39c1"
+    },
+    {
+      "path": "probes/game-launch/source/heap_plan.c",
+      "sha256": "0108cc6684e503ca87e408fe9dc9db6823d86593e49f76c4a2fcb3d6f8a54b1b"
+    },
+    {
+      "path": "probes/game-launch/source/heap_plan.h",
+      "sha256": "a90aa91ef0704fef6070735a169482a65fc13edf5bd2ee5b7f0750c7a0edd462"
+    },
+    {
+      "path": "probes/game-launch/source/heapdef.c",
+      "sha256": "7aca8e4d0f7a319c4ef5e5a7c05662d760676554d3c3bce416f7a14466237c7c"
+    },
+    {
+      "path": "probes/game-launch/source/heapdef.h",
+      "sha256": "2387fd8d4b45ce288e6759f60d0db47a263c34fc9558670034141355a33ed728"
+    },
+    {
+      "path": "probes/game-launch/source/host.c",
+      "sha256": "283a155e4cb79c5e7318c9247d3cc43198cccd7efb50c12cc9fe733eee24627b"
+    },
+    {
+      "path": "probes/game-launch/source/host.h",
+      "sha256": "988b041ec442775f2c217d71584b79a173bcba09058d67b141eb333407ff0b8c"
+    },
+    {
+      "path": "probes/game-launch/source/images.c",
+      "sha256": "14c6c2401b8c08b33a4a677afb7de7649b929f4c4ced5eb06b24757a30e79334"
+    },
+    {
+      "path": "probes/game-launch/source/images.h",
+      "sha256": "d2661e47e9657147384edb283938922f167b967f6a0f010fb8ed4b99d14b5724"
+    },
+    {
+      "path": "probes/game-launch/source/index_cache.c",
+      "sha256": "18537bca6f23ae516e91e331fe329a3b537e8365d1fa852d5f8e6bd085f531bc"
+    },
+    {
+      "path": "probes/game-launch/source/index_cache.h",
+      "sha256": "8d11ea33b359a39d650c2d5d849fe65562ca74432b353371b453e06270f0d340"
+    },
+    {
+      "path": "probes/game-launch/source/ipc_policy.c",
+      "sha256": "7475f09ada75bf401f4e89d78d03e6bcb0652b34cc0e012118bc3abc3ce75769"
+    },
+    {
+      "path": "probes/game-launch/source/ipc_policy.h",
+      "sha256": "6b0e2258f7d7c1e881bbc77fcb92a247c28b9b6a3351ff169f6369f6c90a51b4"
+    },
+    {
+      "path": "probes/game-launch/source/launch.h",
+      "sha256": "acc0dad73d06e64d6c348b60c077510f9ac3cc35575d6e123669f3d121d08858"
+    },
+    {
+      "path": "probes/game-launch/source/launch_request.c",
+      "sha256": "46d1a83412554c4b2f54882f348dbb821411468de139ded2228dd24d1466b3ea"
+    },
+    {
+      "path": "probes/game-launch/source/launch_request.h",
+      "sha256": "8b5e6618b9eaade686ff9826a100d822a6c4a3ee6ebbba338400009322b281d3"
+    },
+    {
+      "path": "probes/game-launch/source/layout.c",
+      "sha256": "4fce00728a1674eac14faf55dbfcca65954ad072d038f30202da927b36832f67"
+    },
+    {
+      "path": "probes/game-launch/source/main.c",
+      "sha256": "94ca7ea61f83b0c46f00b667b32ce8b3b7bb5149ed3e7c12c2bbcecc286e276d"
+    },
+    {
+      "path": "probes/game-launch/source/module.c",
+      "sha256": "77ce00623fe7713a4f41112bb51c6815c5c0ef87027a490b9f0303fb549ea80d"
+    },
+    {
+      "path": "probes/game-launch/source/module.h",
+      "sha256": "d87d082b8dabc78cc68139e29d57f1c5ede97009871db0305e309c5dc56a9b02"
+    },
+    {
+      "path": "probes/game-launch/source/native_compat.c",
+      "sha256": "e76deb982714e2aa0aafdf91b40882205f09fb9796a6802f87b80704fddd6b5d"
+    },
+    {
+      "path": "probes/game-launch/source/native_compat.h",
+      "sha256": "0e58533e35691a9de56e561ffeb64de9c3e4e7f3921a3ee5cb5519b4040177cf"
+    },
+    {
+      "path": "probes/game-launch/source/nso.c",
+      "sha256": "a78cfc84b455ac194201283c0c51870c91554ceec96b1b484e9741a182e72546"
+    },
+    {
+      "path": "probes/game-launch/source/nso.h",
+      "sha256": "4e43d81df7839a1e18d3794d5f727ee7e916871c5a10553b548846fc5de13114"
+    },
+    {
+      "path": "probes/game-launch/source/nup.c",
+      "sha256": "61fb20a8524c6b15fde5063af5be5f27d6eac63aece7cf9e1510ced9c8f63eae"
+    },
+    {
+      "path": "probes/game-launch/source/nup.h",
+      "sha256": "764656f97475981225cb178fff1f7b9044faa253c0d71aa6e889f24b3301d611"
+    },
+    {
+      "path": "probes/game-launch/source/nup_layout.h",
+      "sha256": "66f2a04f89f718c09e683e6e539ffaac18960052d850b82bd04567156a2e853a"
+    },
+    {
+      "path": "probes/game-launch/source/nup_meta.h",
+      "sha256": "0b62ef4236155865f4ec4985de0237a58ad9895661612ee665d3b27546191738"
+    },
+    {
+      "path": "probes/game-launch/source/patch.c",
+      "sha256": "658c4a929e396089c41fe234c46710aff76ad185851d4b1cb369faa8bfd7f009"
+    },
+    {
+      "path": "probes/game-launch/source/patch.h",
+      "sha256": "9ee3581caf09a69e8ba5ee76db5e1ae22856f744e2b0c28d96e35ebd2cac8e1d"
+    },
+    {
+      "path": "probes/game-launch/source/patch_plan.c",
+      "sha256": "cc281c88bd2479cfc10b290c10a2672f01d33ddc081df38c7f0c69b0bf1a26d3"
+    },
+    {
+      "path": "probes/game-launch/source/patch_plan.h",
+      "sha256": "5fbdcaa6de6d15f43664847f1282b69a8d0a8e23c1ee8175f4e52f8a573322b6"
+    },
+    {
+      "path": "probes/game-launch/source/path_guard.c",
+      "sha256": "da12ba226269a9efd70371b6d28ab6234d7e62611828d5f6a71db572b8db3b8f"
+    },
+    {
+      "path": "probes/game-launch/source/path_guard.h",
+      "sha256": "b1d21ade5650b3b2dce3b9e70940db7a7777b591065788c39c4ebb44334579b2"
+    },
+    {
+      "path": "probes/game-launch/source/profile_save.h",
+      "sha256": "414204d9f5b9d2ca2bd3f56ddf082c9613d47c51bf8b8cc62513bb34fdff8d7e"
+    },
+    {
+      "path": "probes/game-launch/source/raw_fault.h",
+      "sha256": "895221ec7d0a71a29659387b98c4680627a344011616cc455830ca4f6edc4fc0"
+    },
+    {
+      "path": "probes/game-launch/source/raw_fault_entry.S",
+      "sha256": "7e4a4e8689aca0aab03b8732a1e29b7f9fd3574a18e41aae80dcf2771d74b8c8"
+    },
+    {
+      "path": "probes/game-launch/source/raw_fault_trace.c",
+      "sha256": "8651ef648759e39c15c3d35c0907c3a268bf5c188b7cd4585f1e8262efc774e2"
+    },
+    {
+      "path": "probes/game-launch/source/raw_svc.h",
+      "sha256": "f00cb194dbe5082722d0d272bba53c86b806096afd1f6f92fcbff8aa7f981187"
+    },
+    {
+      "path": "probes/game-launch/source/raw_svc.S",
+      "sha256": "18cf6ee5e9fc511fa99e64c20a8e4ad5f86ce79190c57717e27972cd5a47e729"
+    },
+    {
+      "path": "probes/game-launch/source/resolve.c",
+      "sha256": "2fdf9e44aa466def43bb736619d6741ddc04741e320b1089ac7124f9ec61cc1d"
+    },
+    {
+      "path": "probes/game-launch/source/resolve.h",
+      "sha256": "8e3cf73cc85fc165d1c61403c0f922b88959f7dde8f6dfca86ae3019c1e8fcd9"
+    },
+    {
+      "path": "probes/game-launch/source/resource_diagnostic.c",
+      "sha256": "ad3c5cc0b1c31c956042802464d176b7b84d9be456c758717e6eb8dceaca1c6a"
+    },
+    {
+      "path": "probes/game-launch/source/resource_diagnostic.h",
+      "sha256": "41bd72a99cbe8a67663ad531c7cc936270fe92381e4c0b1e93bd515b32899a36"
+    },
+    {
+      "path": "probes/game-launch/source/rom_prefetch.c",
+      "sha256": "abd8e98e8f529a18db07fb396ff8aefdbfad694dd3022a0bf36ed1663ffe5a89"
+    },
+    {
+      "path": "probes/game-launch/source/rom_prefetch.h",
+      "sha256": "b3e764dd1923310140f4d603c8b5f93ed7f321308d49e3d1e2c097fd551ed266"
+    },
+    {
+      "path": "probes/game-launch/source/rom_view.c",
+      "sha256": "17b1d67533dc4479332024f550551a6061bb46aeb3986fc309e3eeb14ebef798"
+    },
+    {
+      "path": "probes/game-launch/source/rom_view.h",
+      "sha256": "f1ddfb9cd11956832861bf7b7dd0708ad41d4d4e0f01c6da84f7d52e31bd5dee"
+    },
+    {
+      "path": "probes/game-launch/source/startup_heap.c",
+      "sha256": "03a7de13a101b17b2b87cbe0b85131c8075ee89bbb292b6ad81a0c08e48dbed8"
+    },
+    {
+      "path": "probes/game-launch/source/svc_hooks.c",
+      "sha256": "cd935fd66bb8a8d5a3b65a5c4ed717c6512c97838959c171e6ed6bdfdd7aa91d"
+    },
+    {
+      "path": "probes/game-launch/source/system_error.c",
+      "sha256": "99315cc4a3314421084d5024adcc0ba7deaf347197f88726b676d1d77a341255"
+    },
+    {
+      "path": "probes/game-launch/source/system_error.h",
+      "sha256": "afabc785f0b54981f08d5dd22fc9d85105fd1d3f339728d4f2342a8e94a1244e"
+    },
+    {
+      "path": "probes/game-launch/source/termination_trace.c",
+      "sha256": "f38fa0ef1b1b0f80460f7642787189f20dc1f9b700df8767b70ec6f130778c0b"
+    },
+    {
+      "path": "probes/game-launch/source/termination_trace.h",
+      "sha256": "74f823834671b3044016d2418cfe5e7bb171f42ece27f4c825a04e72e6dc11b6"
+    },
+    {
+      "path": "probes/game-launch/source/vm_memory.c",
+      "sha256": "c47aa22983c65931d7705e2f4a36f34a5e7c333ae94d717e0e9f7fdf3bd25fa6"
+    },
+    {
+      "path": "probes/game-launch/source/vm_memory.h",
+      "sha256": "8d1b0a73fdf03ad073c8cff2bf825b8fac4edacee2d3a13558bc8c5514546331"
+    },
+    {
+      "path": "probes/game-launch/source/vm_plan.c",
+      "sha256": "8f48b9217cf09304eaa0aec8b32d032aeea0ed2c74bac2bfb2f4e3038d010304"
+    },
+    {
+      "path": "probes/game-launch/source/vm_release.c",
+      "sha256": "025b9677544a2c60ad0590c5915a60981384d2c0a54c20f6c9b074282f0f8a90"
+    },
+    {
+      "path": "probes/game-launch/source/vm_release.h",
+      "sha256": "8ad91a2e0704459807093388b7c9f76b5df5d5b36a52189ce43276c7d05bd711"
+    },
+    {
+      "path": "probes/game-launch/source/zbic.c",
+      "sha256": "fa09e8d536186c37aeddefc4c27df345f7e1ad8d7008cfcc6ecbac6c4c763a83"
+    },
+    {
+      "path": "probes/library-ui/source/main.c",
+      "sha256": "95e10fd15e004dd2ae3a377e0cabe77db2146e32d6de13ed027c7525de835e07"
+    },
+    {
+      "path": "probes/library-ui/source/media.c",
+      "sha256": "e33669cbda6d49fab41b57553c9f7c559cf48501848e3560cbf9f24568ed2943"
+    },
+    {
+      "path": "probes/library-ui/source/media.h",
+      "sha256": "7710669165c6fa46a8509b833cd67b287db3143191dfee9480120b8c4cc33e0a"
+    },
+    {
+      "path": "probes/library-ui/source/ui.c",
+      "sha256": "397c7f89f56f2ad2cf6f5e6249094cf211d7546973af7dfd6c19c95e1f648706"
+    },
+    {
+      "path": "probes/library-ui/source/ui.h",
+      "sha256": "5b86dc9ff2500240d0053a9f9eaa33c339f371c48202a96241f9745de03d295e"
+    }
+  ],
+  "followup_tests": [
+    {
+      "path": "probes/game-launch/tests/test_nup_layout.c",
+      "sha256": "8cdcbe8d317eb0feec30081a3af93129adb203c925e7d04fc71548a8e8eb8cd9"
+    },
+    {
+      "path": "probes/game-launch/tests/test_nup_meta.c",
+      "sha256": "6bffc507ca842af3056866fe40ba1b708ee50d358ef65ccd885d0f2766fc26df"
+    }
+  ],
+  "followup_frontend_makefile_sha256": "280a354df3a2627549747f8d49e0338adf9e839336452e6a22580f1cdcb5a93c"
+}

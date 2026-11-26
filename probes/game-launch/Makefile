@@ -19,7 +19,7 @@ ARCH := $(SWITCH2_CPU) -mtp=soft -fPIE
 CFLAGS := -g -Wall -Wextra -O2 -ffunction-sections $(ARCH) $(INCLUDE) -D__SWITCH__ -ffreestanding -fno-builtin
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
 ASFLAGS := -g $(ARCH)
-LDFLAGS := -Wl,--undefined=nx2_launch_layout,--undefined=nx2_preflight_worker -specs=$(LIBNX)/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+LDFLAGS := -Wl,--undefined=nx2_launch_layout,--undefined=nx2_preflight_worker -Wl,--wrap=__libnx_exception_entry -Wl,--wrap=svcBreak,--wrap=svcExitProcess,--wrap=svcReturnFromException,--wrap=abort,--wrap=svcExitThread -specs=$(LIBNX)/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LIBS := -lnx
 LIBDIRS := $(PORTLIBS) $(LIBNX)
 export NO_ICON := 1

@@ -178,6 +178,9 @@ const Nx2PatchSpec nx2_patch_specs[] = {
      "nvnBootstrapLoader", "nvnBootstrapLoader", (uintptr_t)nx2_bootstrap_gate},
     {5, 0, 0, UINT64_MAX, 2, offsetof(Nx2LaunchApi, original_os_init),
      "nnosInitialize", "nnosInitialize", (uintptr_t)nx2_os_init_gate},
+    {5, 0, 0, UINT64_MAX, 2, offsetof(Nx2LaunchApi, original_connect_hipc),
+     "_ZN2nn2sf4hipc20ConnectToHipcServiceEPNS_3svc6HandleEPKc",
+     "SDK ConnectToHipcService", (uintptr_t)nx2_connect_hipc_gate},
     {5, 0, 0, UINT64_MAX, 2, UINT64_MAX,
      "_ZN2nn2ro10InitializeEv", "Guest RO Initialize",
      (uintptr_t)nx2_ro_initialize_compat},
@@ -191,6 +194,8 @@ const Nx2PatchSpec nx2_patch_specs[] = {
     {5, 0, 0, UINT64_MAX, 1, UINT64_MAX,
      "_ZN2nn2fs6detail18IsEnabledAccessLogEj",
      "_ZN2nn2fs6detail18IsEnabledAccessLogEj", (uintptr_t)nx2_false},
+    {5, 0, 0, 19, 2, UINT64_MAX, 0, "MapSharedMemory", (uintptr_t)nx2_map_shared},
+    {5, 0, 0, 20, 2, UINT64_MAX, 0, "UnmapSharedMemory", (uintptr_t)nx2_unmap_shared},
 };
 const uint64_t nx2_patch_spec_count =
     sizeof(nx2_patch_specs) / sizeof(nx2_patch_specs[0]);

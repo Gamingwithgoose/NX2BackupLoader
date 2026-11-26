@@ -6,6 +6,7 @@
  */
 #include "guest_fsp_vfs.h"
 #include "launch.h"
+#include "native_compat.h"
 #include "cache_catalog.h"
 #include "cache_route.h"
 #include <switch.h>
@@ -301,13 +302,13 @@ static int data_buffer(const HipcParsedRequest *req,int output,
 }
 static int scoped_path(const VfsObject *obj,const char *path,
                        char out[NX2_PATH_MAX]){
- if(!obj->root[0])return 0;
+ if(!obj->root[0] && obj->token!=UINT64_MAX)return 0;
  while(*path=='/')path++;
  /* Use plain bounded copies, not formatted I/O from an IPC hook. */
  size_t nr=strlen(obj->root),np=strlen(path);
  if(nr>=NX2_PATH_MAX||np>NX2_PATH_MAX-nr-1)return 0;
  memcpy(out,obj->root,nr);
- if(np)out[nr++]='/';
+ if(np&&nr)out[nr++]='/';
  if(np>=NX2_PATH_MAX-nr)return 0;
  memcpy(out+nr,path,np);
  out[nr+np]=0;
@@ -344,7 +345,7 @@ static uint32_t do_fs(const VfsObject *obj,uint32_t cmd,
  uint64_t answer=0;uint32_t rc=NX2_FS_UNSUPPORTED,op=0;
  /* Initialize the isolated guest root only when creating contents.
   * Reads and file opens retain genuine not-found behavior. */
- if((cmd==0||cmd==2)&&!obj->read_only &&
+ if((cmd==0||cmd==2)&&!obj->read_only && obj->token!=UINT64_MAX &&
     strncmp(obj->root,"cache-storage/",14)!=0){
   /* Cache directories are created by RPC_CACHE_CREATE, not vsave-*. */
   uint32_t prepared=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,
@@ -558,6 +559,26 @@ static int save_namespace(uint8_t space,const unsigned char *attr,
  *p=0;
  return (size_t)(p-name)<128;
 }
+/* Preserve the existing account/device save paths while the SDK owns
+ * registration. Cache/BCAT/system saves stay separately namespaced. */
+static uint32_t sdk_save_root(uint8_t space,const unsigned char *attr,
+                              char name[128],int *profile){
+ *profile=0;
+ if(!nx2_native_compat || space!=1 || (attr[32]!=1 && attr[32]!=3))
+   return save_namespace(space,attr,name)?0:NX2_INVALID;
+ uint64_t app=read64(attr);
+ /* The native SDK may ask for the running host application (applet/OS
+  * identity). Both own identities route ONLY to this guest's private tree;
+  * foreign application IDs remain invalid. Never open the host's save. */
+ if(!nx2_profile_application_allowed(app,nx2_launch->guest_program_id,
+                                     nx2_launch->host_program_id))return NX2_INVALID;
+ Nx2UserId uid={0,0};
+ if(attr[32]==1){uid.lo=read64(attr+8);uid.hi=read64(attr+16);
+   if(!nx2_profile_has_uid(uid))return NX2_INVALID;}
+ uint32_t rc=nx2_rpc(RPC_SAVE_PROFILE_ROOT,uid.lo,uid.hi,128,0,name,0,0,0);
+ if(!rc)*profile=1;
+ return rc;
+}
 /* Shared-memory breadcrumbs replace synchronous RPC_LOG calls in
  * the FSP dispatch path. This avoids waiting for SD writes while the game
  * is inside a synchronous SendSyncRequest hook. */
@@ -603,10 +624,10 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
  }
  if(!obj.kind)
   fsp_stage(2,d,UINT32_MAX,0);
- uint32_t rc=NX2_FS_UNSUPPORTED,new_id=0;
+ uint32_t rc=NX2_FS_UNSUPPORTED,new_id=0;int native_save_open=0;
  uint32_t out_size=0;unsigned char out[192]={0};
  if(!obj.kind){
-  char name[128]={0};
+  char name[128]={0};int profile=0;
   if(d.command==34){
    /* GetCacheStorageSize: u16 index -> two u64 quota outputs.
     * These belong to the current virtual guest, not the MKW host. */
@@ -630,9 +651,9 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
     * never a native save created under Mario Kart World's identity.
     * Root names use the identical formatter as the corresponding open. */
    size_t minimum=d.command==22?0x90:0x80;
-   if(avail<minimum||!save_namespace(d.command==22?1:0,in,name))
-    rc=NX2_INVALID;
-   else if(in[32]==5){
+   if(avail<minimum)rc=NX2_INVALID;
+   else rc=sdk_save_root(d.command==22?1:0,in,name,&profile);
+   if(!rc && in[32]==5){
     /* Native CreateCacheStorage participates in the same quota and
      * directory lifecycle as the nn::fs high-level cache adapter. */
     uint64_t size=read64(in+0x40),journal=read64(in+0x48);
@@ -646,15 +667,15 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
      uint16_t index=(uint16_t)in[34]|((uint16_t)in[35]<<8);
      rc=nx2_rpc(RPC_CACHE_CREATE,index,size,journal,0,0,0,0,0);
     }
-   }else rc=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,name,0,0);
+   }else if(!rc && !profile)rc=nx2_rpc(RPC_VFS_PREPARE_ROOT,0,0,0,0,0,name,0,0);
    fsp_stage(rc?6:4,d,rc,0);
   }else{
    /* OpenSaveDataFileSystem [51], BySystemSaveDataId [52], or
     * OpenReadOnlySaveDataFileSystem [53].
     * Input = u8 SaveDataSpaceId + padding + 0x40 SaveDataAttribute. */
-   if(avail<0x48||!save_namespace(in[0],in+8,name))
-    rc=NX2_INVALID;
-   else{
+   if(avail<0x48)rc=NX2_INVALID;
+   else rc=sdk_save_root(in[0],in+8,name,&profile);
+   if(!rc){
     /* Real cache mounts must already exist. Unknown/foreign cache
      * identities cannot be silently mapped to an empty vsave-* root. */
     if(in[8+32]==5){
@@ -662,10 +683,11 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
      rc=nx2_ensure_guest_cache_storage(index);
     }else rc=0;
     if(!rc){
-     new_id=allocate_object(session,VFS_FS,d.command==53,0,name);
+     new_id=allocate_object(session,VFS_FS,d.command==53,profile?UINT64_MAX:0,name);
      rc=new_id?0:NX2_LIMIT;
     }
    }
+   native_save_open=!rc && profile;
    fsp_stage(rc?6:4,d,rc,new_id);
   }
  }else{
@@ -681,10 +703,15 @@ int nx2_guest_fsp_route(void *buffer,uint64_t size,uint32_t session,
   else if(obj.kind==VFS_CACHE_READER)
    rc=do_cache_reader(&obj,d.command,&rq,out,&out_size);
  }
+ if(rc)nx2_rpc(RPC_LOG,d.command,rc,obj.kind,session,0,"VFS_OPERATION_FAILED","[private namespace]",0);
  if(!write_reply(buffer,size,1,rc,rc?0:new_id,
                  rc?0:out,rc?0:out_size,token)){
   if(!obj.kind)fsp_stage(6,d,NX2_INVALID,new_id);
   return 0;
+ }
+ if(native_save_open){
+  __atomic_fetch_add(&nx2_launch->sdk_save_open_count,1,__ATOMIC_RELEASE);
+  nx2_rpc(RPC_LOG,d.command,new_id,0,0,0,"SDK_SAVE_IPC_OPEN",0,0);
  }
  if(!obj.kind)fsp_stage(5,d,rc,new_id);
  return 1;

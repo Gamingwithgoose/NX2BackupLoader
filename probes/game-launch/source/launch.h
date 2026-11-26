@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include "rom_view.h"
 #define NX2_RPC_SLOTS 16
+#define NX2_LOG_SLOTS 32
 #define NX2_RPC_TRACE_SLOTS 32
 #define NX2_PATH_MAX 1024
 #define NX2_OBJECTS 512
@@ -13,7 +14,7 @@
 #define NX2_NOT_FOUND 0x202U
 #define NX2_LIMIT 0x2f6a02U
 
-enum {RPC_ROM_READ=1,RPC_SAVE_CREATE,RPC_SAVE_DELETE,RPC_SAVE_MKDIR,RPC_SAVE_RMDIR,RPC_SAVE_RMTREE,RPC_SAVE_CLEAN,RPC_SAVE_RENAME_FILE,RPC_SAVE_RENAME_DIR,RPC_SAVE_TYPE,RPC_SAVE_FREE,RPC_SAVE_TOTAL,RPC_SAVE_OPEN,RPC_SAVE_READ,RPC_SAVE_WRITE,RPC_SAVE_FLUSH,RPC_SAVE_RESIZE,RPC_SAVE_SIZE,RPC_SAVE_CLOSE,RPC_DIR_OPEN,RPC_DIR_READ,RPC_DIR_COUNT,RPC_DIR_CLOSE,RPC_COMMIT,RPC_LOG,RPC_ABORT,RPC_MAIN_ENTERED,RPC_ROM_MOUNT,RPC_SAVE_MOUNT,RPC_IPC,RPC_SAVE_TIMESTAMP,RPC_BREAK,RPC_PHYSICAL_MEMORY,RPC_CACHE_CREATE,RPC_CACHE_CHECK,RPC_VFS_PREPARE_ROOT,RPC_SAVE_ARCHIVE_EXISTS,RPC_SAVE_ARCHIVE_CREATE,RPC_CACHE_ENUM,RPC_SAVE_OPERATE_RANGE,RPC_CACHE_QUERY_SIZE,RPC_CACHE_PROVISION,RPC_SAVE_PROFILE_BIND,RPC_SAVE_PROFILE_EXISTS,RPC_SAVE_PROFILE_CREATE,RPC_SAVE_ATTRIBUTE};
+enum {RPC_ROM_READ=1,RPC_SAVE_CREATE,RPC_SAVE_DELETE,RPC_SAVE_MKDIR,RPC_SAVE_RMDIR,RPC_SAVE_RMTREE,RPC_SAVE_CLEAN,RPC_SAVE_RENAME_FILE,RPC_SAVE_RENAME_DIR,RPC_SAVE_TYPE,RPC_SAVE_FREE,RPC_SAVE_TOTAL,RPC_SAVE_OPEN,RPC_SAVE_READ,RPC_SAVE_WRITE,RPC_SAVE_FLUSH,RPC_SAVE_RESIZE,RPC_SAVE_SIZE,RPC_SAVE_CLOSE,RPC_DIR_OPEN,RPC_DIR_READ,RPC_DIR_COUNT,RPC_DIR_CLOSE,RPC_COMMIT,RPC_LOG,RPC_ABORT,RPC_MAIN_ENTERED,RPC_ROM_MOUNT,RPC_SAVE_MOUNT,RPC_IPC,RPC_SAVE_TIMESTAMP,RPC_BREAK,RPC_PHYSICAL_MEMORY,RPC_CACHE_CREATE,RPC_CACHE_CHECK,RPC_VFS_PREPARE_ROOT,RPC_SAVE_ARCHIVE_EXISTS,RPC_SAVE_ARCHIVE_CREATE,RPC_CACHE_ENUM,RPC_SAVE_OPERATE_RANGE,RPC_CACHE_QUERY_SIZE,RPC_CACHE_PROVISION,RPC_SAVE_PROFILE_BIND,RPC_SAVE_PROFILE_EXISTS,RPC_SAVE_PROFILE_CREATE,RPC_SAVE_ATTRIBUTE,RPC_SAVE_PROFILE_ROOT};
 typedef struct {
  uint32_t state,op,result,reserved;
  /* Published before state=2; observed by watchdog without altering RPC. */
@@ -23,6 +24,13 @@ typedef struct {
  void *buffer;
  char path[NX2_PATH_MAX],path2[NX2_PATH_MAX];
 } Nx2Request;
+/* Best-effort diagnostics and completed-mount notices never borrow an I/O slot.
+ * Slots own their strings and values; no guest pointers outlive the call. */
+typedef struct {
+ uint32_t state,op; /* only RPC_LOG or RPC_SAVE_MOUNT notifications */
+ uint64_t a,b,c,d;
+ char path[NX2_PATH_MAX],path2[NX2_PATH_MAX];
+} Nx2LogRecord;
 /* Append-only ring. sequence is published last, so the host can reject
  * incomplete entries without relying on the faulted thread. */
 typedef struct {
@@ -57,6 +65,8 @@ typedef struct {
  void (*original_present)(void *queue,void *window,int texture_index);
  void (*rtld)(uint64_t,uint64_t);
  void (*original_os_init)(uint32_t,const void *);
+ /* Optional SDK service resolver observer; always forwards the real result. */
+ uint32_t (*original_connect_hipc)(uint32_t *,const char *);
  uint32_t (*original_device_initialize)(void *,const void *);
  uint32_t (*original_queue_initialize)(void *,const void *);
  uint32_t (*original_window_initialize)(void *,const void *);
@@ -65,6 +75,24 @@ typedef struct {
  void (*original_queue_finish)(void *);
  uint32_t (*original_window_acquire)(void *,void *,int *);
  uint32_t (*original_queue_acquire)(void *,void *,int *);
+ void (*original_queue_fence)(void *,void *,int,int);
+ void (*original_queue_wait)(void *,const void *);
+ int (*original_sync_wait)(const void *,uint64_t);
+ int (*original_queue_error)(void *,void *);
+ uint8_t (*original_pool_init)(void *,const void *);
+ void (*original_pool_finalize)(void *);
+ void (*original_pool_storage)(void *,void *,size_t);
+ void (*original_pool_flags)(void *,int);
+ uint64_t (*original_pool_address)(const void *);
+ void (*original_cmd_begin)(void *);
+ uint64_t (*original_cmd_end)(void *);
+ void (*original_cmd_memory)(void *,const void *,ptrdiff_t,size_t);
+ void (*original_control_memory)(void *,void *,size_t);
+ uint8_t (*original_texture_init)(void *,const void *);
+ void (*original_texture_finalize)(void *);
+ uint8_t (*original_sync_init)(void *,void *);
+ void (*original_sync_finalize)(void *);
+ uint8_t (*original_pool_map_virtual)(void *,int,const void *);
 } Nx2LaunchApi;
 typedef struct {
  uint64_t begin,end;uint32_t type,permission;
@@ -76,7 +104,7 @@ typedef struct {
 /* Experimental all-service IPC metadata trace; 0 bytes of guest payload. */
 #define NX2_IPC_EVENT_SLOTS 16384U
 #define NX2_NVN_STAGE_COUNT 5
-#define NX2_GPU_BOUNDARY_RING_SLOTS 256U
+#define NX2_GPU_BOUNDARY_RING_SLOTS 2048U
 /* A snapshot is a last-N timeline, not a GPU/CPU stack trace. */
 typedef struct {
  uint32_t sequence,kind;
@@ -84,7 +112,13 @@ typedef struct {
  uint64_t queue,window;
  int32_t texture_index;
  uint32_t reserved;
+ uint64_t detail;
 } Nx2GpuBoundary;
+#define NX2_SHARED_TRACE_SLOTS 4096U
+typedef struct {
+ uint32_t sequence,operation,phase,handle,permission,result,id;
+ uint64_t tick,tls,caller,address,bytes,owner;
+} Nx2SharedEvent;
 #define NX2_SYNC_FLIGHT_SLOTS 128U
 /* Observe only the outer native sync IPC call. Entry/return snapshots
  * cannot identify kernel wait reason without additional OS support. */
@@ -113,21 +147,28 @@ typedef struct {
  Nx2RomView rom;
  Nx2LaunchApi api;
  Nx2Request requests[NX2_RPC_SLOTS];
+ Nx2LogRecord logs[NX2_LOG_SLOTS];
+ uint32_t log_enqueued,log_drained,log_dropped,log_next;
  uint32_t rpc_trace_next;
  Nx2RpcTrace rpc_trace[NX2_RPC_TRACE_SLOTS];
  Nx2Object objects[NX2_OBJECTS];
  uintptr_t storage_table[10],fs_table[24],file_table[10],dir_table[6];
  Nx2Object storage,save_fs;
  uint64_t heap_base,heap_capacity,heap_size;
- uint64_t guest_program_id;
+ /* Logical heap layout can include an unmapped virtual reservation.
+  * Never used as permission to fabricate physical allocation success. */
+ uint64_t guest_virtual_reserve,guest_logical_budget,guest_program_bytes,physical_floor;
+ uint64_t guest_program_id,host_program_id;
  uint64_t arena_base,arena_capacity,arena_used;
  uint32_t worker_handle,stage,finished,abort_requested;
- uint32_t late_trace_active; /* host arms diagnostics on successful save mount */
+ uint32_t late_trace_active; /* diagnostic only; armed after real SDK registration */
+ uint32_t sdk_save_open_count; /* native IPC open, NOT proof of SDK registration */
  /* Guest-side C++ filesystem callback entry sites (before RPC helpers). */
  uint32_t fs_guest_read_entries,fs_guest_read_returns;
  uint64_t fs_guest_read_caller,fs_guest_read_offset,fs_guest_read_size;
  uint32_t fs_guest_read_result;
  uint32_t save_gate_phase,save_gate_result;
+ uint32_t save_notice_enqueued,save_notice_served,save_notice_dropped;
  uint64_t save_gate_caller;
  uint32_t guest_main_returned;
  uint64_t fsp_denied,rom_reads,save_calls,main_entered,frames;
@@ -149,6 +190,8 @@ typedef struct {
  uint64_t nvn_stage_last_tls[NX2_NVN_STAGE_COUNT];
  uint64_t nvn_stage_last_tick[NX2_NVN_STAGE_COUNT];
  uint64_t nvn_stage_return_tick[NX2_NVN_STAGE_COUNT];
+ uint32_t shared_trace_next,shared_trace_id;
+ Nx2SharedEvent shared_trace[NX2_SHARED_TRACE_SLOTS];
  uint32_t gpu_boundary_next;
  Nx2GpuBoundary gpu_boundary[NX2_GPU_BOUNDARY_RING_SLOTS];
  uint32_t ipc_trace_next,ipc_trace_begins,ipc_trace_ends;
@@ -183,6 +226,8 @@ uint32_t nx2_connect(uint32_t *,const char *);
 uint32_t nx2_sync(uint32_t);
 uint32_t nx2_sync_buffer(void *,uint64_t,uint32_t);
 uint32_t nx2_close_handle(uint32_t);
+uint32_t nx2_map_shared(uint32_t,uint64_t,uint64_t,uint32_t);
+uint32_t nx2_unmap_shared(uint32_t,uint64_t,uint64_t);
 void nx2_break(uint32_t,uint64_t,uint64_t);
 void nx2_debug(const char *,uint64_t);
 void nx2_main_gate(void);
@@ -233,5 +278,14 @@ uint32_t nx2_save_flags(uint32_t *);
 uint32_t nx2_true(void);
 
 void nx2_os_init_gate(uint32_t,const void *);
+uint32_t nx2_create_thread(uint32_t *,uintptr_t,uintptr_t,uintptr_t,int32_t,int32_t);
+uint32_t nx2_start_thread(uint32_t);
+uint32_t nx2_wait_sync(int32_t *,const uint32_t *,int32_t,int64_t);
+uint32_t nx2_arbitrate_lock(uint32_t,uintptr_t,uint32_t);
+uint32_t nx2_arbitrate_unlock(uintptr_t);
+uint32_t nx2_wait_key(uintptr_t,uintptr_t,uint32_t,int64_t);
+void nx2_signal_key(uintptr_t,int32_t);
+uint32_t nx2_set_memory_permission(uintptr_t,uint64_t,uint32_t);
+void nx2_exit_thread_trace(void);
 uint32_t nx2_map_physical(uint64_t,uint64_t);
 uint32_t nx2_unmap_physical(uint64_t,uint64_t);

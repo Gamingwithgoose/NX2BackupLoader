@@ -15,3 +15,9 @@ static inline int nx2_profile_relative(char *dst,size_t cap,Nx2UserId u){
                (unsigned long long)u.lo,(unsigned long long)u.hi);
  return n>0&&(size_t)n<cap;
 }
+
+/* Native SDK current-application requests may carry the host identity.
+ * This only authorizes routing into the selected guest's private SD tree. */
+static inline int nx2_profile_application_allowed(uint64_t app,uint64_t guest,uint64_t host){
+ return !app || app==guest || (host && app==host);
+}

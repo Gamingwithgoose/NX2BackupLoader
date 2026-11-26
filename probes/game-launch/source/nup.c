@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "nup.h"
+#include "nup_layout.h"
+#include "nup_meta.h"
 #include <limits.h>
 #ifdef _WIN32
 #define nup_seek _fseeki64
@@ -12,6 +14,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 
 static uint32_t rd32(const unsigned char *p) {
   return (uint32_t)p[0] | (uint32_t)p[1]<<8 |
@@ -71,6 +76,43 @@ static void sha256(const unsigned char *data, size_t size, unsigned char out[32]
   for (unsigned i=0;i<8;i++) for(unsigned j=0;j<4;j++)
     out[4*i+j]=(unsigned char)(h[i]>>(24-8*j));
 }
+/* Same base/update program, without conflating DLC or unrelated applications.
+ * The patch-title bit is the standard 0x800; several NUP producers already
+ * store the base ID in update records. No title-specific IDs are used. */
+static int same_program(uint64_t a,uint64_t b){
+ return (a&~UINT64_C(0x800))==(b&~UINT64_C(0x800));
+}
+/* Separate program selection from asset layering, as nx2-flow game.c does.
+ * Never combine executable modules from different program versions. */
+static int nup_select_runnable(const unsigned char *toc,uint32_t packages,
+                               uint32_t *selected,int *updated){
+ uint32_t anchor=UINT32_MAX;
+ for(uint32_t i=0;i<packages;i++)if(toc[48+(size_t)i*64+24]==0){anchor=i;break;}
+ if(anchor==UINT32_MAX)for(uint32_t i=0;i<packages;i++){
+  const unsigned char *p=toc+48+(size_t)i*64;
+  if(p[24]==1&&(p[25]&1)){anchor=i;break;}
+ }
+ if(anchor==UINT32_MAX)return 0;
+ uint64_t id=rd64(toc+48+(size_t)anchor*64);
+ uint32_t first_assets=UINT32_MAX;int have_assets=0;
+ for(uint32_t i=0;i<packages;i++){
+  const unsigned char *p=toc+48+(size_t)i*64;
+  if((p[24]!=0&&p[24]!=1)||!same_program(id,rd64(p))||rd32(p+16)==UINT32_MAX)continue;
+  uint32_t version=p[24]==0?0:rd32(p+20);
+  if(!have_assets||version<first_assets)first_assets=version;
+  have_assets=1;
+ }
+ uint32_t best=UINT32_MAX,version=0;
+ for(uint32_t i=0;i<packages;i++){
+  const unsigned char *p=toc+48+(size_t)i*64;
+  uint32_t v=p[24]==0?0:rd32(p+20);
+  if((p[24]!=0&&p[24]!=1)||!same_program(id,rd64(p))||
+     rd32(p+12)==UINT32_MAX||!have_assets||v<first_assets)continue;
+  if(best==UINT32_MAX||v>=version){best=i;version=v;}
+ }
+ if(best==UINT32_MAX)return 0;
+ *selected=best;*updated=toc[48+(size_t)best*64+24]==1;return 1;
+}
 static const char *probe_error = "Not checked";
 static char probe_details[160];
 const char *nx2_nup_probe_error(void) { return probe_error; }
@@ -106,14 +148,10 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
       toc_size<48+(uint64_t)packages*64) goto done;
   uint64_t dirs=rd64(toc+8), nfiles=rd64(toc+16);
   uint64_t pool_off=rd64(toc+0x18), pool_len=rd64(toc+0x20);
-  uint64_t start=48+(uint64_t)packages*64;
-  probe_error = "NUP directory/file counts exceed supported limits";
-  if (!dirs || dirs>262144 || nfiles>262144 ||
-      dirs>(toc_size-start)/24) goto done;
-  start+=dirs*24;
-  if (nfiles>(toc_size-start)/80) goto done;
-  start+=nfiles*80;
-  if (pool_off<start || pool_off>toc_size || pool_len>toc_size-pool_off) goto done;
+  /* Node counts are bounded by the verified TOC and 32-bit child IDs.
+   * A fixed 262144 ceiling rejected otherwise valid large game archives. */
+  probe_error = "NUP node counts do not fit its table or child IDs";
+  if(!nx2_nup_layout(toc_size,packages,dirs,nfiles,pool_off,pool_len,NULL,NULL))goto done;
   probe_error = "NUP has no base-game package";
   for (uint32_t i=0;i<packages;i++) {
     const unsigned char *p=toc+48+(size_t)i*64;
@@ -129,26 +167,29 @@ int nx2_nup_probe(const char *path, uint64_t *title_id, uint64_t *files) {
       probe_error=probe_details;
       goto done;
     }
-    if (kind==0 || (kind==1 && (flags&1))) {
-      if(exefs==UINT32_MAX || romfs==UINT32_MAX) {
-        snprintf(probe_details,sizeof(probe_details),
-          "Runnable pkg %u missing ExeFS/RomFS (exefs=%u romfs=%u)",i,exefs,romfs);
-        probe_error=probe_details;
-        goto done;
-      }
-      if(title_id)*title_id=id;
-      if(files)*files=nfiles;
-      ok=1;
-      probe_error=kind==0?"Ready for experimental launch":
-                           "Standalone update: experimental launch";
-      break;
+    /* Do not reject a partial base here: a later complete update can
+     * supply an executable RomFS view. Selection happens after validation. */
+    (void)id;
+  }
+  uint32_t selected=UINT32_MAX;
+  int selected_update=0;
+  if(nup_select_runnable(toc,packages,&selected,&selected_update)){
+    const unsigned char *p=toc+48+(size_t)selected*64;
+    /* Preserve the base application identity when an update is selected. */
+    uint64_t id=rd64(p);
+    if(selected_update)for(uint32_t i=0;i<packages;i++){
+      const unsigned char *base=toc+48+(size_t)i*64;
+      if(base[24]==0&&same_program(id,rd64(base))){id=rd64(base);break;}
     }
-    if(i==0) {
-      snprintf(probe_details,sizeof(probe_details),
-        "No base game: first pkg kind=%u flags=%u id=%016llx",
-        kind,flags,(unsigned long long)id);
-      probe_error=probe_details;
-    }
+    if(title_id)*title_id=id;
+    if(files)*files=nfiles;
+    ok=1;
+    snprintf(probe_details,sizeof(probe_details),
+      "Ready: %s pkg %u (program + layered RomFS)",
+      selected_update?"update":"base",selected);
+    probe_error=probe_details;
+  }else{
+    probe_error="No complete runnable base/update ExeFS+RomFS package";
   }
 done:
   free(toc);
@@ -156,15 +197,22 @@ done:
   return ok;
 }
 
-/* Base-package contents are a virtual filesystem. Read a file by name and
+/* Ordered base/update contents form a virtual filesystem. Read a file by name and
  * offset rather than unpacking its siblings onto the SD card. */
+typedef struct {uint32_t root,version,package;} NupLayer;
 typedef struct {
   FILE *f;
+#ifdef __SWITCH__
+  FsFile native_file;
+  int native_open;
+#endif
   unsigned char *toc;
+  unsigned char *ordered; /* validated bytewise child ordering; optional */
   size_t toc_size;
   uint64_t blob_start, file_length;
   uint64_t ndirs, nfiles;
   uint32_t exefs_dir, romfs_dir;
+  NupLayer *layers;uint32_t layer_count;
   uint64_t meta_offset, meta_size;
   const unsigned char *dirs, *files, *children, *pool;
   uint64_t child_count, pool_size;
@@ -176,6 +224,8 @@ typedef struct {
   uint64_t cached_stamp[2],cache_clock;
 } NupMount;
 static NupMount mounted;
+/* Single storage worker owns this cache, as it owns the decoder cursors. */
+static struct {uint64_t hash;uint32_t file,valid;char path[1100];} path_cache[128];
 
 /* Standalone Zstandard decoder, vendored from its dual BSD/GPL source. */
 extern size_t ZSTD_decompress(void *,size_t,const void *,size_t);
@@ -226,6 +276,10 @@ static int safe_name(const unsigned char *s,uint32_t n) {
     if(!s[i]||s[i]=='/'||s[i]=='\\'||s[i]==':')return 0;
   return 1;
 }
+static int compare_name(const unsigned char *a,uint32_t an,const unsigned char *b,size_t bn){
+ size_t n=an<bn?an:bn;int c=memcmp(a,b,n);
+ return c?c:an<bn?-1:an>bn?1:0;
+}
 static uint32_t lookup_child(NupMount *m,uint32_t dir,
                              const char *name,size_t len) {
   if(dir>=m->ndirs)return UINT32_MAX;
@@ -233,6 +287,16 @@ static uint32_t lookup_child(NupMount *m,uint32_t dir,
   uint32_t start=rd32(d+8),count=rd32(d+12);
   if(start>m->child_count||count>m->child_count-start)
     return UINT32_MAX;
+  if(m->ordered&&m->ordered[dir]){
+    uint32_t lo=0,hi=count;
+    while(lo<hi){
+      uint32_t mid=lo+(hi-lo)/2,node=dirchild(m,dir,mid),n=0;
+      const unsigned char *p=name_for(m,node,&n);if(!p)return UINT32_MAX;
+      int cmp=compare_name(p,n,(const unsigned char *)name,len);
+      if(!cmp)return node;if(cmp<0)lo=mid+1;else hi=mid;
+    }
+    return UINT32_MAX;
+  }
   /* Names are sorted in the NUP TOC. A linear fallback also works if
    * the producer hasn't preserved bytewise ordering. */
   for(uint32_t i=0;i<count;i++) {
@@ -242,30 +306,54 @@ static uint32_t lookup_child(NupMount *m,uint32_t dir,
   }
   return UINT32_MAX;
 }
-static uint32_t lookup_file(const char *path) {
-  if(!mounted.f||!path)return UINT32_MAX;
-  uint32_t dir;
-  if(!strncmp(path,"romfs/",6)) {
-    dir=mounted.romfs_dir;path+=6;
-  } else if(!strncmp(path,"exefs/",6)) {
-    dir=mounted.exefs_dir;path+=6;
-  } else return UINT32_MAX;
-  if(dir==UINT32_MAX)return UINT32_MAX;
-  while(*path) {
-    const char *slash=strchr(path,'/');
-    size_t len=slash?(size_t)(slash-path):strlen(path);
-    if(!len||len>255)return UINT32_MAX;
-    uint32_t node=lookup_child(&mounted,dir,path,len);
-    if(node==UINT32_MAX)return UINT32_MAX;
-    if(!slash)return node>=mounted.ndirs?node-mounted.ndirs:UINT32_MAX;
-    if(node>=mounted.ndirs)return UINT32_MAX;
-    dir=node;path=slash+1;
+static uint32_t lookup_file_uncached(const char *path) {
+ if(!mounted.f||!path)return UINT32_MAX;
+ /* Header validation bounds packages/layers to 4096. This is scratch on
+  * the serialized storage worker, not a per-file heap allocation. */
+ uint32_t dirs[4096],count=0;
+ if(!strncmp(path,"romfs/",6)){
+  path+=6;count=mounted.layer_count;
+  for(uint32_t i=0;i<count;i++)dirs[i]=mounted.layers[count-1-i].root;
+ }else if(!strncmp(path,"exefs/",6)){path+=6;dirs[0]=mounted.exefs_dir;count=1;}
+ else return UINT32_MAX;
+ while(*path){
+  const char *slash=strchr(path,'/');size_t len=slash?(size_t)(slash-path):strlen(path);
+  if(!len||len>255)return UINT32_MAX;
+  uint32_t winner=UINT32_MAX;int barrier=0;
+  for(uint32_t i=0;i<count;i++){
+   if(barrier||dirs[i]==UINT32_MAX){dirs[i]=UINT32_MAX;continue;}
+   uint32_t node=lookup_child(&mounted,dirs[i],path,len);
+   if(node==UINT32_MAX){dirs[i]=UINT32_MAX;continue;}
+   if(winner==UINT32_MAX)winner=node;
+   if(node>=mounted.ndirs){barrier=1;dirs[i]=UINT32_MAX;}
+   else dirs[i]=node;
   }
-  return UINT32_MAX;
+  if(winner==UINT32_MAX)return UINT32_MAX;
+  if(!slash)return winner>=mounted.ndirs?winner-mounted.ndirs:UINT32_MAX;
+  if(winner>=mounted.ndirs)return UINT32_MAX;
+  path=slash+1;
+ }
+ return UINT32_MAX;
+}
+static uint32_t lookup_file(const char *path){
+ if(!path||!mounted.f)return UINT32_MAX;
+ size_t n=strlen(path);if(n>=sizeof(path_cache[0].path))return lookup_file_uncached(path);
+ uint64_t hash=UINT64_C(14695981039346656037);
+ for(size_t i=0;i<n;i++)hash=(hash^(unsigned char)path[i])*UINT64_C(1099511628211);
+ unsigned slot=(unsigned)hash&127;
+ if(path_cache[slot].valid&&path_cache[slot].hash==hash&&!strcmp(path_cache[slot].path,path))return path_cache[slot].file;
+ uint32_t file=lookup_file_uncached(path);memcpy(path_cache[slot].path,path,n+1);
+ path_cache[slot].hash=hash;path_cache[slot].file=file;path_cache[slot].valid=1;return file;
 }
 void nx2_nup_close(void) {
+#ifdef __SWITCH__
+  if(mounted.native_open)fsFileClose(&mounted.native_file);
+#endif
   if(mounted.f)fclose(mounted.f);
+  free(mounted.layers);
+  free(mounted.ordered);
   free(mounted.toc);
+  memset(path_cache,0,sizeof(path_cache));
   for(unsigned j=0;j<2;j++){
     free(mounted.cached_bytes[j]);
     large_discard(&large_stream[j]);
@@ -274,6 +362,27 @@ void nx2_nup_close(void) {
   memset(&mounted,0,sizeof(mounted));
 }
 int nx2_nup_active(void) {return mounted.f!=NULL;}
+static int layer_compare(const void *a,const void *b){
+ const NupLayer *x=a,*y=b;
+ if(x->version!=y->version)return x->version<y->version?-1:1;
+ return x->package<y->package?-1:x->package>y->package?1:0;
+}
+static int make_layers(NupMount *m,const unsigned char *toc,uint32_t count,uint32_t selected){
+ const unsigned char *program=toc+48+(size_t)selected*64;
+ uint64_t id=rd64(program);uint32_t version=program[24]==0?0:rd32(program+20);
+ m->layers=calloc(count,sizeof(*m->layers));if(!m->layers)return 0;
+ for(uint32_t i=0;i<count;i++){
+  const unsigned char *p=toc+48+(size_t)i*64;
+  if((p[24]!=0&&p[24]!=1)||!same_program(id,rd64(p)))continue;
+  uint32_t v=p[24]==0?0:rd32(p+20),root=rd32(p+16);
+  if(v>version||root==UINT32_MAX)continue;
+  if(root>=m->ndirs)return 0;
+  m->layers[m->layer_count++]=(NupLayer){root,v,i};
+ }
+ if(!m->layer_count)return 0;
+ qsort(m->layers,m->layer_count,sizeof(*m->layers),layer_compare);
+ m->romfs_dir=m->layers[m->layer_count-1].root;return 1;
+}
 int nx2_nup_open(const char *path) {
   nx2_nup_close();
   probe_error="NUP mount not started";
@@ -311,16 +420,19 @@ int nx2_nup_open(const char *path) {
   nd=rd64(toc+8);nf=rd64(toc+16);
   uint64_t pool_off=rd64(toc+24),pool_len=rd64(toc+32);
   uint64_t dirs_start=48+(uint64_t)pc*64;
-  uint64_t files_start=dirs_start+nd*24,children_start=files_start+nf*80;
   probe_error="NUP TOC node or string-pool layout invalid";
-  if(!nd||nd>262144||nf>262144||children_start>pool_off||
-     pool_off>count||pool_len>count-pool_off||
-     (pool_off-children_start)%4) {
+  uint64_t files_start=0,children_start=0;
+  if(!nx2_nup_layout(count,pc,nd,nf,pool_off,pool_len,&files_start,&children_start)){
     free(toc);fclose(f);return 0;
   }
   NupMount m={0};
   m.f=f;m.toc=toc;m.toc_size=(size_t)count;
   m.blob_start=rd64(h+0x38);m.file_length=rd64(h+0x40);
+  probe_error="NUP mount size or blob bounds changed since discovery";
+  if(m.blob_start<128 || (m.blob_start&15) ||
+     count>m.blob_start-128 || m.file_length<m.blob_start ||
+     nup_seek(f,0,SEEK_END) || nup_tell(f)<0 ||
+     (uint64_t)nup_tell(f)!=m.file_length)goto fail;
   m.ndirs=nd;m.nfiles=nf;
   m.dirs=toc+dirs_start;m.files=toc+files_start;
   m.children=toc+children_start;m.pool=toc+pool_off;
@@ -328,29 +440,33 @@ int nx2_nup_open(const char *path) {
   m.exefs_dir=m.romfs_dir=UINT32_MAX;
   for(unsigned j=0;j<2;j++)m.cached_file[j]=UINT32_MAX;
   for(unsigned j=0;j<2;j++)large_stream[j].file=UINT32_MAX;
-  for(uint32_t i=0;i<pc;i++){
-    const unsigned char *p=toc+48+(size_t)i*64;
-    if(p[24]==0 || (p[24]==1 && (p[25]&1))){
-      m.exefs_dir=rd32(p+12);
-      m.romfs_dir=rd32(p+16);
-      m.meta_offset=rd64(p+32);
-      m.meta_size=rd32(p+40);
-      break;
-    }
-  }
-  probe_error="NUP executable or RomFS root invalid";
-  if(m.exefs_dir>=nd||m.romfs_dir>=nd)goto fail;
+  uint32_t selected=UINT32_MAX;
+  int selected_update=0;
+  probe_error="No complete runnable base/update ExeFS+RomFS package";
+  if(!nup_select_runnable(toc,pc,&selected,&selected_update))goto fail;
+  const unsigned char *chosen=toc+48+(size_t)selected*64;
+  m.exefs_dir=rd32(chosen+12);
+  m.romfs_dir=rd32(chosen+16);
+  m.meta_offset=rd64(chosen+32);
+  m.meta_size=rd32(chosen+40);
+  probe_error="NUP executable or ordered RomFS layers invalid";
+  if(m.exefs_dir>=nd||!make_layers(&m,toc,pc,selected))goto fail;
   probe_error="NUP invalid directory child/metadata";
+  m.ordered=calloc((size_t)nd,1);
   /* Validate every directory edge and file extent before exposing paths. */
   for(uint64_t i=0;i<nd;i++){
     const unsigned char *d=m.dirs+i*24;
     uint32_t first=rd32(d+8),n=rd32(d+12);
     if(first>m.child_count||n>m.child_count-first||rd64(d+16))goto fail;
+    const unsigned char *prior=NULL;uint32_t prior_len=0;int ordered=1;
     for(uint32_t j=0;j<n;j++){
       uint32_t child=dirchild(&m,(uint32_t)i,j),len=0;
       const unsigned char *nm=(uint64_t)child<nd+nf?name_for(&m,child,&len):NULL;
       if(!safe_name(nm,len))goto fail;
+      if(prior&&compare_name(prior,prior_len,nm,len)>=0)ordered=0;
+      prior=nm;prior_len=len;
     }
+    if(m.ordered)m.ordered[i]=(unsigned char)ordered;
   }
   probe_error="NUP invalid file name or compressed extent";
   for(uint64_t i=0;i<nf;i++){
@@ -366,16 +482,38 @@ int nx2_nup_open(const char *path) {
                     at>m.file_length||stored>m.file_length-at))||
        (codec==0 && stored!=size))goto fail;
   }
+#ifdef __SWITCH__
+  /* Runtime reads bypass FILE seek state and newlib stream locking. The
+   * archive stays owned by the single storage worker; TOC/NPDM metadata
+   * preparation can still use the original stream before guest entry. */
+  probe_error="NUP native SD file open failed";
+  FsFileSystem *sd=fsdevGetDeviceFileSystem("sdmc");
+  if(!sd || strncmp(path,"sdmc:/",6) ||
+     R_FAILED(fsFsOpenFile(sd,path+5,FsOpenMode_Read,&m.native_file)))goto fail;
+  m.native_open=1;
+  s64 actual=0;
+  Result native_rc=fsFileGetSize(&m.native_file,&actual);
+  if(R_FAILED(native_rc) || actual<0 || (uint64_t)actual!=m.file_length){
+    fsFileClose(&m.native_file);
+    probe_error="NUP native file size changed during mount";
+    goto fail;
+  }
+#endif
   mounted=m;
-  probe_error="NUP mounted successfully";
+  snprintf(probe_details,sizeof(probe_details),
+    "NUP mounted %s pkg %u layers=%u",
+    selected_update?"update":"base",selected,m.layer_count);
+  probe_error=probe_details;
   return 1;
 fail:
+  free(m.layers);
+  free(m.ordered);
   free(toc);
   fclose(f);
   return 0;
 }
 /* Metadata is outside the ExeFS file tree: package record 0x20/0x28
- * points to TLVs. Type 0 holds an independent NPDM copy. */
+ * points to TLVs. Known zero/one-based schemes hold an independent NPDM. */
 void *nx2_nup_package_npdm(size_t *length) {
   if(length)*length=0;
   if(!mounted.f || !mounted.meta_size || mounted.meta_size>0x100000 ||
@@ -395,7 +533,7 @@ void *nx2_nup_package_npdm(size_t *length) {
     uint16_t reserved=(uint16_t)(meta[pos+2]|(meta[pos+3]<<8));
     uint32_t n=rd32(meta+pos+4);pos+=8;
     if(reserved || n>mounted.meta_size-pos)break;
-    if(type==0 && n>=128 && !memcmp(meta+pos,"META",4)){
+    if((type==0||type==1) && nx2_meta_npdm(meta+pos,n)){
       void *copy=malloc(n);
       if(copy){memcpy(copy,meta+pos,n);if(length)*length=n;}
       free(meta);return copy;
@@ -405,10 +543,11 @@ void *nx2_nup_package_npdm(size_t *length) {
   free(meta);return NULL;
 }
 static const char *read_error="No archive read attempted";
+static char io_error[160];
 const char *nx2_nup_read_error(void){return read_error;}
 
 /* The worker mutates and the launcher watchdog reads this without RPC.
- * Stalling in fread does not prevent observing the last actual I/O phase. */
+ * A blocked backend call still leaves its last I/O phase observable. */
 static Nx2NupReadProgress read_progress;
 static void progress_begin(uint32_t file,uint32_t codec,uint64_t n){
  __atomic_store_n(&read_progress.active,0,__ATOMIC_RELEASE);
@@ -419,6 +558,10 @@ static void progress_begin(uint32_t file,uint32_t codec,uint64_t n){
  __atomic_store_n(&read_progress.decoded_bytes,0,__ATOMIC_RELAXED);
  __atomic_store_n(&read_progress.delivered_bytes,0,__ATOMIC_RELAXED);
  __atomic_store_n(&read_progress.phase,1,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.io_inflight,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.io_result,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.chunk_offset,0,__ATOMIC_RELAXED);
+ __atomic_store_n(&read_progress.chunk_bytes,0,__ATOMIC_RELAXED);
  __atomic_store_n(&read_progress.active,1,__ATOMIC_RELEASE);
 }
 static void progress_phase(uint32_t phase){
@@ -438,19 +581,51 @@ void nx2_nup_get_progress(Nx2NupReadProgress *out){
  out->sd_bytes=__atomic_load_n(&read_progress.sd_bytes,__ATOMIC_RELAXED);
  out->decoded_bytes=__atomic_load_n(&read_progress.decoded_bytes,__ATOMIC_RELAXED);
  out->delivered_bytes=__atomic_load_n(&read_progress.delivered_bytes,__ATOMIC_RELAXED);
+ out->chunk_offset=__atomic_load_n(&read_progress.chunk_offset,__ATOMIC_RELAXED);
+ out->chunk_bytes=__atomic_load_n(&read_progress.chunk_bytes,__ATOMIC_RELAXED);
+ out->io_result=__atomic_load_n(&read_progress.io_result,__ATOMIC_RELAXED);
+ out->io_inflight=__atomic_load_n(&read_progress.io_inflight,__ATOMIC_ACQUIRE);
+ out->native_io=__atomic_load_n(&read_progress.native_io,__ATOMIC_RELAXED);
 }
-/* Same real bytes as fread of the full request, but in 64 KiB SD calls.
- * A short native read is a failure, never a fabricated successful asset. */
-static int read_exact_chunks(FILE *f,void *dst,size_t length){
+/* Exact offset-based archive reads. A returned failure or short transfer
+ * stays a failure; no retries of an in-flight call or synthetic asset bytes. */
+static int read_archive(uint64_t offset,void *dst,size_t length){
  unsigned char *p=dst;
  size_t pos=0;
+ if(offset>mounted.file_length || length>mounted.file_length-offset){
+  read_error="NUP archive read exceeds mounted file bounds";return 0;
+ }
+#ifndef __SWITCH__
+ if(offset>INT64_MAX || nup_seek(mounted.f,(int64_t)offset,SEEK_SET)){
+  read_error="NUP archive seek failed";return 0;
+ }
+#endif
  progress_phase(2);
  while(pos<length){
   size_t want=length-pos;
-  if(want>0x10000U)want=0x10000U;
-  size_t got=fread(p+pos,1,want,f);
+  if(want>0x100000U)want=0x100000U;
+  __atomic_store_n(&read_progress.chunk_offset,offset+pos,__ATOMIC_RELAXED);
+  __atomic_store_n(&read_progress.chunk_bytes,(uint32_t)want,__ATOMIC_RELAXED);
+  __atomic_store_n(&read_progress.io_result,UINT32_MAX,__ATOMIC_RELAXED);
+  __atomic_store_n(&read_progress.io_inflight,1,__ATOMIC_RELEASE);
+  uint64_t got=0;uint32_t rc=0;
+#ifdef __SWITCH__
+  __atomic_store_n(&read_progress.native_io,1,__ATOMIC_RELAXED);
+  rc=fsFileRead(&mounted.native_file,offset+pos,p+pos,want,FsReadOption_None,&got);
+#else
+  got=fread(p+pos,1,want,mounted.f);
+  if(ferror(mounted.f))rc=1;
+#endif
   if(got)__atomic_fetch_add(&read_progress.sd_bytes,(uint64_t)got,__ATOMIC_RELAXED);
-  if(got!=want)return 0;
+  __atomic_store_n(&read_progress.io_result,rc,__ATOMIC_RELAXED);
+  __atomic_store_n(&read_progress.io_inflight,0,__ATOMIC_RELEASE);
+  if(rc || got!=want){
+   snprintf(io_error,sizeof(io_error),
+            "NUP I/O result=%08x offset=%llu requested=%llu read=%llu",
+            rc,(unsigned long long)(offset+pos),
+            (unsigned long long)want,(unsigned long long)got);
+   read_error=io_error;return 0;
+  }
   pos+=got;
  }
  return 1;
@@ -470,10 +645,6 @@ int nx2_nup_file_info(const char *path,uint64_t *size,unsigned *codec){
   if(size)*size=rd64(e+8);
   if(codec)*codec=e[64];
   return 1;
-}
-static int nup_seek_file(FILE *f,uint64_t offset) {
-  if(offset>INT64_MAX)return 0;
-  return nup_seek(f,(int64_t)offset,SEEK_SET)==0;
 }
 
 static int large_begin(NupLargeStream *s,uint32_t file,
@@ -537,10 +708,11 @@ static int read_large_compressed(const unsigned char *e,uint32_t file,
     if(s->input_pos==s->input_size && s->consumed<s->packed) {
       size_t n=(size_t)(s->packed-s->consumed);
       if(n>128*1024)n=128*1024;
-      if(s->consumed>UINT64_MAX-s->at ||
-         !nup_seek_file(mounted.f,s->at+s->consumed) ||
-         !read_exact_chunks(mounted.f,s->input,n)) {
-        read_error="Zstandard large-stream packed read failed";
+      if(s->consumed>UINT64_MAX-s->at){
+        read_error="Zstandard large-stream packed offset overflow";
+        large_discard(s);return 0;
+      }
+      if(!read_archive(s->at+s->consumed,s->input,n)) {
         large_discard(s);
         return 0;
       }
@@ -619,8 +791,7 @@ static int read_compressed(const unsigned char *e,uint32_t file,
       mounted.cached_file[slot]=UINT32_MAX;
       mounted.cached_size[slot]=0;
       unsigned char *raw=malloc((size_t)packed),*out=malloc((size_t)total);
-      if(!raw||!out||!nup_seek_file(mounted.f,at)||
-         !read_exact_chunks(mounted.f,raw,(size_t)packed)) {
+      if(!raw||!out||!read_archive(at,raw,(size_t)packed)) {
         free(raw);free(out);return 0;
       }
       progress_phase(3);
@@ -677,11 +848,11 @@ int nx2_nup_read(const char *path,uint64_t offset,void *dest,size_t length){
   if(e[64]==0) {
     /* Validate the absolute archive offset separately from virtual
      * extent bounds; an overflow must not alias another NUP entry. */
+    read_error="Raw NUP archive offset overflow";
     int ok=at<=UINT64_MAX-offset &&
-           nup_seek_file(mounted.f,at+offset) &&
-           read_exact_chunks(mounted.f,dest,length);
+           read_archive(at+offset,dest,length);
     if(ok)__atomic_fetch_add(&read_progress.delivered_bytes,(uint64_t)length,__ATOMIC_RELAXED);
-    read_error=ok?"OK":"Raw NUP seek/read failed";
+    if(ok)read_error="OK";
     progress_done();
     return ok;
   }
@@ -711,34 +882,71 @@ void *nx2_nup_read_all(const char *path,size_t limit,size_t *length){
   if(length)*length=(size_t)size;
   return p;
 }
-static int walk_dir(uint32_t d,char path[1024],unsigned depth,
-                    Nx2NupVisit visit,void *ctx,uint32_t stack[65]){
-  if(depth>=64)return 0;
-  for(unsigned i=0;i<depth;i++)if(stack[i]==d)return 0;
-  stack[depth]=d;
-  const unsigned char *node=mounted.dirs+(size_t)d*24;
-  uint32_t start=rd32(node+8),count=rd32(node+12);
-  size_t prefix=strlen(path);
-  for(uint32_t i=0;i<count;i++){
-    uint32_t child=rd32(mounted.children+(size_t)(start+i)*4),len=0;
-    const unsigned char *name=name_for(&mounted,child,&len);
-    if(!safe_name(name,len))return 0;
-    if(len==8&&!memcmp(name,".listing",8))continue;
-    size_t add=(prefix?1:0)+len;
-    if(prefix+add>=1024)return 0;
-    char *dst=path+prefix;
-    if(prefix)*dst++='/';
-    memcpy(dst,name,len);dst[len]=0;
-    int directory=child<mounted.ndirs;
-    uint64_t size=directory?0:rd64(mounted.files+(size_t)(child-mounted.ndirs)*80+8);
-    if(!visit(ctx,path,directory,size))return 0;
-    if(directory && !walk_dir(child,path,depth+1,visit,ctx,stack))return 0;
-    path[prefix]=0;
-  }
-  return 1;
+/* Merge directory entries by name and layer priority without copying assets
+ * or allocating a full second path table. Scratch lives only during indexing. */
+typedef struct {uint32_t node,rank,ordinal;} NupUnionChild;
+typedef struct NupUnionFrame {
+ const NupUnionChild *roots;size_t count;
+ const struct NupUnionFrame *parent;
+} NupUnionFrame;
+static int union_child_compare(const void *a,const void *b){
+ const NupUnionChild *x=a,*y=b;uint32_t xn=0,yn=0;
+ const unsigned char *xs=name_for(&mounted,x->node,&xn),*ys=name_for(&mounted,y->node,&yn);
+ int c=compare_name(xs,xn,ys,yn);if(c)return c;
+ if(x->rank!=y->rank)return x->rank>y->rank?-1:1;
+ return x->ordinal<y->ordinal?-1:x->ordinal>y->ordinal?1:0;
 }
-int nx2_nup_romfs_walk(Nx2NupVisit visit,void *context) {
-  if(!mounted.f||mounted.romfs_dir>=mounted.ndirs||!visit)return 0;
-  char path[1024]={0};uint32_t stack[65]={0};
-  return walk_dir(mounted.romfs_dir,path,0,visit,context,stack);
+static int walk_union(const NupUnionChild *roots,size_t root_count,char path[1024],
+                      unsigned depth,Nx2NupVisit visit,void *ctx,const NupUnionFrame *parent){
+ if(depth>=64)return 0;
+ size_t total=0;uint32_t previous_rank=UINT32_MAX;
+ for(size_t i=0;i<root_count;i++){
+  if(roots[i].rank==previous_rank)continue;previous_rank=roots[i].rank;
+  uint32_t d=roots[i].node;if(d>=mounted.ndirs)break;
+  for(const NupUnionFrame *f=parent;f;f=f->parent)
+   for(size_t j=0;j<f->count;j++){
+    if(f->roots[j].node>=mounted.ndirs)break;
+    if(f->roots[j].node==d)return 0;
+   }
+  size_t n=rd32(mounted.dirs+(size_t)d*24+12);
+  if(n>SIZE_MAX-total)return 0;total+=n;
+ }
+ if(!total)return 1;
+ if(total>SIZE_MAX/sizeof(NupUnionChild))return 0;
+ NupUnionChild *children=malloc(total*sizeof(*children));if(!children)return 0;
+ size_t used=0;previous_rank=UINT32_MAX;
+ for(size_t i=0;i<root_count;i++){
+  if(roots[i].rank==previous_rank)continue;previous_rank=roots[i].rank;
+  uint32_t d=roots[i].node;if(d>=mounted.ndirs)break;
+  uint32_t n=rd32(mounted.dirs+(size_t)d*24+12);
+  for(uint32_t j=0;j<n;j++)children[used++]=(NupUnionChild){dirchild(&mounted,d,j),roots[i].rank,j};
+ }
+ qsort(children,used,sizeof(*children),union_child_compare);
+ NupUnionFrame frame={roots,root_count,parent};size_t prefix=strlen(path);int ok=1;
+ for(size_t i=0;i<used;){
+  uint32_t len=0;const unsigned char *name=name_for(&mounted,children[i].node,&len);
+  size_t end=i+1;
+  while(end<used){uint32_t n=0;const unsigned char *next=name_for(&mounted,children[end].node,&n);
+   if(compare_name(name,len,next,n))break;end++;}
+  if(!safe_name(name,len)){ok=0;break;}
+  if(len==8&&!memcmp(name,".listing",8)){i=end;continue;}
+  size_t add=(prefix?1:0)+len;if(prefix+add>=1024){ok=0;break;}
+  char *dst=path+prefix;if(prefix)*dst++='/';memcpy(dst,name,len);dst[len]=0;
+  uint32_t winner=children[i].node;int directory=winner<mounted.ndirs;
+  uint64_t bytes=directory?0:rd64(mounted.files+(size_t)(winner-mounted.ndirs)*80+8);
+  if(!visit(ctx,path,directory,bytes)||
+     (directory&&!walk_union(children+i,end-i,path,depth+1,visit,ctx,&frame))){ok=0;break;}
+  path[prefix]=0;i=end;
+ }
+ free(children);return ok;
+}
+int nx2_nup_romfs_walk(Nx2NupVisit visit,void *context){
+ if(!mounted.f||!mounted.layer_count||!visit)return 0;
+ NupUnionChild *roots=malloc(mounted.layer_count*sizeof(*roots));if(!roots)return 0;
+ for(uint32_t i=0;i<mounted.layer_count;i++){
+  uint32_t rank=mounted.layer_count-1-i;
+  roots[i]=(NupUnionChild){mounted.layers[rank].root,rank,0};
+ }
+ char path[1024]={0};int ok=walk_union(roots,mounted.layer_count,path,0,visit,context,NULL);
+ free(roots);return ok;
 }

@@ -16,17 +16,18 @@ static int path_ok(const unsigned char *p,size_t n){
 }
 int nx2_rom_view(const void *data,size_t size,Nx2RomView *out){
  const unsigned char *p=data;static const unsigned char magic[8]={'N','X','2','R','O','M','0','1'};
- if(!p||!out||size<80)return 0;
+ if(!p||!out||size<80||size>128U*1024*1024)return 0;
  for(unsigned i=0;i<8;i++)if(p[i]!=magic[i])return 0;
- if(w(p+8)!=1||w(p+12)!=80||w(p+36)!=32)return 0;
+ uint32_t version=w(p+8);
+ if((version!=1&&version!=2)||w(p+12)!=80||w(p+36)!=32)return 0;
  uint64_t ms=q(p+16),total=q(p+24),eo=q(p+40),so=q(p+48),ss=q(p+56),mo=q(p+64),base=q(p+72);uint32_t n=w(p+32);
- if(!n||n>262144||!span(eo,(uint64_t)n*32,size)||!span(so,ss,size)||!span(mo,ms,size)||ms<80||ms>base||base>total||total>INT64_MAX)return 0;
+ if(!n||!span(eo,(uint64_t)n*32,size)||!span(so,ss,size)||!span(mo,ms,size)||ms<80||ms>base||base>total||total>INT64_MAX)return 0;
  if(eo!=80||so<eo+(uint64_t)n*32||mo<so+ss)return 0;
  Nx2RomView v={p,p+eo,p+so,p+mo,ms,total,base,ss,n};
  uint64_t previous=base;
  for(uint32_t i=0;i<n;i++){
   const unsigned char *e=v.entries+32*i;uint64_t at=q(e),len=q(e+8);uint32_t po=w(e+16),pl=w(e+20);
-  if(at<previous||!span(at,len,total)||po>=ss||pl>=ss-po||!path_ok(v.strings+po,pl)||q(e+24))return 0;
+  if(at<previous||!span(at,len,total)||po>=ss||pl>=ss-po||!path_ok(v.strings+po,pl)||q(e+24)>(version==2?1U:0U))return 0;
   previous=at+len;
  }
  if(q(v.metadata)!=80||q(v.metadata+72)!=base)return 0;
@@ -34,6 +35,9 @@ int nx2_rom_view(const void *data,size_t size,Nx2RomView *out){
  *out=v;return 1;
 }
 const char *nx2_rom_path(const Nx2RomView *v,uint32_t i){if(!v||i>=v->count)return 0;return (const char *)v->strings+w(v->entries+32*i+16);}
+uint32_t nx2_rom_source(const Nx2RomView *v,uint32_t i){
+ return v&&i<v->count?w(v->entries+32*i+24):UINT32_MAX;
+}
 uint32_t nx2_rom_read(const Nx2RomView *v,uint64_t offset,void *buffer,uint64_t bytes,Nx2RomReadFile read,void *context){
  if(!v||!span(offset,bytes,v->total)||(!buffer&&bytes))return 0x2f5e02;
  unsigned char *out=buffer;
