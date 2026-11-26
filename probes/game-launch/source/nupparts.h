@@ -119,9 +119,9 @@ static int nup_part_name(const char *name, NupPartName *out) {
     } else if (e == 3 && nup__same(end, "nup", 3) && s) {
         // (the number before the ending: "Game.part1.nup", "Game.001.nup"; the stem is the name without it)
         const char *mid = NULL;
-        for (const char *c = dot - 1; c >= name; c--)
-            if (*c == '.') {
-                mid = c;
+        for (size_t k = s; k > 0; k--)
+            if (name[k-1] == '.') {
+                mid = name+k-1;
                 break;
             }
         if (!mid || mid == name) return 0;
@@ -240,7 +240,8 @@ static int nup_parts_find_(const char *path, NupPart *parts, int max, int *later
             const int found = nup__group(dir, &like, names, seen, LIMIT, &lowest, &others);
             unsigned run = 0;
             while (lowest + run < LIMIT && seen[lowest + run]) run++;
-            if (found < 2 || lowest > 1 || run < 2 || mine >= lowest + run) alone = 1;
+            if (found >= 2 && (lowest > 1 || run != (unsigned)found || run > (unsigned)max)) return 0;
+            if (found < 2 || mine >= lowest + run) alone = 1;
             else if (mine != lowest) {
                 if (later) *later = 1;
                 alone = 1;
@@ -251,6 +252,9 @@ static int nup_parts_find_(const char *path, NupPart *parts, int max, int *later
             return 1;
         }
     }
+    unsigned available=0;
+    while(lowest+available<LIMIT && seen[lowest+available])available++;
+    if(available>(unsigned)max)return 0;
     int count = 0;
     for (unsigned k = lowest; k < LIMIT && seen[k] && count < max; k++, count++) {
         int sub = 0;
