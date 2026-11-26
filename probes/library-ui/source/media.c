@@ -121,111 +121,22 @@ static const unsigned char *localized(const unsigned char *b,size_t n,size_t *by
  *bytes=first_size;return first;
 }
 /* Read only candidate artwork records; never mount the guest archive. */
-
-static int text(char out[256],const unsigned char *p,size_t n){
- size_t k=0;while(k<n&&p[k]){if(p[k]<32)return 0;k++;}
- if(!k||k>=n)return 0;
- if(k>255){k=255;while(k && (p[k]&0xc0)==0x80)k--;}
- memcpy(out,p,k);out[k]=0;return !placeholder(out);
-}
-static int title_bytes(char out[256],const unsigned char *p,size_t n){
- unsigned char value[513];if(!n||n>512)return 0;
- memcpy(value,p,n);value[n]=0;return text(out,value,n+1);
-}
-static int nacp_title(char out[256],const unsigned char *p,size_t n){
- /* NPDM starts with META. Some older packers put it in a NACP-tagged TLV.
-  * A short binary header is not a language table or an application title. */
- if(n<16*0x300||nx2_meta_npdm(p,n))return 0;
- const unsigned order[]={0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
- for(unsigned i=0;i<16;i++){
-  size_t at=(size_t)order[i]*0x300;
-  if(at<=n&&n-at>=0x200&&text(out,p+at,0x200))return 1;
- }
- return 0;
-}
-static unsigned char *file_bytes(const char *path,size_t *size){
- *size=0;FILE *f=fopen(path,"rb");if(!f)return NULL;
- if(seek_file(f,0,SEEK_END)){fclose(f);return NULL;}
- int64_t n=tell_file(f);
- if(n<=0||n>MEDIA_LIMIT||seek_file(f,0,SEEK_SET)){fclose(f);return NULL;}
- unsigned char *b=malloc((size_t)n);size_t got=b?fread(b,1,(size_t)n,f):0;
- int closed=fclose(f);if(!b||got!=(size_t)n||closed){free(b);return NULL;}
- *size=got;return b;
-}
-static int image_bytes(const unsigned char *p,size_t n){
- return (n>=2&&p[0]==0xff&&p[1]==0xd8)||
-   (n>=8&&!memcmp(p,"\x89PNG\r\n\x1a\n",8));
-}
-static unsigned char *folder_bytes(const Nx2Game *g,const char *suffix,size_t *size){
- char base[1250],path[1600];
- int nb=snprintf(base,sizeof(base),"%s/base",g->library_root);
- const char *roots[]={g->root,g->base_root,g->library_root,nb>0&&nb<(int)sizeof(base)?base:""};
- for(unsigned i=0;i<4;i++){
-  if(!*roots[i])continue;
-  int n=snprintf(path,sizeof(path),"%s/%s",roots[i],suffix);
-  if(n<=0||n>=(int)sizeof(path))continue;
-  unsigned char *b=file_bytes(path,size);if(b)return b;
- }
- return NULL;
-}
-#ifdef __SWITCH__
-static int ns_attempted,ns_live;
-static void cached_control(const Nx2Game *g,char title[256],unsigned char **image,size_t *bytes){
- if(!g->id)return;
- if(!ns_attempted){ns_attempted=1;ns_live=R_SUCCEEDED(nsInitialize());}
- if(!ns_live)return;
- NsApplicationControlData *data=calloc(1,sizeof(*data));if(!data)return;
- u64 actual=0;
- /* CacheOnly never requests a download or imports game data into the system. */
- Result rc=nsGetApplicationControlData(NsApplicationControlSource_CacheOnly,g->id,data,sizeof(*data),&actual);
- if(R_SUCCEEDED(rc)&&actual<=sizeof(*data)){
-  char name[256];
-  if(actual>=sizeof(data->nacp)&&nacp_title(name,(const unsigned char *)&data->nacp,sizeof(data->nacp)))snprintf(title,256,"%s",name);
-  size_t offset=offsetof(NsApplicationControlData,icon);
-  if(image&&bytes&&!*image&&actual>offset&&actual-offset<=sizeof(data->icon)){
-   size_t n=(size_t)(actual-offset);
-   if(n>=2&&data->icon[0]==0xff&&data->icon[1]==0xd8){
-    *image=malloc(n);if(*image){memcpy(*image,data->icon,n);*bytes=n;}
-   }
-  }
- }
- free(data);
-}
-void nx2_ui_media_exit(void){if(ns_live)nsExit();ns_live=0;ns_attempted=0;}
-#else
-static void cached_control(const Nx2Game *g,char title[256],unsigned char **image,size_t *bytes){(void)g;(void)title;(void)image;(void)bytes;}
-void nx2_ui_media_exit(void){}
-#endif
-/* Actual NUP v1 localized records: u8 tag length, tag, u32 value length, value. */
-static const unsigned char *localized(const unsigned char *b,size_t n,size_t *bytes){
- size_t at=0;const unsigned char *first=NULL;size_t first_size=0;
- while(at<n){
-  unsigned k=b[at++];if(!k||k>n-at||n-at-k<4)return NULL;
-  const unsigned char *tag=b+at;at+=k;uint32_t len=read32(b+at);at+=4;
-  if(len>n-at)return NULL;
-  if(!first){first=b+at;first_size=len;}
-  if((k==5&&!memcmp(tag,"en-us",5))||(k==2&&!memcmp(tag,"en",2))){*bytes=len;return b+at;}
-  at+=len;
- }
- *bytes=first_size;return first;
-}
-/* Read only candidate artwork records; never mount the guest archive. */
-static void embedded_media(FILE *f,uint64_t total,uint64_t toc,uint32_t packages,
+static void embedded_media(Nx2PartFile *f,uint64_t total,uint64_t toc,uint32_t packages,
                            char title[256],int *title_rank,unsigned char **image,size_t *bytes){
  unsigned char h[48];
- if(seek_file(f,128,SEEK_SET)||fread(h,1,48,f)!=48)return;
+ if(nx2_part_seek(f,128,SEEK_SET)||nx2_part_read(h,1,48,f)!=48)return;
  uint64_t dirs=read64(h+8),files=read64(h+16),pool=read64(h+24),pool_size=read64(h+32);
  if(toc>(128U<<20)||dirs>toc/24||files>toc/80||pool>toc||pool_size>toc-pool)return;
  uint64_t start=48+64ULL*packages+24*dirs;
  if(start>toc||files>(toc-start)/80)return;
  unsigned char *names=malloc((size_t)pool_size),*block=malloc(80*1024);
  if(!names||!block){free(names);free(block);return;}
- if(seek_file(f,(int64_t)(128+pool),SEEK_SET)||fread(names,1,(size_t)pool_size,f)!=pool_size){free(names);free(block);return;}
+ if(nx2_part_seek(f,(int64_t)(128+pool),SEEK_SET)||nx2_part_read(names,1,(size_t)pool_size,f)!=pool_size){free(names);free(block);return;}
  uint64_t block_at=UINT64_MAX;
  for(uint64_t i=0;i<files;i++){
   if(block_at==UINT64_MAX||i>=block_at+1024){
    block_at=i;size_t n=(size_t)(files-i<1024?files-i:1024)*80;
-   if(seek_file(f,(int64_t)(128+start+80*i),SEEK_SET)||fread(block,1,n,f)!=n)break;
+   if(nx2_part_seek(f,(int64_t)(128+start+80*i),SEEK_SET)||nx2_part_read(block,1,n,f)!=n)break;
   }
   const unsigned char *record=block+(size_t)(i-block_at)*80;
   uint32_t no=read32(record),nl=read32(record+4);
@@ -239,7 +150,7 @@ static void embedded_media(FILE *f,uint64_t total,uint64_t toc,uint32_t packages
   if(!unpacked||unpacked>MEDIA_LIMIT||!packed||packed>MEDIA_LIMIT||off>total||packed>total-off||record[64]>1)continue;
   unsigned char *in=malloc((size_t)packed),*out=NULL;
   if(!in)break;
-  if(seek_file(f,(int64_t)off,SEEK_SET)||fread(in,1,(size_t)packed,f)!=packed){free(in);break;}
+  if(nx2_part_seek(f,(int64_t)off,SEEK_SET)||nx2_part_read(in,1,(size_t)packed,f)!=packed){free(in);break;}
   if(record[64]==0){if(packed==unpacked){out=in;in=NULL;}}
   else{out=malloc((size_t)unpacked);if(out){size_t got=ZSTD_decompress(out,(size_t)unpacked,in,(size_t)packed);if(ZSTD_isError(got)||got!=unpacked){free(out);out=NULL;}}}
   free(in);if(!out)continue;
@@ -251,22 +162,22 @@ static void embedded_media(FILE *f,uint64_t total,uint64_t toc,uint32_t packages
  free(block);free(names);
 }
 static void nup_media(const Nx2Game *g,char title[256],unsigned char **image,size_t *bytes){
- FILE *f=fopen(g->root,"rb");if(!f)return;
+ Nx2PartFile *f=nx2_part_open(g->root);if(!f)return;
  unsigned char h[128],pkg[64];
- if(fread(h,1,sizeof(h),f)!=sizeof(h)||memcmp(h,"NUP\1",4)||
-    seek_file(f,0,SEEK_END)){fclose(f);return;}
- int64_t actual=tell_file(f);uint64_t total=read64(h+0x40),toc=read64(h+0x10);
+ if(nx2_part_read(h,1,sizeof(h),f)!=sizeof(h)||memcmp(h,"NUP\1",4)||
+    nx2_part_seek(f,0,SEEK_END)){nx2_part_close(f);return;}
+ int64_t actual=nx2_part_tell(f);uint64_t total=read64(h+0x40),toc=read64(h+0x10);
  uint32_t count=read32(h+0x48);
  if(actual<0||total!=(uint64_t)actual||!count||count>4096||
-    toc<48+64ULL*count||toc>total||total<128||toc>total-128){fclose(f);return;}
+    toc<48+64ULL*count||toc>total||total<128||toc>total-128){nx2_part_close(f);return;}
  int title_rank=0;
  for(uint32_t i=0;i<count;i++){
-  if(seek_file(f,128+48+64ULL*i,SEEK_SET)||fread(pkg,1,64,f)!=64)break;
+  if(nx2_part_seek(f,128+48+64ULL*i,SEEK_SET)||nx2_part_read(pkg,1,64,f)!=64)break;
   if(pkg[24]>1)continue; /* Ignore unrelated add-on metadata. */
   uint64_t off=read64(pkg+32);uint32_t n=read32(pkg+40);
   if(!n||n>MEDIA_LIMIT||off>total||n>total-off||off>INT64_MAX)continue;
   unsigned char *b=malloc(n);if(!b)break;
-  if(seek_file(f,(int64_t)off,SEEK_SET)||fread(b,1,n,f)!=n){free(b);break;}
+  if(nx2_part_seek(f,(int64_t)off,SEEK_SET)||nx2_part_read(b,1,n,f)!=n){free(b);break;}
   size_t pos=0;unsigned fact_base=nx2_meta_base(b,n);
   while(n-pos>=8){
    unsigned type=b[pos]|((unsigned)b[pos+1]<<8),flags=b[pos+2]|((unsigned)b[pos+3]<<8);
@@ -290,7 +201,7 @@ static void nup_media(const Nx2Game *g,char title[256],unsigned char **image,siz
  }
  /* Avoid scanning large file tables just to name the initial library. */
  if(image&&!*image)embedded_media(f,total,toc,count,title,&title_rank,image,bytes);
- fclose(f);
+ nx2_part_close(f);
 }
 void nx2_ui_media(const Nx2Game *g,char title[256],unsigned char **image,size_t *bytes){
  snprintf(title,256,"%s",g->name);
